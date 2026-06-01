@@ -4,11 +4,14 @@ import argparse
 
 from .constants import DEFAULT_GRAY
 from .docx_processor import fix_docx_fast
+from .indent_settings import load_saved_indent_settings
 from .models import ProcessOptions
 from .process_log import write_process_log
 from .stop_controller import StopController
 
 def run_cli(args) -> int:
+    load_saved_indent_settings()
+
     options = ProcessOptions(
         fix_table_layout=args.table,
         fix_color=args.color,

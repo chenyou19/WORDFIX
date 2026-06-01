@@ -13,6 +13,14 @@ from tkinter import filedialog, messagebox, ttk
 from .constants import DEFAULT_GRAY, DEFAULT_SUFFIX
 from .docx_processor import fix_docx_fast
 from .exceptions import ProcessStopped
+from .indent_settings import (
+    apply_indent_settings,
+    current_indent_settings,
+    format_cm,
+    get_indent_settings_path,
+    load_saved_indent_settings,
+    save_indent_settings,
+)
 from .models import ProcessOptions
 from .path_utils import is_same_file_path
 from .process_log import write_process_log
@@ -32,6 +40,16 @@ class DocxFixerApp:
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
+        self.indent_vars: dict[str, list[tuple[int, str, tk.StringVar, tk.StringVar]]] = {
+            "preface": [],
+            "body": [],
+        }
+        self.indent_settings_load_error: str | None = None
+
+        try:
+            load_saved_indent_settings()
+        except Exception as exc:
+            self.indent_settings_load_error = str(exc)
 
         self.fix_table_var = tk.BooleanVar(value=True)
         self.fix_color_var = tk.BooleanVar(value=True)
@@ -43,6 +61,11 @@ class DocxFixerApp:
         self.progress_var = tk.DoubleVar(value=0)
 
         self._build_ui()
+        if self.indent_settings_load_error:
+            messagebox.showwarning(
+                "縮排預設載入失敗",
+                f"已改用內建縮排設定。\n\n{self.indent_settings_load_error}",
+            )
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
 
@@ -53,8 +76,16 @@ class DocxFixerApp:
         title = ttk.Label(outer, text="Word DOCX 快速整理工具", font=("Microsoft JhengHei UI", 16, "bold"))
         title.pack(anchor="w", pady=(0, 10))
 
+        notebook = ttk.Notebook(outer)
+        notebook.pack(fill="both", expand=True)
+
+        process_tab = ttk.Frame(notebook, padding=10)
+        indent_tab = ttk.Frame(notebook, padding=10)
+        notebook.add(process_tab, text="修改文件")
+        notebook.add(indent_tab, text="縮排預設")
+
         # 檔案選擇
-        file_frame = ttk.LabelFrame(outer, text="檔案")
+        file_frame = ttk.LabelFrame(process_tab, text="檔案")
         file_frame.pack(fill="x", pady=(0, 10))
         file_frame.columnconfigure(1, weight=1)
 
@@ -70,7 +101,7 @@ class DocxFixerApp:
         hint.grid(row=2, column=1, padx=8, pady=(0, 8), sticky="w")
 
         # 功能選項
-        option_frame = ttk.LabelFrame(outer, text="可勾選的四種方案")
+        option_frame = ttk.LabelFrame(process_tab, text="可勾選的四種方案")
         option_frame.pack(fill="x", pady=(0, 10))
 
         ttk.Checkbutton(
@@ -104,7 +135,7 @@ class DocxFixerApp:
         ).pack(anchor="w", padx=28, pady=(0, 8))
 
         # 進度與狀態
-        progress_frame = ttk.LabelFrame(outer, text="進度")
+        progress_frame = ttk.LabelFrame(process_tab, text="進度")
         progress_frame.pack(fill="x", pady=(0, 10))
 
         self.progress_bar = ttk.Progressbar(
@@ -118,7 +149,7 @@ class DocxFixerApp:
         ttk.Label(progress_frame, textvariable=self.status_var).pack(anchor="w", padx=8, pady=(0, 8))
 
         # 按鈕
-        button_frame = ttk.Frame(outer)
+        button_frame = ttk.Frame(process_tab)
         button_frame.pack(fill="x", pady=(0, 10))
 
         self.start_button = ttk.Button(button_frame, text="開始修改", command=self.start_process)
@@ -130,7 +161,7 @@ class DocxFixerApp:
         ttk.Button(button_frame, text="終止程式", command=self.exit_app).pack(side="right")
 
         # 訊息紀錄
-        log_frame = ttk.LabelFrame(outer, text="訊息")
+        log_frame = ttk.LabelFrame(process_tab, text="訊息")
         log_frame.pack(fill="both", expand=True)
 
         self.log_text = tk.Text(log_frame, height=8, wrap="word")
@@ -139,6 +170,139 @@ class DocxFixerApp:
         scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         scrollbar.pack(side="right", fill="y", padx=(0, 8), pady=8)
         self.log_text.configure(yscrollcommand=scrollbar.set)
+
+        self._build_indent_settings_tab(indent_tab)
+
+    def _build_indent_settings_tab(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        scroll_frame.columnconfigure(0, weight=1)
+        scroll_frame.columnconfigure(1, weight=1)
+
+        window_id = canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        def update_scroll_region(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def update_window_width(event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        scroll_frame.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", update_window_width)
+
+        settings = current_indent_settings()
+        self.indent_vars = {"preface": [], "body": []}
+
+        self._build_indent_section(
+            scroll_frame,
+            title="壹、序言前",
+            section="preface",
+            rows=settings["preface"],
+            row=0,
+            column=0,
+        )
+        self._build_indent_section(
+            scroll_frame,
+            title="壹、序言後",
+            section="body",
+            rows=settings["body"],
+            row=0,
+            column=1,
+        )
+
+        button_frame = ttk.Frame(parent)
+        button_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        ttk.Button(button_frame, text="套用目前設定", command=self.apply_indent_entries).pack(side="left")
+        ttk.Button(button_frame, text="保存成預設樣式", command=self.save_indent_defaults).pack(side="left", padx=8)
+
+        path_label = ttk.Label(
+            button_frame,
+            text=f"預設檔：{get_indent_settings_path()}",
+        )
+        path_label.pack(side="right")
+
+    def _build_indent_section(
+        self,
+        parent: ttk.Frame,
+        title: str,
+        section: str,
+        rows: list[dict[str, float | int | str]],
+        row: int,
+        column: int,
+    ) -> None:
+        frame = ttk.LabelFrame(parent, text=title)
+        frame.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
+        parent.columnconfigure(column, weight=1)
+
+        headers = ["階層", "編號格式", "文字起點 cm", "編號起點 cm"]
+        for col, header in enumerate(headers):
+            ttk.Label(frame, text=header).grid(row=0, column=col, padx=4, pady=(6, 4), sticky="w")
+
+        for index, item in enumerate(rows, start=1):
+            level = int(item["level"])
+            label = str(item["label"])
+            left_var = tk.StringVar(value=format_cm(float(item["left_cm"])))
+            number_start_var = tk.StringVar(value=format_cm(float(item["number_start_cm"])))
+
+            ttk.Label(frame, text=str(index)).grid(row=index, column=0, padx=4, pady=3, sticky="w")
+            ttk.Label(frame, text=label).grid(row=index, column=1, padx=4, pady=3, sticky="w")
+            ttk.Entry(frame, textvariable=left_var, width=9).grid(row=index, column=2, padx=4, pady=3)
+            ttk.Entry(frame, textvariable=number_start_var, width=9).grid(row=index, column=3, padx=4, pady=3)
+            self.indent_vars[section].append((level, label, left_var, number_start_var))
+
+    def collect_indent_entries(self) -> dict[str, list[dict[str, float | int | str]]]:
+        settings: dict[str, list[dict[str, float | int | str]]] = {"preface": [], "body": []}
+        section_names = {
+            "preface": "壹、序言前",
+            "body": "壹、序言後",
+        }
+
+        for section, rows in self.indent_vars.items():
+            for display_index, (level, label, left_var, number_start_var) in enumerate(rows, start=1):
+                try:
+                    left_cm = float(left_var.get().strip())
+                    number_start_cm = float(number_start_var.get().strip())
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{section_names[section]}第 {display_index} 階請輸入數字。"
+                    ) from exc
+
+                settings[section].append({
+                    "level": level,
+                    "label": label,
+                    "left_cm": left_cm,
+                    "number_start_cm": number_start_cm,
+                })
+
+        return settings
+
+    def apply_indent_entries(self) -> bool:
+        try:
+            apply_indent_settings(self.collect_indent_entries())
+        except Exception as exc:
+            messagebox.showerror("縮排設定錯誤", str(exc))
+            return False
+
+        self.status_var.set("已套用目前縮排設定。")
+        return True
+
+    def save_indent_defaults(self) -> None:
+        try:
+            path = save_indent_settings(self.collect_indent_entries())
+        except Exception as exc:
+            messagebox.showerror("縮排設定錯誤", str(exc))
+            return
+
+        self.status_var.set("已保存縮排預設樣式。")
+        messagebox.showinfo("已保存", f"已保存成預設樣式：\n{path}")
 
     def browse_input(self) -> None:
         path = filedialog.askopenfilename(
@@ -217,6 +381,9 @@ class DocxFixerApp:
 
         if input_path.suffix.lower() != ".docx":
             messagebox.showerror("格式不支援", "目前只支援 .docx，不支援 .doc。")
+            return None
+
+        if not self.apply_indent_entries():
             return None
 
         options = ProcessOptions(

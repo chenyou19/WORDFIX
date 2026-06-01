@@ -1,6 +1,7 @@
 *.docx
 ~$*.docx
 *_log.txt
+indent_defaults.json
 
 .venv/
 build/

@@ -8,6 +8,8 @@
 
 `壹、序言` 前有專用縮排設定：`一、` 文字起點 1.11 cm、懸掛 1.15 cm；`（一）` 文字起點 1.54 cm、懸掛 0.85 cm；`1.` 文字起點 3.01 cm、懸掛 1.01 cm；`（1）` 文字起點 4.02 cm、懸掛 1.72 cm。
 
+GUI 第二頁「縮排預設」可分別調整 `壹、序言` 前後各階的文字起點與編號起點。按「套用目前設定」會立即套用到本次處理；按「保存成預設樣式」會寫入 `indent_defaults.json`，下次開啟 GUI 或使用 CLI 時會自動載入。
+
 文件編號偵測需符合指定標點格式：`壹、`、`一、`、`（一）`/`(一)`、`1.`、`（1）`/`(1)`、`A.`、`（A）`/`(A)`、`a.`、`（a）`/`(a)`。未帶標點的 `1`、`一` 不會被視為文件編號。
 
 每次處理完成會在輸出檔旁產生 `輸出檔名_log.txt`，記錄每個被修改的大綱階層段落、修改原因、修改前後階層與段落文字。
@@ -46,6 +48,7 @@ python main.py input.docx output.docx --table --color --paragraph
 - `docx_fixer/path_utils.py`：路徑正規化與同檔判斷。
 - `docx_fixer/shading.py`：儲存格底色判斷與修改。
 - `docx_fixer/numbering.py`：`numbering.xml` 自動編號階層判斷與格式修正。
+- `docx_fixer/indent_settings.py`：GUI/CLI 共用的縮排預設讀寫、套用與公分/twips 轉換。
 - `docx_fixer/outline.py`：文件編號偵測、非文件編號與項目符號改本文、TOC 排除、段落大綱階層與縮排套用。
 - `docx_fixer/table_format.py`：表格版面與表格底色處理。
 - `docx_fixer/docx_processor.py`：DOCX zip/XML 主處理流程。
