@@ -1,0 +1,13 @@
+*.docx
+~$*.docx
+*_log.txt
+
+.venv/
+build/
+dist/
+
+__pycache__/
+*.py[cod]
+
+.pytest_cache/
+.mypy_cache/
