@@ -74,6 +74,13 @@ def paragraph_indent(p):
     return ind.get(qn("left")), ind.get(qn("hanging"))
 
 
+def paragraph_left_indent(p):
+    ind = p.find("./w:pPr/w:ind", NS)
+    if ind is None:
+        return None
+    return ind.get(qn("left"))
+
+
 def paragraph_outline(p):
     outline = p.find("./w:pPr/w:outlineLvl", NS)
     if outline is None:
@@ -269,6 +276,49 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(paragraph_indent(before_parenthesized_decimal), expected_preface_indent(3))
         self.assertIsNone(paragraph_outline(before_parenthesized_decimal))
 
+    def test_body_paragraph_after_heading_aligns_to_heading_text_start(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\u4e00\u3001\u5e8f\u8a00\u5167\u5c64")
+        body = make_paragraph("\u9019\u662f\u6a19\u984c\u4e0b\u65b9\u5167\u6587")
+        nested_heading = make_paragraph("\uff08\u4e00\uff09\u5167\u5c64\u6a19\u984c")
+        nested_body = make_paragraph("\u9019\u662f\u5167\u5c64\u6a19\u984c\u4e0b\u65b9\u5167\u6587")
+        root = make_root(marker, heading, body, nested_heading, nested_body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary)
+
+        self.assertEqual(paragraph_left_indent(body), expected_indent(1)[0])
+        self.assertIsNone(paragraph_indent(body)[1])
+        self.assertEqual(paragraph_left_indent(nested_body), expected_indent(2)[0])
+        self.assertIsNone(paragraph_indent(nested_body)[1])
+        self.assertIsNone(paragraph_outline(body))
+        self.assertIsNone(paragraph_outline(nested_body))
+        self.assertTrue(
+            any(record["prefix"] == "\u4e00\u3001" for record in summary.numbering_measurements.values())
+        )
+        self.assertTrue(
+            all(float(record["number_size_cm"]) > 0 for record in summary.numbering_measurements.values())
+        )
+
+    def test_preface_body_paragraph_aligns_to_preface_heading_text_start_and_loses_outline(self):
+        heading = make_paragraph("\u4e00\u3001\u524d\u7f6e\u9805")
+        body = make_paragraph("\u9019\u662f\u5e8f\u8a00\u524d\u7684\u5167\u6587", outline=2)
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        root = make_root(heading, body, marker)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            remove_preface_outline=True,
+        )
+
+        self.assertEqual(paragraph_left_indent(body), expected_preface_indent(0)[0])
+        self.assertIsNone(paragraph_indent(body)[1])
+        self.assertIsNone(paragraph_outline(body))
+        self.assertEqual(summary.removed_preface_outline_paragraphs, 1)
+
     def test_remove_preface_outline_option_can_run_without_paragraph_fixing(self):
         before = make_paragraph("\u666e\u901a\u524d\u7f6e\u6bb5\u843d", outline=3)
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00", outline=4)
@@ -342,7 +392,7 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(summary.skipped_toc_paragraphs, 2)
         self.assertEqual(summary.skipped_table_paragraphs, 1)
         self.assertEqual(summary.paragraph_level_counts[0], 1)
-        self.assertEqual(summary.unknown_paragraphs, 1)
+        self.assertEqual(summary.unknown_paragraphs, 0)
 
     def test_numbering_xml_uses_template_indents_and_keeps_bullets_out_of_outline(self):
         updated = apply_numbering_outline_format(make_numbering_xml())

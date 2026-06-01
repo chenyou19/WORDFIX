@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import ctypes
+import ctypes.wintypes
+import os
 import re
+import unicodedata
 
 from lxml import etree
 
 from .constants import FINANCIAL_NUM, NS, PREFACE_OUTLINE_INDENTS, SIMPLE_NUM, TEMPLATE_OUTLINE_INDENTS
+from .indent_settings import twips_to_cm
 from .numbering import (
     detect_auto_number_level,
     detect_style_number_level,
@@ -19,6 +24,8 @@ STYLE_NUMBERING_MAX_TEXT_LENGTH = 35
 HEADING_ENDINGS = ("：", ":")
 PROCESSING_START_TITLE = "序言"
 PROCESSING_START_VISIBLE_PREFIX = "壹、序言"
+DEFAULT_NUMBER_FONT = "Microsoft JhengHei"
+DEFAULT_NUMBER_FONT_SIZE_PT = 12.0
 
 
 def starts_with_note_marker(text: str) -> bool:
@@ -182,6 +189,37 @@ def match_plain_numbering(text: str):
     return None
 
 
+def detect_manual_numbering_prefix(text: str) -> tuple[int, str] | None:
+    if not text:
+        return None
+
+    text = text.lstrip()
+    if not text:
+        return None
+
+    patterns = [
+        (rf"^[（(][{SIMPLE_NUM}]+[)）]", 2),
+        (r"^[（(][0-9]{1,3}[)）]", 4),
+        (r"^[（(][A-Z][)）]", 6),
+        (r"^[（(][a-z][)）]", 8),
+        (rf"^[{FINANCIAL_NUM}]+、", 0),
+        (rf"^[{SIMPLE_NUM}]+、", 1),
+        (r"^[0-9]{1,3}\.", 3),
+        (r"^[A-Z]\.", 5),
+        (r"^[a-z]\.", 7),
+    ]
+
+    for pattern, level in patterns:
+        m = re.match(pattern, text)
+        if not m:
+            continue
+        if m.end() < len(text) and level in {3, 4, 5, 6, 7, 8} and is_ascii_letter_or_digit(text[m.end()]):
+            return None
+        return level, m.group(0)
+
+    return None
+
+
 def detect_outline_level(text: str):
     """
     只有段落開頭符合文件編號格式時才回傳層級。
@@ -306,6 +344,164 @@ def get_auto_number_identity(p) -> tuple[str | None, int | None]:
     return num_id, ilvl
 
 
+def get_number_prefix_run_properties(p) -> tuple[str, float]:
+    for run in p.findall("./w:r", NS):
+        text = "".join(run.xpath(".//w:t/text()", namespaces=NS))
+        if not text or not text.strip():
+            continue
+
+        rPr = run.find("w:rPr", NS)
+        font_name = DEFAULT_NUMBER_FONT
+        font_size_pt = DEFAULT_NUMBER_FONT_SIZE_PT
+
+        if rPr is not None:
+            r_fonts = rPr.find("w:rFonts", NS)
+            if r_fonts is not None:
+                font_name = (
+                    r_fonts.get(qn("eastAsia"))
+                    or r_fonts.get(qn("ascii"))
+                    or r_fonts.get(qn("hAnsi"))
+                    or font_name
+                )
+
+            size = rPr.find("w:sz", NS)
+            if size is not None:
+                try:
+                    font_size_pt = int(size.get(qn("val")) or "24") / 2
+                except ValueError:
+                    pass
+
+        return font_name, font_size_pt
+
+    return DEFAULT_NUMBER_FONT, DEFAULT_NUMBER_FONT_SIZE_PT
+
+
+def estimate_text_width_cm(text: str, font_size_pt: float) -> float:
+    units = 0.0
+    for ch in text:
+        if ch.isspace():
+            units += 0.35
+            continue
+        width = unicodedata.east_asian_width(ch)
+        units += 1.0 if width in {"F", "W"} else 0.55
+    return units * font_size_pt / 72 * 2.54
+
+
+def measure_text_width_cm(text: str, font_name: str, font_size_pt: float) -> float:
+    if os.name != "nt":
+        return estimate_text_width_cm(text, font_size_pt)
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+
+    user32.GetDC.argtypes = [ctypes.wintypes.HWND]
+    user32.GetDC.restype = ctypes.wintypes.HDC
+    user32.ReleaseDC.argtypes = [ctypes.wintypes.HWND, ctypes.wintypes.HDC]
+    user32.ReleaseDC.restype = ctypes.c_int
+    gdi32.GetDeviceCaps.argtypes = [ctypes.wintypes.HDC, ctypes.c_int]
+    gdi32.GetDeviceCaps.restype = ctypes.c_int
+    gdi32.CreateFontW.restype = ctypes.wintypes.HFONT
+    gdi32.SelectObject.argtypes = [ctypes.wintypes.HDC, ctypes.wintypes.HGDIOBJ]
+    gdi32.SelectObject.restype = ctypes.wintypes.HGDIOBJ
+    gdi32.DeleteObject.argtypes = [ctypes.wintypes.HGDIOBJ]
+    gdi32.DeleteObject.restype = ctypes.c_int
+    gdi32.GetTextExtentPoint32W.argtypes = [
+        ctypes.wintypes.HDC,
+        ctypes.c_wchar_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.wintypes.SIZE),
+    ]
+    gdi32.GetTextExtentPoint32W.restype = ctypes.c_int
+
+    hdc = user32.GetDC(None)
+    if not hdc:
+        return estimate_text_width_cm(text, font_size_pt)
+
+    try:
+        log_pixels_x = gdi32.GetDeviceCaps(hdc, 88)
+        log_pixels_y = gdi32.GetDeviceCaps(hdc, 90)
+        font_height = -round(font_size_pt * log_pixels_y / 72)
+        font = gdi32.CreateFontW(
+            font_height,
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            font_name,
+        )
+        if not font:
+            return estimate_text_width_cm(text, font_size_pt)
+
+        old_font = gdi32.SelectObject(hdc, font)
+        try:
+            size = ctypes.wintypes.SIZE()
+            ok = gdi32.GetTextExtentPoint32W(hdc, text, len(text), ctypes.byref(size))
+            if not ok:
+                return estimate_text_width_cm(text, font_size_pt)
+            return size.cx / log_pixels_x * 2.54
+        finally:
+            gdi32.SelectObject(hdc, old_font)
+            gdi32.DeleteObject(font)
+    finally:
+        user32.ReleaseDC(None, hdc)
+
+
+def record_numbering_measurement(
+    summary,
+    *,
+    text: str,
+    p,
+    level: int,
+    indent_level: int,
+    set_outline: bool,
+) -> None:
+    if summary is None:
+        return
+
+    manual = detect_manual_numbering_prefix(text)
+    if manual is None:
+        return
+
+    _, prefix = manual
+    spec = get_outline_indent_spec(indent_level, set_outline=set_outline)
+    if spec is None:
+        return
+
+    font_name, font_size_pt = get_number_prefix_run_properties(p)
+    number_size_cm = measure_text_width_cm(prefix, font_name, font_size_pt)
+    left_cm = twips_to_cm(spec["left"])
+    number_start_cm = twips_to_cm(spec.get("number_start", int(spec["left"]) - int(spec["hanging"])))
+    section = "壹、序言後" if set_outline else "壹、序言前"
+    key = f"{section}:{level}:{prefix}"
+
+    current = summary.numbering_measurements.get(key)
+    measurement = {
+        "section": section,
+        "level": level,
+        "indent_level": indent_level,
+        "prefix": prefix,
+        "text_start_cm": left_cm,
+        "number_start_cm": number_start_cm,
+        "number_size_cm": number_size_cm,
+        "font_name": font_name,
+        "font_size_pt": font_size_pt,
+        "count": 1,
+    }
+    if current is None:
+        summary.numbering_measurements[key] = measurement
+    else:
+        current["count"] = int(current.get("count", 1)) + 1
+        current["number_size_cm"] = max(float(current.get("number_size_cm", 0)), number_size_cm)
+
+
 def summarize_paragraph_text(text: str, limit: int = 80) -> str:
     normalized = " ".join((text or "").split())
     if len(normalized) <= limit:
@@ -333,12 +529,17 @@ def append_paragraph_change_log(
     )
 
 
-def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
-    """依範本.docx的階層縮排標準套用段落縮排，可選擇是否同步設定 Word 大綱階層。"""
+def get_outline_indent_spec(level: int, set_outline: bool = True) -> dict[str, str] | None:
     indent_specs = TEMPLATE_OUTLINE_INDENTS if set_outline else PREFACE_OUTLINE_INDENTS
     spec = indent_specs.get(level)
     if spec is None and not set_outline:
         spec = TEMPLATE_OUTLINE_INDENTS.get(level)
+    return spec
+
+
+def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
+    """依範本.docx的階層縮排標準套用段落縮排，可選擇是否同步設定 Word 大綱階層。"""
+    spec = get_outline_indent_spec(level, set_outline=set_outline)
     if spec is None:
         return
 
@@ -359,6 +560,19 @@ def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
 
     # 修正「編號後面被舊 tab stop 推出奇怪留白」的問題。
     normalize_tabs_to_text_position(pPr, spec["left"])
+
+
+def apply_body_indent_from_heading(p, heading_level: int, heading_uses_outline: bool) -> bool:
+    """讓標題下方的普通內文左縮排對齊該標題的文字起點。"""
+    spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
+    if spec is None:
+        return False
+
+    pPr = get_or_add(p, "pPr", first=True)
+    ind = get_or_add(pPr, "ind")
+    clear_indent_attrs(ind)
+    ind.set(qn("left"), spec["left"])
+    return True
 
 
 def get_paragraph_style_value(p) -> str:
@@ -535,6 +749,7 @@ def fix_outline_paragraphs(
 
     changed_count = 0
     outline_processing_started = not remove_preface_outline
+    current_heading_indent: tuple[int, bool] | None = None
 
     for paragraph_index, p in enumerate(paragraphs, start=1):
         if stop:
@@ -623,6 +838,26 @@ def fix_outline_paragraphs(
                     reason = "段落開頭手動編號"
 
             if level is None:
+                if current_heading_indent is not None:
+                    heading_level, heading_uses_outline = current_heading_indent
+                    if apply_body_indent_from_heading(p, heading_level, heading_uses_outline):
+                        after_outline = before_outline
+                        if not outline_processing_started and remove_paragraph_outline_level(p):
+                            after_outline = "無"
+                            increment_removed_preface_outline_count(summary)
+
+                        changed_count += 1
+                        append_paragraph_change_log(
+                            change_logs,
+                            part_name,
+                            paragraph_index,
+                            text,
+                            before_outline,
+                            after_outline,
+                            "標題下方內文段落，左縮排對齊上一個標題的文字起點",
+                        )
+                        continue
+
                 if not outline_processing_started and remove_paragraph_outline_level(p):
                     changed_count += 1
                     increment_removed_preface_outline_count(summary)
@@ -645,6 +880,15 @@ def fix_outline_paragraphs(
             indent_level = effective_indent_level(level, set_outline=set_outline)
 
             apply_outline_indent(p, indent_level, set_outline=set_outline)
+            current_heading_indent = (indent_level, set_outline)
+            record_numbering_measurement(
+                summary,
+                text=text,
+                p=p,
+                level=level,
+                indent_level=indent_level,
+                set_outline=set_outline,
+            )
             changed_count += 1
             if set_outline:
                 increment_paragraph_level_count(summary, level)

@@ -37,6 +37,7 @@ class ProcessSummary:
     unknown_paragraphs: int = 0
     paragraph_level_counts: list[int] = field(default_factory=lambda: [0] * 9)
     paragraph_logs: list[str] = field(default_factory=list)
+    numbering_measurements: dict[str, dict[str, object]] = field(default_factory=dict)
 
     @property
     def changed_colors(self) -> int:

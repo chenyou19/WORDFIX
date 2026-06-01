@@ -2,12 +2,46 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .indent_settings import format_cm
 from .models import ProcessSummary
 
 
 def get_process_log_path(output_docx: str | Path) -> Path:
     output_path = Path(output_docx)
     return output_path.with_name(f"{output_path.stem}_log.txt")
+
+
+def format_numbering_indent_log_lines(summary: ProcessSummary) -> list[str]:
+    lines = ["實際編號格式量測紀錄："]
+    if not summary.numbering_measurements:
+        lines.append("沒有量測到可見的手動編號格式。")
+        return lines
+
+    records = sorted(
+        summary.numbering_measurements.values(),
+        key=lambda item: (
+            str(item.get("section", "")),
+            int(item.get("level", 0)),
+            str(item.get("prefix", "")),
+        ),
+    )
+    current_section = None
+    for record in records:
+        section = str(record["section"])
+        if section != current_section:
+            lines.append(f"{section}：")
+            current_section = section
+
+        lines.append(
+            f"第 {int(record['level']) + 1} 階 {record['prefix']}："
+            f"文字起點 {format_cm(float(record['text_start_cm']))} cm；"
+            f"編號起點 {format_cm(float(record['number_start_cm']))} cm；"
+            f"編號大小 {format_cm(float(record['number_size_cm']))} cm；"
+            f"字型 {record['font_name']} {format_cm(float(record['font_size_pt']))} pt；"
+            f"量測次數 {record['count']}"
+        )
+
+    return lines
 
 
 def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
@@ -42,6 +76,8 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
             for level, count in enumerate(summary.paragraph_level_counts, start=1)
         ],
         f"無法判斷而跳過的段落數：{summary.unknown_paragraphs}",
+        "",
+        *format_numbering_indent_log_lines(summary),
         "",
         "段落大綱階層修改紀錄：",
     ]
