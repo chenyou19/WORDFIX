@@ -13,9 +13,18 @@ from docx_fixer.models import ProcessOptions
 from docx_fixer.xml_utils import qn
 
 
-def make_docx(path: Path, document_xml: bytes) -> None:
+def make_docx(
+    path: Path,
+    document_xml: bytes,
+    styles_xml: bytes | None = None,
+    numbering_xml: bytes | None = None,
+) -> None:
     with ZipFile(path, "w") as zf:
         zf.writestr("word/document.xml", document_xml)
+        if styles_xml is not None:
+            zf.writestr("word/styles.xml", styles_xml)
+        if numbering_xml is not None:
+            zf.writestr("word/numbering.xml", numbering_xml)
 
 
 def make_document_xml() -> bytes:
@@ -37,9 +46,41 @@ def make_document_xml() -> bytes:
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
-def read_document_root(path: Path):
+def make_styles_xml() -> bytes:
+    styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
+    style = etree.SubElement(styles, qn("style"))
+    style.set(qn("type"), "paragraph")
+    style.set(qn("styleId"), "Heading1")
+    pPr = etree.SubElement(style, qn("pPr"))
+    outline_lvl = etree.SubElement(pPr, qn("outlineLvl"))
+    outline_lvl.set(qn("val"), "0")
+    return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_numbering_xml() -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    abstract = etree.SubElement(numbering, qn("abstractNum"))
+    abstract.set(qn("abstractNumId"), "1")
+    lvl = etree.SubElement(abstract, qn("lvl"))
+    lvl.set(qn("ilvl"), "0")
+    pPr = etree.SubElement(lvl, qn("pPr"))
+    outline_lvl = etree.SubElement(pPr, qn("outlineLvl"))
+    outline_lvl.set(qn("val"), "0")
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def read_part_root(path: Path, part_name: str):
     with ZipFile(path, "r") as zf:
-        return etree.fromstring(zf.read("word/document.xml"))
+        return etree.fromstring(zf.read(part_name))
+
+
+def read_document_root(path: Path):
+    return read_part_root(path, "word/document.xml")
+
+
+def part_outline_count(path: Path, part_name: str) -> int:
+    root = read_part_root(path, part_name)
+    return len(root.xpath(".//w:outlineLvl", namespaces=NS))
 
 
 def paragraph_outlines(path: Path) -> list[str | None]:
@@ -52,11 +93,16 @@ def paragraph_outlines(path: Path) -> list[str | None]:
 
 
 class DocxProcessorTests(unittest.TestCase):
-    def test_remove_all_outline_only_clears_existing_document_outline_levels(self):
+    def test_remove_all_outline_only_clears_existing_outline_levels_in_all_parts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_docx = Path(temp_dir) / "input.docx"
             output_docx = Path(temp_dir) / "output.docx"
-            make_docx(input_docx, make_document_xml())
+            make_docx(
+                input_docx,
+                make_document_xml(),
+                styles_xml=make_styles_xml(),
+                numbering_xml=make_numbering_xml(),
+            )
 
             summary = fix_docx_fast(
                 input_docx,
@@ -71,7 +117,10 @@ class DocxProcessorTests(unittest.TestCase):
             )
 
             self.assertEqual(paragraph_outlines(output_docx), [None, None])
-            self.assertEqual(summary.removed_all_outline_paragraphs, 2)
+            self.assertEqual(part_outline_count(output_docx, "word/document.xml"), 0)
+            self.assertEqual(part_outline_count(output_docx, "word/styles.xml"), 0)
+            self.assertEqual(part_outline_count(output_docx, "word/numbering.xml"), 0)
+            self.assertEqual(summary.removed_all_outline_paragraphs, 4)
             self.assertEqual(summary.paragraphs, 0)
 
     def test_remove_all_outline_runs_before_paragraph_fixing_reapplies_numbered_outline(self):

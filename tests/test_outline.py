@@ -16,6 +16,7 @@ from docx_fixer.numbering import apply_numbering_outline_format
 from docx_fixer.outline import (
     detect_outline_level,
     fix_outline_paragraphs,
+    remove_all_outline_levels_from_any_root,
     remove_all_outline_levels_from_root,
 )
 from docx_fixer.xml_utils import qn
@@ -395,6 +396,21 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIsNone(paragraph_outline(first))
         self.assertIsNone(paragraph_outline(second))
         self.assertIsNone(paragraph_outline(third))
+
+    def test_remove_all_outline_levels_from_any_root_cleans_style_ppr_outline(self):
+        root = etree.Element(qn("styles"), nsmap={"w": W_NS})
+        style = etree.SubElement(root, qn("style"))
+        style.set(qn("type"), "paragraph")
+        pPr = etree.SubElement(style, qn("pPr"))
+        outline = etree.SubElement(pPr, qn("outlineLvl"))
+        outline.set(qn("val"), "2")
+        summary = ProcessSummary()
+
+        removed = remove_all_outline_levels_from_any_root(root, summary=summary)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(summary.removed_all_outline_paragraphs, 1)
+        self.assertFalse(root.xpath(".//w:outlineLvl", namespaces=NS))
 
     def test_paragraph_summary_counts_levels_and_skips(self):
         toc = make_paragraph("\u76ee\u9304")

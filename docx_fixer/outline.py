@@ -323,23 +323,38 @@ def remove_paragraph_outline_level(p) -> bool:
     return True
 
 
-def remove_all_outline_levels_from_root(
+def remove_all_outline_levels_from_any_root(
     root,
     stop: StopController | None = None,
     summary=None,
 ) -> int:
-    """移除 XML part 內所有段落 pPr 底下既有的 w:outlineLvl。"""
+    """移除 XML part 內所有 pPr 底下既有的 w:outlineLvl。"""
     removed_count = 0
-    for p in root.xpath(".//w:p", namespaces=NS):
+    for outline_lvl in root.xpath(".//w:pPr/w:outlineLvl", namespaces=NS):
         if stop:
             stop.check()
-        if remove_paragraph_outline_level(p):
-            removed_count += 1
+        parent = outline_lvl.getparent()
+        if parent is None:
+            continue
+        parent.remove(outline_lvl)
+        removed_count += 1
 
     if summary is not None:
         summary.removed_all_outline_paragraphs += removed_count
 
     return removed_count
+
+
+def remove_all_outline_levels_from_root(
+    root,
+    stop: StopController | None = None,
+    summary=None,
+) -> int:
+    return remove_all_outline_levels_from_any_root(
+        root,
+        stop=stop,
+        summary=summary,
+    )
 
 
 def get_paragraph_outline_level_value(p) -> str:

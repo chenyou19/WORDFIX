@@ -14,7 +14,7 @@ from .numbering import (
     build_numbering_level_lookup,
     build_style_numbering_lookup,
 )
-from .outline import fix_outline_paragraphs, remove_all_outline_levels_from_root
+from .outline import fix_outline_paragraphs, remove_all_outline_levels_from_any_root
 from .path_utils import is_same_file_path
 from .process_runner import run_powershell_script
 from .stop_controller import StopController
@@ -29,6 +29,14 @@ def should_process_part(name: str) -> bool:
     if name.startswith("word/footer") and name.endswith(".xml"):
         return True
     if name in {"word/footnotes.xml", "word/endnotes.xml"}:
+        return True
+    return False
+
+
+def should_remove_outline_part(name: str) -> bool:
+    if should_process_part(name):
+        return True
+    if name in {"word/styles.xml", "word/numbering.xml"}:
         return True
     return False
 
@@ -218,6 +226,26 @@ def fix_docx_fast(
                 )
 
             data = zin.read(item.filename)
+            root = None
+
+            if options.remove_all_outline_levels and should_remove_outline_part(item.filename):
+                if progress_callback:
+                    progress_callback(
+                        percent=((item_index + 0.25) / total_items) * 100,
+                        message=f"{item.filename}：去除所有大綱階層",
+                    )
+                root = etree.fromstring(data, parser)
+                remove_all_outline_levels_from_any_root(
+                    root,
+                    stop=stop,
+                    summary=summary,
+                )
+                data = etree.tostring(
+                    root,
+                    xml_declaration=True,
+                    encoding="UTF-8",
+                    standalone=True,
+                )
 
             # 自動編號的縮排與「編號後方 tab/space」主要記在 numbering.xml；
             # 若只改 document.xml 的段落 pPr，Word 仍可能用舊 tab stop 造成留白。
@@ -228,23 +256,25 @@ def fix_docx_fast(
                         message="word/numbering.xml：修正自動編號縮排與後方留白",
                     )
                 data = apply_numbering_outline_format(data) or data
-
-            if should_process_part(item.filename):
-                root = etree.fromstring(data, parser)
-                if item.filename == "word/document.xml" and not document_table_pages:
-                    document_table_pages = get_rendered_table_start_pages(root)
-
                 if options.remove_all_outline_levels:
-                    if progress_callback:
-                        progress_callback(
-                            percent=((item_index + 0.25) / total_items) * 100,
-                            message=f"{item.filename}：去除所有大綱階層",
-                        )
-                    remove_all_outline_levels_from_root(
+                    root = etree.fromstring(data, parser)
+                    remove_all_outline_levels_from_any_root(
                         root,
                         stop=stop,
                         summary=summary,
                     )
+                    data = etree.tostring(
+                        root,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    )
+
+            if should_process_part(item.filename):
+                if root is None:
+                    root = etree.fromstring(data, parser)
+                if item.filename == "word/document.xml" and not document_table_pages:
+                    document_table_pages = get_rendered_table_start_pages(root)
 
                 if (
                     (options.fix_paragraph or options.remove_preface_outline)
