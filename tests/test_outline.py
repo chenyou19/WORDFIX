@@ -14,6 +14,7 @@ from docx_fixer.constants import (
 )
 from docx_fixer.models import ProcessSummary
 from docx_fixer.numbering import apply_numbering_outline_format, build_numbering_format_lookup
+from docx_fixer.style_resolver import build_style_font_size_lookup
 from docx_fixer.indent_settings import twips_to_cm
 from docx_fixer.outline import (
     detect_outline_level,
@@ -41,6 +42,7 @@ def make_paragraph(
     num_id: str | None = None,
     ilvl: int | None = None,
     font_size_pt: float | None = None,
+    run_style: str | None = None,
 ):
     p = etree.Element(qn("p"))
     pPr = etree.SubElement(p, qn("pPr"))
@@ -62,11 +64,15 @@ def make_paragraph(
         num_id_el.set(qn("val"), num_id)
 
     r = etree.SubElement(p, qn("r"))
-    if font_size_pt is not None:
+    if font_size_pt is not None or run_style is not None:
         rPr = etree.SubElement(r, qn("rPr"))
-        for tag in ("sz", "szCs"):
-            size = etree.SubElement(rPr, qn(tag))
-            size.set(qn("val"), str(round(font_size_pt * 2)))
+        if run_style is not None:
+            r_style = etree.SubElement(rPr, qn("rStyle"))
+            r_style.set(qn("val"), run_style)
+        if font_size_pt is not None:
+            for tag in ("sz", "szCs"):
+                size = etree.SubElement(rPr, qn(tag))
+                size.set(qn("val"), str(round(font_size_pt * 2)))
     t = etree.SubElement(r, qn("t"))
     t.text = text
     return p
@@ -176,6 +182,39 @@ def make_numbering_xml():
     bullet_pPr = etree.SubElement(bullet_lvl, qn("pPr"))
     bullet_outline = etree.SubElement(bullet_pPr, qn("outlineLvl"))
     bullet_outline.set(qn("val"), "2")
+
+    return etree.tostring(root)
+
+
+def make_styles_font_xml(
+    *,
+    doc_default_pt: float | None = None,
+    paragraph_styles: dict[str, tuple[float | None, str | None]] | None = None,
+    character_styles: dict[str, tuple[float | None, str | None]] | None = None,
+):
+    root = etree.Element(qn("styles"), nsmap={"w": W_NS})
+    if doc_default_pt is not None:
+        doc_defaults = etree.SubElement(root, qn("docDefaults"))
+        rpr_default = etree.SubElement(doc_defaults, qn("rPrDefault"))
+        rPr = etree.SubElement(rpr_default, qn("rPr"))
+        sz = etree.SubElement(rPr, qn("sz"))
+        sz.set(qn("val"), str(round(doc_default_pt * 2)))
+
+    for style_type, styles in (
+        ("paragraph", paragraph_styles or {}),
+        ("character", character_styles or {}),
+    ):
+        for style_id, (font_size_pt, based_on) in styles.items():
+            style = etree.SubElement(root, qn("style"))
+            style.set(qn("type"), style_type)
+            style.set(qn("styleId"), style_id)
+            if based_on is not None:
+                based = etree.SubElement(style, qn("basedOn"))
+                based.set(qn("val"), based_on)
+            if font_size_pt is not None:
+                rPr = etree.SubElement(style, qn("rPr"))
+                sz = etree.SubElement(rPr, qn("sz"))
+                sz.set(qn("val"), str(round(font_size_pt * 2)))
 
     return etree.tostring(root)
 
@@ -557,6 +596,150 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIn("spec_body_left_cm=3.94", debug)
         self.assertIn(f"written_left_twips={expected_left}", debug)
         self.assertIn("tab_pos=None", debug)
+
+    def test_body_indent_uses_paragraph_style_font_size(self):
+        styles = make_styles_font_xml(
+            paragraph_styles={"DefaultText": (14, None)}
+        )
+        style_lookup = build_style_font_size_lookup(styles)
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph(
+            "\u4f7f\u7528\u6bb5\u843d\u6a23\u5f0f 14 pt \u7684\u5167\u6587",
+            style="DefaultText",
+        )
+        add_tab_stop(body, pos="1990")
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            style_font_size_lookup=style_lookup,
+        )
+
+        expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
+        self.assertEqual(paragraph_left_indent(body), expected_left)
+        self.assertIsNone(paragraph_indent(body)[1])
+        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
+        self.assertIn("font_size_source=paragraph_style:DefaultText", "\n".join(summary.body_indent_debug_logs))
+
+    def test_body_indent_uses_based_on_paragraph_style_font_size(self):
+        styles = make_styles_font_xml(
+            paragraph_styles={
+                "Normal": (14, None),
+                "DefaultText": (None, "Normal"),
+            }
+        )
+        style_lookup = build_style_font_size_lookup(styles)
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph(
+            "\u4f7f\u7528 basedOn 14 pt \u7684\u5167\u6587",
+            style="DefaultText",
+        )
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            style_font_size_lookup=style_lookup,
+        )
+
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+        self.assertIn("font_size_source=paragraph_style:DefaultText", "\n".join(summary.body_indent_debug_logs))
+
+    def test_body_indent_uses_doc_defaults_font_size(self):
+        styles = make_styles_font_xml(doc_default_pt=14)
+        style_lookup = build_style_font_size_lookup(styles)
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph("\u4f7f\u7528 docDefaults 14 pt \u7684\u5167\u6587")
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            style_font_size_lookup=style_lookup,
+        )
+
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+        self.assertIn("font_size_source=docDefaults", "\n".join(summary.body_indent_debug_logs))
+
+    def test_body_indent_uses_character_style_font_size(self):
+        styles = make_styles_font_xml(
+            character_styles={"EmphasisBody": (14, None)}
+        )
+        style_lookup = build_style_font_size_lookup(styles)
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph(
+            "\u4f7f\u7528\u5b57\u5143\u6a23\u5f0f 14 pt \u7684\u5167\u6587",
+            run_style="EmphasisBody",
+        )
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            style_font_size_lookup=style_lookup,
+        )
+
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("font_size_source=character_style:EmphasisBody", debug)
+        self.assertIn("run_style_id=EmphasisBody", debug)
+
+    def test_direct_run_font_size_overrides_paragraph_style_font_size(self):
+        styles = make_styles_font_xml(
+            paragraph_styles={"DefaultText": (14, None)}
+        )
+        style_lookup = build_style_font_size_lookup(styles)
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph(
+            "\u76f4\u63a5\u5b57\u865f 10 pt \u61c9\u8a72\u8df3\u904e",
+            style="DefaultText",
+            font_size_pt=10,
+        )
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            change_logs=summary.paragraph_logs,
+            style_font_size_lookup=style_lookup,
+        )
+
+        self.assertIsNone(paragraph_left_indent(body))
+        self.assertFalse(summary.body_indent_debug_logs)
+        self.assertTrue(any("source=direct_run" in line for line in summary.paragraph_logs))
+
+    def test_unknown_body_font_size_is_skipped_and_logged(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph("\u7121\u6cd5\u5224\u65b7\u5b57\u865f\u7684\u5167\u6587")
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            change_logs=summary.paragraph_logs,
+        )
+
+        self.assertIsNone(paragraph_left_indent(body))
+        self.assertTrue(any("source=unknown" in line for line in summary.paragraph_logs))
 
     def test_body_indent_skips_non_14_pt_paragraph_and_logs_reason(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")

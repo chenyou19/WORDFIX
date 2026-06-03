@@ -24,6 +24,7 @@ from .numbering import (
     paragraph_style_id,
 )
 from .stop_controller import StopController
+from .style_resolver import half_points_to_pt
 from .xml_utils import CHAR_INDENT_ATTRS, get_or_add, paragraph_text, qn
 
 NOTE_MARKER_PREFIXES = ("※",)
@@ -474,26 +475,82 @@ def apply_outline_level_font_size(p, level: int) -> bool:
     return changed
 
 
-def primary_text_run_font_size_pt(p) -> float | None:
+def run_style_id(run) -> str | None:
+    style_el = run.find("./w:rPr/w:rStyle", NS)
+    if style_el is None:
+        return None
+    return style_el.get(qn("val"))
+
+
+def direct_run_font_size_pt(run) -> float | None:
+    rPr = run.find("./w:rPr", NS)
+    if rPr is None:
+        return None
+
+    for tag in ("sz", "szCs"):
+        size = rPr.find(f"w:{tag}", NS)
+        if size is None:
+            continue
+        value = half_points_to_pt(size.get(qn("val")))
+        if value is not None:
+            return value
+
+    return None
+
+
+def style_lookup_font_size_pt(style_font_size_lookup, style_type: str, style_id: str | None) -> float | None:
+    if not style_font_size_lookup or not style_id:
+        return None
+    styles = style_font_size_lookup.get(style_type)
+    if not isinstance(styles, dict):
+        return None
+    value = styles.get(style_id)
+    return value if isinstance(value, float) else None
+
+
+def style_lookup_doc_default_font_size_pt(style_font_size_lookup) -> float | None:
+    if not style_font_size_lookup:
+        return None
+    value = style_font_size_lookup.get("docDefaults")
+    return value if isinstance(value, float) else None
+
+
+def effective_text_run_font_size_pt(p, style_font_size_lookup=None) -> tuple[float | None, str, str | None, str | None]:
+    paragraph_style = paragraph_style_id(p)
     for run in p.findall("./w:r", NS):
         text = "".join(run.xpath(".//w:t/text()", namespaces=NS))
         if not text or not text.strip():
             continue
 
-        size = run.find("./w:rPr/w:sz", NS)
-        if size is None:
-            return None
+        run_style = run_style_id(run)
+        size = direct_run_font_size_pt(run)
+        if size is not None:
+            return size, "direct_run", paragraph_style, run_style
 
-        try:
-            return int(size.get(qn("val")) or "") / 2
-        except ValueError:
-            return None
+        size = style_lookup_font_size_pt(style_font_size_lookup, "character", run_style)
+        if size is not None:
+            return size, f"character_style:{run_style}", paragraph_style, run_style
 
-    return None
+        size = style_lookup_font_size_pt(style_font_size_lookup, "paragraph", paragraph_style)
+        if size is not None:
+            return size, f"paragraph_style:{paragraph_style}", paragraph_style, run_style
+
+        size = style_lookup_doc_default_font_size_pt(style_font_size_lookup)
+        if size is not None:
+            return size, "docDefaults", paragraph_style, run_style
+
+        return None, "unknown", paragraph_style, run_style
+
+    return None, "unknown", paragraph_style, None
 
 
-def is_body_indent_font_size_allowed(p) -> bool:
-    font_size_pt = primary_text_run_font_size_pt(p)
+def primary_text_run_font_size_pt(p, style_font_size_lookup=None) -> float | None:
+    size_pt, _, _, _ = effective_text_run_font_size_pt(p, style_font_size_lookup)
+    return size_pt
+
+
+def is_body_indent_font_size_allowed(p, style_font_size_lookup=None) -> bool:
+    font_size_pt = primary_text_run_font_size_pt(p, style_font_size_lookup)
     return font_size_pt is not None and abs(font_size_pt - 14.0) < 0.01
 
 
@@ -723,6 +780,7 @@ def append_body_indent_debug_log(
     p,
     heading_level: int,
     heading_uses_outline: bool,
+    style_font_size_lookup=None,
 ) -> None:
     if summary is None:
         return
@@ -732,6 +790,10 @@ def append_body_indent_debug_log(
         return
 
     paragraph_format = paragraph_indent_debug_format(p)
+    font_size_pt, font_size_source, paragraph_style, run_style = effective_text_run_font_size_pt(
+        p,
+        style_font_size_lookup,
+    )
     body_left_twips = spec.get("body_left", spec["left"])
     preview = summarize_paragraph_text(text)
     summary.body_indent_debug_logs.append(
@@ -742,6 +804,10 @@ def append_body_indent_debug_log(
         f"spec_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
         f"spec_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
         f"spec_body_left_cm={twips_to_cm(body_left_twips):.2f}; "
+        f"font_size_pt={format_font_size_for_log(font_size_pt)}; "
+        f"font_size_source={font_size_source}; "
+        f"paragraph_style_id={paragraph_style}; "
+        f"run_style_id={run_style}; "
         f"written_left_twips={paragraph_format.get('left')}; "
         f"written_left_cm={twips_to_cm(paragraph_format.get('left')):.2f}; "
         f"written_hanging={paragraph_format.get('hanging')}; "
@@ -830,9 +896,14 @@ def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
     )
 
 
-def apply_body_indent_from_heading(p, heading_level: int, heading_uses_outline: bool) -> bool:
+def apply_body_indent_from_heading(
+    p,
+    heading_level: int,
+    heading_uses_outline: bool,
+    style_font_size_lookup=None,
+) -> bool:
     """讓標題下方的普通內文左縮排對齊該標題的文字起點。"""
-    if not is_body_indent_font_size_allowed(p):
+    if not is_body_indent_font_size_allowed(p, style_font_size_lookup):
         return False
 
     spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
@@ -1005,6 +1076,7 @@ def fix_outline_paragraphs(
     numbering_level_lookup=None,
     numbering_format_lookup=None,
     style_numbering_lookup=None,
+    style_font_size_lookup=None,
     change_logs: list[str] | None = None,
     part_name: str = "word/document.xml",
     summary=None,
@@ -1096,8 +1168,11 @@ def fix_outline_paragraphs(
             if level is None:
                 if current_heading_indent is not None:
                     heading_level, heading_uses_outline = current_heading_indent
-                    body_font_size_pt = primary_text_run_font_size_pt(p)
-                    if not is_body_indent_font_size_allowed(p):
+                    body_font_size_pt, body_font_size_source, _, _ = effective_text_run_font_size_pt(
+                        p,
+                        style_font_size_lookup,
+                    )
+                    if not is_body_indent_font_size_allowed(p, style_font_size_lookup):
                         append_paragraph_change_log(
                             change_logs,
                             part_name,
@@ -1107,8 +1182,22 @@ def fix_outline_paragraphs(
                             before_outline,
                             f"跳過內文縮排：字體大小不是 14 pt（實際：{format_font_size_for_log(body_font_size_pt)}）",
                         )
+                        append_paragraph_change_log(
+                            change_logs,
+                            part_name,
+                            paragraph_index,
+                            text,
+                            before_outline,
+                            before_outline,
+                            f"Body indent skipped: font_size={format_font_size_for_log(body_font_size_pt)} source={body_font_size_source}",
+                        )
                         continue
-                    if apply_body_indent_from_heading(p, heading_level, heading_uses_outline):
+                    if apply_body_indent_from_heading(
+                        p,
+                        heading_level,
+                        heading_uses_outline,
+                        style_font_size_lookup,
+                    ):
                         changed_count += 1
                         append_body_indent_debug_log(
                             summary,
@@ -1118,6 +1207,7 @@ def fix_outline_paragraphs(
                             p=p,
                             heading_level=heading_level,
                             heading_uses_outline=heading_uses_outline,
+                            style_font_size_lookup=style_font_size_lookup,
                         )
                         append_paragraph_change_log(
                             change_logs,

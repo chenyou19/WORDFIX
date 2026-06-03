@@ -23,6 +23,7 @@ from .outline import (
 from .path_utils import is_same_file_path
 from .process_runner import run_powershell_script
 from .stop_controller import StopController
+from .style_resolver import build_style_font_size_lookup
 from .table_format import process_table, table_cell_count, table_column_count
 from .xml_utils import qn, remove_character_indent_attrs_from_root
 
@@ -242,6 +243,7 @@ def fix_docx_fast(
         numbering_level_lookup = build_numbering_level_lookup(numbering_xml)
         numbering_format_lookup = build_numbering_format_lookup(formatted_numbering_xml)
         style_numbering_lookup = build_style_numbering_lookup(styles_xml)
+        style_font_size_lookup = build_style_font_size_lookup(styles_xml)
 
         items = zin.infolist()
         total_items = max(len(items), 1)
@@ -337,6 +339,7 @@ def fix_docx_fast(
                         numbering_level_lookup=numbering_level_lookup,
                         numbering_format_lookup=numbering_format_lookup,
                         style_numbering_lookup=style_numbering_lookup,
+                        style_font_size_lookup=style_font_size_lookup,
                         change_logs=summary.paragraph_logs,
                         part_name=item.filename,
                         summary=summary,

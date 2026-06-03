@@ -7,7 +7,7 @@ from zipfile import ZipFile
 
 from lxml import etree
 
-from docx_fixer.constants import NS, W_NS
+from docx_fixer.constants import NS, TEMPLATE_OUTLINE_INDENTS, W_NS
 from docx_fixer.docx_processor import fix_docx_fast
 from docx_fixer.models import ProcessOptions
 from docx_fixer.xml_utils import qn
@@ -126,6 +126,43 @@ def make_styles_with_character_indent() -> bytes:
     return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_styles_with_default_text_font(font_size_pt: float = 14) -> bytes:
+    styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
+    style = etree.SubElement(styles, qn("style"))
+    style.set(qn("type"), "paragraph")
+    style.set(qn("styleId"), "DefaultText")
+    rPr = etree.SubElement(style, qn("rPr"))
+    sz = etree.SubElement(rPr, qn("sz"))
+    sz.set(qn("val"), str(round(font_size_pt * 2)))
+    return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_document_with_styled_level_four_body() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+
+    for text, style in [
+        ("\u58f9\u3001\u5e8f\u8a00", None),
+        ("1. \u7b2c\u56db\u968e\u6a19\u984c", None),
+        ("\u4f7f\u7528 DefaultText 14 pt \u7684\u5167\u6587", "DefaultText"),
+    ]:
+        p = etree.SubElement(body, qn("p"))
+        pPr = etree.SubElement(p, qn("pPr"))
+        if style is not None:
+            p_style = etree.SubElement(pPr, qn("pStyle"))
+            p_style.set(qn("val"), style)
+        if style == "DefaultText":
+            tabs = etree.SubElement(pPr, qn("tabs"))
+            tab = etree.SubElement(tabs, qn("tab"))
+            tab.set(qn("val"), "left")
+            tab.set(qn("pos"), "1990")
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def make_unrecognized_numbering_with_character_indent() -> bytes:
     numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
     abstract = etree.SubElement(numbering, qn("abstractNum"))
@@ -192,6 +229,36 @@ def assert_all_document_outlines_are_body(test_case: unittest.TestCase, path: Pa
 
 
 class DocxProcessorTests(unittest.TestCase):
+    def test_body_indent_uses_styles_xml_font_size_lookup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_document_with_styled_level_four_body(),
+                styles_xml=make_styles_with_default_text_font(14),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    include_tables_in_paragraph=False,
+                ),
+            )
+
+            root = read_document_root(output_docx)
+            body_paragraph = root.xpath(".//w:p", namespaces=NS)[2]
+            ind = body_paragraph.find("./w:pPr/w:ind", NS)
+            self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+            self.assertIsNone(ind.get(qn("hanging")))
+            self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
+            debug = "\n".join(summary.body_indent_debug_logs)
+            self.assertIn("font_size_source=paragraph_style:DefaultText", debug)
+
     def test_document_xml_character_indent_attrs_are_removed_but_twips_remain(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_docx = Path(temp_dir) / "input.docx"
