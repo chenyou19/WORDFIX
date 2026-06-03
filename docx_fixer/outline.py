@@ -345,12 +345,36 @@ def remove_all_outline_levels_from_any_root(
     return removed_count
 
 
+def force_all_paragraphs_to_body_outline_level(
+    root,
+    stop: StopController | None = None,
+    summary=None,
+) -> int:
+    """將 XML part 內所有段落明確設為 Word「本文」階層。"""
+    changed_count = 0
+    for p in root.xpath(".//w:p", namespaces=NS):
+        if stop:
+            stop.check()
+
+        pPr = get_or_add(p, "pPr", first=True)
+        outline_lvl = get_or_add(pPr, "outlineLvl")
+        before = outline_lvl.get(qn("val"))
+        outline_lvl.set(qn("val"), "9")
+        if before != "9":
+            changed_count += 1
+
+    if summary is not None:
+        summary.removed_all_outline_paragraphs += changed_count
+
+    return changed_count
+
+
 def remove_all_outline_levels_from_root(
     root,
     stop: StopController | None = None,
     summary=None,
 ) -> int:
-    return remove_all_outline_levels_from_any_root(
+    return force_all_paragraphs_to_body_outline_level(
         root,
         stop=stop,
         summary=summary,

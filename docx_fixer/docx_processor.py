@@ -14,7 +14,11 @@ from .numbering import (
     build_numbering_level_lookup,
     build_style_numbering_lookup,
 )
-from .outline import fix_outline_paragraphs, remove_all_outline_levels_from_any_root
+from .outline import (
+    fix_outline_paragraphs,
+    force_all_paragraphs_to_body_outline_level,
+    remove_all_outline_levels_from_any_root,
+)
 from .path_utils import is_same_file_path
 from .process_runner import run_powershell_script
 from .stop_controller import StopController
@@ -39,6 +43,10 @@ def should_remove_outline_part(name: str) -> bool:
     if name in {"word/styles.xml", "word/numbering.xml"}:
         return True
     return False
+
+
+def should_force_body_outline_part(name: str) -> bool:
+    return should_process_part(name)
 
 
 def should_fix_paragraph_part(name: str) -> bool:
@@ -235,11 +243,18 @@ def fix_docx_fast(
                         message=f"{item.filename}：去除所有大綱階層",
                     )
                 root = etree.fromstring(data, parser)
-                remove_all_outline_levels_from_any_root(
-                    root,
-                    stop=stop,
-                    summary=summary,
-                )
+                if should_force_body_outline_part(item.filename):
+                    force_all_paragraphs_to_body_outline_level(
+                        root,
+                        stop=stop,
+                        summary=summary,
+                    )
+                else:
+                    remove_all_outline_levels_from_any_root(
+                        root,
+                        stop=stop,
+                        summary=summary,
+                    )
                 data = etree.tostring(
                     root,
                     xml_declaration=True,
@@ -261,7 +276,6 @@ def fix_docx_fast(
                     remove_all_outline_levels_from_any_root(
                         root,
                         stop=stop,
-                        summary=summary,
                     )
                     data = etree.tostring(
                         root,
@@ -277,7 +291,13 @@ def fix_docx_fast(
                     document_table_pages = get_rendered_table_start_pages(root)
 
                 if (
-                    (options.fix_paragraph or options.remove_preface_outline)
+                    (
+                        options.fix_paragraph
+                        or (
+                            options.remove_preface_outline
+                            and not options.remove_all_outline_levels
+                        )
+                    )
                     and should_fix_paragraph_part(item.filename)
                 ):
                     if progress_callback:

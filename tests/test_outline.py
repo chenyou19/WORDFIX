@@ -16,6 +16,7 @@ from docx_fixer.numbering import apply_numbering_outline_format
 from docx_fixer.outline import (
     detect_outline_level,
     fix_outline_paragraphs,
+    force_all_paragraphs_to_body_outline_level,
     remove_all_outline_levels_from_any_root,
     remove_all_outline_levels_from_root,
 )
@@ -382,7 +383,7 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertEqual(paragraph_outline(body), "2")
 
-    def test_remove_all_outline_levels_from_root_removes_every_existing_outline(self):
+    def test_remove_all_outline_levels_from_root_forces_every_paragraph_to_body_outline(self):
         first = make_paragraph("\u666e\u901a\u6b63\u6587", outline=2)
         second = make_paragraph("\u58f9\u3001\u5e8f\u8a00", outline=0)
         third = make_paragraph("\u7121\u5927\u7db1")
@@ -391,11 +392,24 @@ class OutlineFixTests(unittest.TestCase):
 
         removed = remove_all_outline_levels_from_root(root, summary=summary)
 
-        self.assertEqual(removed, 2)
-        self.assertEqual(summary.removed_all_outline_paragraphs, 2)
-        self.assertIsNone(paragraph_outline(first))
-        self.assertIsNone(paragraph_outline(second))
-        self.assertIsNone(paragraph_outline(third))
+        self.assertEqual(removed, 3)
+        self.assertEqual(summary.removed_all_outline_paragraphs, 3)
+        self.assertEqual(paragraph_outline(first), "9")
+        self.assertEqual(paragraph_outline(second), "9")
+        self.assertEqual(paragraph_outline(third), "9")
+
+    def test_force_all_paragraphs_to_body_outline_level_overrides_heading_styles(self):
+        heading_one = make_paragraph("Heading 1 text", style="Heading1")
+        heading_two = make_paragraph("Heading 2 text", style="Heading2", outline=1)
+        chinese_heading = make_paragraph("\u6a19\u984c\u6a23\u5f0f", style="1")
+        root = make_root(heading_one, heading_two, chinese_heading)
+
+        changed = force_all_paragraphs_to_body_outline_level(root)
+
+        self.assertEqual(changed, 3)
+        self.assertEqual(paragraph_outline(heading_one), "9")
+        self.assertEqual(paragraph_outline(heading_two), "9")
+        self.assertEqual(paragraph_outline(chinese_heading), "9")
 
     def test_remove_all_outline_levels_from_any_root_cleans_style_ppr_outline(self):
         root = etree.Element(qn("styles"), nsmap={"w": W_NS})

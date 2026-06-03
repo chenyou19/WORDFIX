@@ -31,12 +31,15 @@ def make_document_xml() -> bytes:
     document = etree.Element(qn("document"), nsmap={"w": W_NS})
     body = etree.SubElement(document, qn("body"))
 
-    for text, outline in [
-        ("\u666e\u901a\u6b63\u6587", 5),
-        ("\u58f9\u3001\u5e8f\u8a00", 2),
+    for text, outline, style in [
+        ("\u666e\u901a\u6b63\u6587", 5, "Heading1"),
+        ("\u58f9\u3001\u5e8f\u8a00", 2, None),
     ]:
         p = etree.SubElement(body, qn("p"))
         pPr = etree.SubElement(p, qn("pPr"))
+        if style is not None:
+            p_style = etree.SubElement(pPr, qn("pStyle"))
+            p_style.set(qn("val"), style)
         outline_lvl = etree.SubElement(pPr, qn("outlineLvl"))
         outline_lvl.set(qn("val"), str(outline))
         r = etree.SubElement(p, qn("r"))
@@ -92,6 +95,16 @@ def paragraph_outlines(path: Path) -> list[str | None]:
     return values
 
 
+def assert_all_document_outlines_are_body(test_case: unittest.TestCase, path: Path) -> None:
+    root = read_document_root(path)
+    paragraphs = root.xpath(".//w:p", namespaces=NS)
+    test_case.assertGreater(len(paragraphs), 0)
+    for p in paragraphs:
+        outline = p.find("./w:pPr/w:outlineLvl", NS)
+        test_case.assertIsNotNone(outline)
+        test_case.assertEqual(outline.get(qn("val")), "9")
+
+
 class DocxProcessorTests(unittest.TestCase):
     def test_remove_all_outline_only_clears_existing_outline_levels_in_all_parts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -116,8 +129,8 @@ class DocxProcessorTests(unittest.TestCase):
                 ),
             )
 
-            self.assertEqual(paragraph_outlines(output_docx), [None, None])
-            self.assertEqual(part_outline_count(output_docx, "word/document.xml"), 0)
+            self.assertEqual(paragraph_outlines(output_docx), ["9", "9"])
+            assert_all_document_outlines_are_body(self, output_docx)
             self.assertEqual(part_outline_count(output_docx, "word/styles.xml"), 0)
             self.assertEqual(part_outline_count(output_docx, "word/numbering.xml"), 0)
             self.assertEqual(summary.removed_all_outline_paragraphs, 4)
@@ -141,7 +154,7 @@ class DocxProcessorTests(unittest.TestCase):
                 ),
             )
 
-            self.assertEqual(paragraph_outlines(output_docx), [None, "0"])
+            self.assertEqual(paragraph_outlines(output_docx), ["9", "0"])
             self.assertEqual(summary.removed_all_outline_paragraphs, 2)
             self.assertEqual(summary.paragraph_level_counts[0], 1)
 
