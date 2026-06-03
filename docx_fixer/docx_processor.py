@@ -11,6 +11,7 @@ from .exceptions import ProcessStopped
 from .models import ProcessOptions, ProcessSummary
 from .numbering import (
     apply_numbering_outline_format,
+    build_numbering_format_lookup,
     build_numbering_level_lookup,
     build_style_numbering_lookup,
 )
@@ -233,7 +234,13 @@ def fix_docx_fast(
     with ZipFile(input_docx, "r") as zin, ZipFile(output_docx, "w", ZIP_DEFLATED) as zout:
         numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in zin.namelist() else None
         styles_xml = zin.read("word/styles.xml") if "word/styles.xml" in zin.namelist() else None
+        formatted_numbering_xml = (
+            apply_numbering_outline_format(numbering_xml)
+            if options.fix_paragraph
+            else numbering_xml
+        )
         numbering_level_lookup = build_numbering_level_lookup(numbering_xml)
+        numbering_format_lookup = build_numbering_format_lookup(formatted_numbering_xml)
         style_numbering_lookup = build_style_numbering_lookup(styles_xml)
 
         items = zin.infolist()
@@ -286,7 +293,7 @@ def fix_docx_fast(
                         percent=((item_index + 0.5) / total_items) * 100,
                         message="word/numbering.xml：修正自動編號縮排與後方留白",
                     )
-                data = apply_numbering_outline_format(data) or data
+                data = formatted_numbering_xml or data
                 if options.remove_all_outline_levels:
                     root = etree.fromstring(data, parser)
                     remove_all_outline_levels_from_any_root(
@@ -328,6 +335,7 @@ def fix_docx_fast(
                         include_tables=options.include_tables_in_paragraph,
                         stop=stop,
                         numbering_level_lookup=numbering_level_lookup,
+                        numbering_format_lookup=numbering_format_lookup,
                         style_numbering_lookup=style_numbering_lookup,
                         change_logs=summary.paragraph_logs,
                         part_name=item.filename,

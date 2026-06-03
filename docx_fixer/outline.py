@@ -623,6 +623,91 @@ def record_numbering_measurement(
         current["number_size_cm"] = max(float(current.get("number_size_cm", 0)), number_size_cm)
 
 
+def calculated_number_start(left: str | None, hanging: str | None) -> str | None:
+    if left is None or hanging is None:
+        return None
+    try:
+        return str(int(left) - int(hanging))
+    except (TypeError, ValueError):
+        return None
+
+
+def paragraph_indent_debug_format(p) -> dict[str, str | None]:
+    pPr = p.find("./w:pPr", NS)
+    ind = pPr.find("w:ind", NS) if pPr is not None else None
+    tab = pPr.find("./w:tabs/w:tab", NS) if pPr is not None else None
+    left = ind.get(qn("left")) if ind is not None else None
+    hanging = ind.get(qn("hanging")) if ind is not None else None
+    return {
+        "left": left,
+        "hanging": hanging,
+        "number_start": calculated_number_start(left, hanging),
+        "tab_pos": tab.get(qn("pos")) if tab is not None else None,
+    }
+
+
+def numbering_identity_for_debug(p, style_numbering_lookup=None) -> tuple[str | None, int | None, str | None]:
+    style_id = paragraph_style_id(p)
+    num_id, ilvl = get_auto_number_identity(p)
+    if num_id is not None:
+        return num_id, ilvl, style_id
+
+    if style_id and style_numbering_lookup:
+        style_num_id, style_ilvl = style_numbering_lookup.get(style_id, (None, None))
+        return style_num_id, style_ilvl, style_id
+
+    return None, None, style_id
+
+
+def append_numbering_debug_log(
+    summary,
+    *,
+    part_name: str,
+    paragraph_index: int,
+    text: str,
+    p,
+    level: int,
+    numbering_kind: str,
+    numbering_format_lookup=None,
+    style_numbering_lookup=None,
+) -> None:
+    if summary is None:
+        return
+
+    num_id, ilvl, style_id = numbering_identity_for_debug(
+        p,
+        style_numbering_lookup=style_numbering_lookup,
+    )
+    if num_id is not None:
+        numbering_kind = "auto" if has_auto_numbering(p) else "auto(style)"
+    elif detect_manual_numbering_prefix(text) is not None:
+        numbering_kind = "manual"
+
+    paragraph_format = paragraph_indent_debug_format(p)
+    level_format = None
+    if numbering_format_lookup is not None and num_id is not None and ilvl is not None:
+        level_format = numbering_format_lookup.get((num_id, ilvl))
+    if level_format is None:
+        level_format = {}
+
+    preview = summarize_paragraph_text(text)
+    summary.numbering_debug_logs.append(
+        f"[{part_name} #{paragraph_index}] "
+        f"text={preview!r}; kind={numbering_kind}; numId={num_id}; ilvl={ilvl}; "
+        f"styleId={style_id}; outline_level={level}; "
+        f"p_left={paragraph_format.get('left')}; "
+        f"p_hanging={paragraph_format.get('hanging')}; "
+        f"p_number_start={paragraph_format.get('number_start')}; "
+        f"p_tab_pos={paragraph_format.get('tab_pos')}; "
+        f"lvl_left={level_format.get('left')}; "
+        f"lvl_hanging={level_format.get('hanging')}; "
+        f"lvl_number_start={level_format.get('number_start')}; "
+        f"lvlJc={level_format.get('lvlJc')}; "
+        f"suff={level_format.get('suff')}; "
+        f"lvl_tab_pos={level_format.get('tab_pos')}"
+    )
+
+
 def summarize_paragraph_text(text: str, limit: int = 80) -> str:
     normalized = " ".join((text or "").split())
     if len(normalized) <= limit:
@@ -876,6 +961,7 @@ def fix_outline_paragraphs(
     include_tables: bool,
     stop: StopController | None = None,
     numbering_level_lookup=None,
+    numbering_format_lookup=None,
     style_numbering_lookup=None,
     change_logs: list[str] | None = None,
     part_name: str = "word/document.xml",
@@ -938,6 +1024,7 @@ def fix_outline_paragraphs(
 
             level = None
             reason = None
+            numbering_kind = "manual"
 
             if has_auto_numbering(p):
                 num_id, ilvl = get_auto_number_identity(p)
@@ -1039,6 +1126,18 @@ def fix_outline_paragraphs(
                 level=level,
                 indent_level=indent_level,
                 set_outline=main_outline_started or outline_preface_paragraphs,
+            )
+
+            append_numbering_debug_log(
+                summary,
+                part_name=part_name,
+                paragraph_index=paragraph_index,
+                text=text,
+                p=p,
+                level=level,
+                numbering_kind=numbering_kind,
+                numbering_format_lookup=numbering_format_lookup,
+                style_numbering_lookup=style_numbering_lookup,
             )
 
             append_paragraph_change_log(

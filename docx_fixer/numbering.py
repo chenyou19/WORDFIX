@@ -279,11 +279,14 @@ def apply_numbering_level_outline_format(lvl, level: int) -> None:
             size_el = get_or_add(rPr, tag)
             size_el.set(qn("val"), font_size)
 
+    lvl_jc = get_or_add(lvl, "lvlJc")
+    lvl_jc.set(qn("val"), "left")
+
     suff = lvl.find("w:suff", NS)
     if suff is None:
         suff = etree.Element(qn("suff"))
         lvl.append(suff)
-    suff.set(qn("val"), "nothing")
+    suff.set(qn("val"), "tab")
 
     pPr = get_or_add(lvl, "pPr")
     ind = get_or_add(pPr, "ind")
@@ -292,6 +295,82 @@ def apply_numbering_level_outline_format(lvl, level: int) -> None:
     ind.set(qn("hanging"), spec["hanging"])
 
     normalize_tabs_to_text_position(pPr, spec["left"])
+
+
+def _calculated_number_start(left: str | None, hanging: str | None) -> str | None:
+    if left is None or hanging is None:
+        return None
+    try:
+        return str(int(left) - int(hanging))
+    except (TypeError, ValueError):
+        return None
+
+
+def get_numbering_level_format(lvl) -> dict[str, str | None]:
+    pPr = lvl.find("w:pPr", NS)
+    ind = pPr.find("w:ind", NS) if pPr is not None else None
+    tab = pPr.find("./w:tabs/w:tab", NS) if pPr is not None else None
+    lvl_jc = lvl.find("w:lvlJc", NS)
+    suff = lvl.find("w:suff", NS)
+
+    left = ind.get(qn("left")) if ind is not None else None
+    hanging = ind.get(qn("hanging")) if ind is not None else None
+    return {
+        "left": left,
+        "hanging": hanging,
+        "number_start": _calculated_number_start(left, hanging),
+        "lvlJc": lvl_jc.get(qn("val")) if lvl_jc is not None else None,
+        "suff": suff.get(qn("val")) if suff is not None else None,
+        "tab_pos": tab.get(qn("pos")) if tab is not None else None,
+    }
+
+
+def build_numbering_format_lookup(numbering_xml: bytes | None) -> dict[tuple[str, int], dict[str, str | None]]:
+    if not numbering_xml:
+        return {}
+
+    try:
+        root = etree.fromstring(numbering_xml)
+    except Exception:
+        return {}
+
+    abstract_formats: dict[str, dict[int, dict[str, str | None]]] = {}
+    for abstract_num in root.xpath("./w:abstractNum", namespaces=NS):
+        abstract_id = abstract_num.get(qn("abstractNumId"))
+        if abstract_id is None:
+            continue
+
+        levels: dict[int, dict[str, str | None]] = {}
+        for lvl in abstract_num.xpath("./w:lvl", namespaces=NS):
+            try:
+                ilvl = int(lvl.get(qn("ilvl")))
+            except Exception:
+                continue
+            levels[ilvl] = get_numbering_level_format(lvl)
+        abstract_formats[abstract_id] = levels
+
+    lookup: dict[tuple[str, int], dict[str, str | None]] = {}
+    for num in root.xpath("./w:num", namespaces=NS):
+        num_id = num.get(qn("numId"))
+        abstract_el = num.find("w:abstractNumId", NS)
+        if num_id is None or abstract_el is None:
+            continue
+
+        abstract_id = abstract_el.get(qn("val"))
+        for ilvl, fmt in abstract_formats.get(abstract_id, {}).items():
+            lookup[(num_id, ilvl)] = dict(fmt)
+
+        for override in num.xpath("./w:lvlOverride", namespaces=NS):
+            try:
+                ilvl = int(override.get(qn("ilvl")))
+            except Exception:
+                continue
+
+            lvl = override.find("w:lvl", NS)
+            if lvl is not None:
+                lookup[(num_id, ilvl)] = get_numbering_level_format(lvl)
+
+    return lookup
 
 
 def apply_numbering_level_body_text_format(lvl) -> bool:

@@ -13,7 +13,7 @@ from docx_fixer.constants import (
     validate_template_outline_indents,
 )
 from docx_fixer.models import ProcessSummary
-from docx_fixer.numbering import apply_numbering_outline_format
+from docx_fixer.numbering import apply_numbering_outline_format, build_numbering_format_lookup
 from docx_fixer.indent_settings import twips_to_cm
 from docx_fixer.outline import (
     detect_outline_level,
@@ -251,6 +251,47 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertEqual(paragraph_text_run_sizes(auto_level_two), ["32"])
         self.assertEqual(paragraph_outline(auto_level_two), "1")
+
+    def test_auto_numbering_debug_log_records_paragraph_and_level_positioning(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00", font_size_pt=12)
+        auto_level_two = make_paragraph(
+            "\u81ea\u52d5\u7de8\u865f\u6a19\u984c",
+            num_id="1",
+            ilvl=1,
+            font_size_pt=12,
+        )
+        root = make_root(marker, auto_level_two)
+        summary = ProcessSummary()
+        spec = TEMPLATE_OUTLINE_INDENTS[1]
+        numbering_format_lookup = {
+            ("1", 1): {
+                "left": spec["left"],
+                "hanging": spec["hanging"],
+                "number_start": str(int(spec["left"]) - int(spec["hanging"])),
+                "lvlJc": "left",
+                "suff": "tab",
+                "tab_pos": spec["left"],
+            }
+        }
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            numbering_level_lookup={("1", 1): 1},
+            numbering_format_lookup=numbering_format_lookup,
+        )
+
+        debug = "\n".join(summary.numbering_debug_logs)
+        self.assertIn("kind=auto", debug)
+        self.assertIn("numId=1", debug)
+        self.assertIn("ilvl=1", debug)
+        self.assertIn(f"p_left={spec['left']}", debug)
+        self.assertIn(f"p_hanging={spec['hanging']}", debug)
+        self.assertIn(f"lvl_left={spec['left']}", debug)
+        self.assertIn(f"lvl_hanging={spec['hanging']}", debug)
+        self.assertIn("lvlJc=left", debug)
+        self.assertIn("suff=tab", debug)
 
     def test_detects_all_manual_outline_numbering_shapes(self):
         samples = [
@@ -696,12 +737,14 @@ class OutlineFixTests(unittest.TestCase):
         decimal_ind = decimal_lvl.find("./w:pPr/w:ind", NS)
         decimal_tab = decimal_lvl.find("./w:pPr/w:tabs/w:tab", NS)
         decimal_suff = decimal_lvl.find("./w:suff", NS)
+        decimal_lvl_jc = decimal_lvl.find("./w:lvlJc", NS)
         self.assertEqual(
             (decimal_ind.get(qn("left")), decimal_ind.get(qn("hanging"))),
             expected_indent(3),
         )
         self.assertEqual(decimal_tab.get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[3]["left"])
-        self.assertEqual(decimal_suff.get(qn("val")), "nothing")
+        self.assertEqual(decimal_suff.get(qn("val")), "tab")
+        self.assertEqual(decimal_lvl_jc.get(qn("val")), "left")
 
         bullet_lvl = root.xpath("./w:abstractNum/w:lvl[@w:ilvl='4']", namespaces=NS)[0]
         bullet_outline = bullet_lvl.find("./w:pPr/w:outlineLvl", NS)
@@ -741,12 +784,75 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(rPr.find("./w:szCs", NS).get(qn("val")), "32")
 
         ind = updated_level_two.find("./w:pPr/w:ind", NS)
+        tab = updated_level_two.find("./w:pPr/w:tabs/w:tab", NS)
+        suff = updated_level_two.find("./w:suff", NS)
+        lvl_jc = updated_level_two.find("./w:lvlJc", NS)
         self.assertEqual(
             (ind.get(qn("left")), ind.get(qn("hanging"))),
             expected_indent(1),
         )
+        self.assertEqual(tab.get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[1]["left"])
+        self.assertEqual(suff.get(qn("val")), "tab")
+        self.assertEqual(lvl_jc.get(qn("val")), "left")
         assert_no_char_indent_attrs(self, ind)
         self.assertIsNone(updated_level_three.find("./w:rPr/w:sz", NS))
+
+    def test_numbering_xml_normalizes_lvljc_suffix_tabs_and_number_start(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+
+        for abstract_id, num_id, jc in (("1", "10", "right"), ("2", "20", "left")):
+            abstract = etree.SubElement(root, qn("abstractNum"))
+            abstract.set(qn("abstractNumId"), abstract_id)
+            lvl = etree.SubElement(abstract, qn("lvl"))
+            lvl.set(qn("ilvl"), "1")
+            lvl_jc = etree.SubElement(lvl, qn("lvlJc"))
+            lvl_jc.set(qn("val"), jc)
+            suff = etree.SubElement(lvl, qn("suff"))
+            suff.set(qn("val"), "nothing")
+            num_fmt = etree.SubElement(lvl, qn("numFmt"))
+            num_fmt.set(qn("val"), "taiwaneseCountingThousand")
+            lvl_text = etree.SubElement(lvl, qn("lvlText"))
+            lvl_text.set(qn("val"), "%1\u3001")
+            pPr = etree.SubElement(lvl, qn("pPr"))
+            tabs = etree.SubElement(pPr, qn("tabs"))
+            tab = etree.SubElement(tabs, qn("tab"))
+            tab.set(qn("val"), "left")
+            tab.set(qn("pos"), "999")
+            ind = etree.SubElement(pPr, qn("ind"))
+            ind.set(qn("left"), "999")
+            ind.set(qn("hanging"), "111")
+
+            num = etree.SubElement(root, qn("num"))
+            num.set(qn("numId"), num_id)
+            abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+            abstract_ref.set(qn("val"), abstract_id)
+
+        updated = apply_numbering_outline_format(etree.tostring(root))
+        updated_root = etree.fromstring(updated)
+        levels = updated_root.xpath("./w:abstractNum/w:lvl[@w:ilvl='1']", namespaces=NS)
+        expected_left, expected_hanging = expected_indent(1)
+        expected_number_start = str(int(expected_left) - int(expected_hanging))
+
+        for lvl in levels:
+            with self.subTest(abstract=lvl.getparent().get(qn("abstractNumId"))):
+                ind = lvl.find("./w:pPr/w:ind", NS)
+                tab = lvl.find("./w:pPr/w:tabs/w:tab", NS)
+                self.assertEqual(lvl.find("./w:lvlJc", NS).get(qn("val")), "left")
+                self.assertEqual(lvl.find("./w:suff", NS).get(qn("val")), "tab")
+                self.assertEqual(ind.get(qn("left")), expected_left)
+                self.assertEqual(ind.get(qn("hanging")), expected_hanging)
+                self.assertEqual(str(int(ind.get(qn("left"))) - int(ind.get(qn("hanging")))), expected_number_start)
+                self.assertEqual(tab.get(qn("pos")), expected_left)
+
+        lookup = build_numbering_format_lookup(updated)
+        self.assertEqual(lookup[("10", 1)]["lvlJc"], "left")
+        self.assertEqual(lookup[("20", 1)]["lvlJc"], "left")
+        self.assertEqual(lookup[("10", 1)]["suff"], "tab")
+        self.assertEqual(lookup[("20", 1)]["suff"], "tab")
+        self.assertEqual(lookup[("10", 1)]["left"], lookup[("20", 1)]["left"])
+        self.assertEqual(lookup[("10", 1)]["hanging"], lookup[("20", 1)]["hanging"])
+        self.assertEqual(lookup[("10", 1)]["number_start"], lookup[("20", 1)]["number_start"])
+        self.assertEqual(lookup[("10", 1)]["tab_pos"], lookup[("20", 1)]["tab_pos"])
 
 
 if __name__ == "__main__":
