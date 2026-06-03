@@ -23,7 +23,7 @@ from .path_utils import is_same_file_path
 from .process_runner import run_powershell_script
 from .stop_controller import StopController
 from .table_format import process_table, table_cell_count, table_column_count
-from .xml_utils import qn
+from .xml_utils import qn, remove_character_indent_attrs_from_root
 
 def should_process_part(name: str) -> bool:
     if name == "word/document.xml":
@@ -47,6 +47,22 @@ def should_remove_outline_part(name: str) -> bool:
 
 def should_force_body_outline_part(name: str) -> bool:
     return should_process_part(name)
+
+
+def should_sanitize_indent_unit_part(name: str) -> bool:
+    if name == "word/document.xml":
+        return True
+    if name == "word/styles.xml":
+        return True
+    if name == "word/numbering.xml":
+        return True
+    if name.startswith("word/header") and name.endswith(".xml"):
+        return True
+    if name.startswith("word/footer") and name.endswith(".xml"):
+        return True
+    if name in {"word/footnotes.xml", "word/endnotes.xml"}:
+        return True
+    return False
 
 
 def should_fix_paragraph_part(name: str) -> bool:
@@ -373,6 +389,19 @@ def fix_docx_fast(
 
                     summary.tables += table_count
 
+                data = etree.tostring(
+                    root,
+                    xml_declaration=True,
+                    encoding="UTF-8",
+                    standalone=True,
+                )
+
+            if should_sanitize_indent_unit_part(item.filename):
+                if root is None:
+                    root = etree.fromstring(data, parser)
+                removed_char_indent_attrs = remove_character_indent_attrs_from_root(root)
+                if removed_char_indent_attrs:
+                    summary.character_indent_attrs_removed += removed_char_indent_attrs
                 data = etree.tostring(
                     root,
                     xml_declaration=True,

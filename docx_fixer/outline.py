@@ -24,7 +24,7 @@ from .numbering import (
     paragraph_style_id,
 )
 from .stop_controller import StopController
-from .xml_utils import get_or_add, paragraph_text, qn
+from .xml_utils import CHAR_INDENT_ATTRS, get_or_add, paragraph_text, qn
 
 NOTE_MARKER_PREFIXES = ("※",)
 STYLE_NUMBERING_MAX_TEXT_LENGTH = 35
@@ -264,9 +264,8 @@ def clear_indent_attrs(ind) -> None:
     """清掉會互相干擾的縮排屬性，避免 left/start 或 firstLine/hanging 並存。"""
     for attr in [
         "left", "start", "right", "end",
-        "leftChars", "startChars", "rightChars", "endChars",
         "firstLine", "hanging",
-        "firstLineChars", "hangingChars",
+        *CHAR_INDENT_ATTRS,
     ]:
         ind.attrib.pop(qn(attr), None)
 
