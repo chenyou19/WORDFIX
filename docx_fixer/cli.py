@@ -18,6 +18,7 @@ def run_cli(args) -> int:
         fix_paragraph=args.paragraph,
         include_tables_in_paragraph=args.paragraph_in_tables,
         remove_preface_outline=args.remove_preface_outline,
+        remove_all_outline_levels=args.remove_all_outline,
     )
 
     if not (
@@ -25,8 +26,16 @@ def run_cli(args) -> int:
         or options.fix_color
         or options.fix_paragraph
         or options.remove_preface_outline
+        or options.remove_all_outline_levels
     ):
-        options = ProcessOptions(True, True, True, args.paragraph_in_tables, True)
+        options = ProcessOptions(
+            fix_table_layout=True,
+            fix_color=True,
+            fix_paragraph=True,
+            include_tables_in_paragraph=args.paragraph_in_tables,
+            remove_preface_outline=True,
+            remove_all_outline_levels=False,
+        )
 
     stop = StopController()
 
@@ -63,6 +72,7 @@ def run_cli(args) -> int:
     print(f"總段落數：{summary.total_paragraphs}")
     print(f"跳過目錄段落數：{summary.skipped_toc_paragraphs}")
     print(f"跳過表格段落數：{summary.skipped_table_paragraphs}")
+    print(f"移除全文件既有大綱階層的段落數：{summary.removed_all_outline_paragraphs}")
     print(f"移除壹、序言前大綱階層的段落數：{summary.removed_preface_outline_paragraphs}")
     for level, count in enumerate(summary.paragraph_level_counts, start=1):
         print(f"成功套用第 {level} 階數量：{count}")
@@ -80,6 +90,7 @@ def parse_args(argv: list[str]):
     parser.add_argument("--table", action="store_true", help="啟用表格基本格式整理")
     parser.add_argument("--color", action="store_true", help="啟用顏色整理：BFBFBF／A6A6A6／808080 改 D9D9D9，F2F2F2 保持，其他顏色改無色彩")
     parser.add_argument("--paragraph", action="store_true", help="啟用文件編號階層縮排，並依範本.docx的縮排標準套用")
+    parser.add_argument("--remove-all-outline", action="store_true", help="去除文件中所有既有 Word 大綱階層")
     parser.add_argument("--remove-preface-outline", action="store_true", help="移除第一次壹、序言前既有的 Word 大綱階層")
     parser.add_argument("--paragraph-in-tables", action="store_true", help="文件編號階層縮排也處理表格內段落")
     parser.add_argument("--quiet", action="store_true", help="命令列模式不輸出進度")

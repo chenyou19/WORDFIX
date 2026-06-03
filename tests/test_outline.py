@@ -13,7 +13,11 @@ from docx_fixer.constants import (
 )
 from docx_fixer.models import ProcessSummary
 from docx_fixer.numbering import apply_numbering_outline_format
-from docx_fixer.outline import detect_outline_level, fix_outline_paragraphs
+from docx_fixer.outline import (
+    detect_outline_level,
+    fix_outline_paragraphs,
+    remove_all_outline_levels_from_root,
+)
 from docx_fixer.xml_utils import qn
 
 
@@ -376,6 +380,21 @@ class OutlineFixTests(unittest.TestCase):
         fix_outline_paragraphs(root, include_tables=True)
 
         self.assertEqual(paragraph_outline(body), "2")
+
+    def test_remove_all_outline_levels_from_root_removes_every_existing_outline(self):
+        first = make_paragraph("\u666e\u901a\u6b63\u6587", outline=2)
+        second = make_paragraph("\u58f9\u3001\u5e8f\u8a00", outline=0)
+        third = make_paragraph("\u7121\u5927\u7db1")
+        root = make_root(first, second, third)
+        summary = ProcessSummary()
+
+        removed = remove_all_outline_levels_from_root(root, summary=summary)
+
+        self.assertEqual(removed, 2)
+        self.assertEqual(summary.removed_all_outline_paragraphs, 2)
+        self.assertIsNone(paragraph_outline(first))
+        self.assertIsNone(paragraph_outline(second))
+        self.assertIsNone(paragraph_outline(third))
 
     def test_paragraph_summary_counts_levels_and_skips(self):
         toc = make_paragraph("\u76ee\u9304")

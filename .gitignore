@@ -6,6 +6,7 @@ indent_defaults.json
 .venv/
 build/
 dist/
+testword/
 
 __pycache__/
 *.py[cod]

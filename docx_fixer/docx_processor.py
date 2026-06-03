@@ -14,7 +14,7 @@ from .numbering import (
     build_numbering_level_lookup,
     build_style_numbering_lookup,
 )
-from .outline import fix_outline_paragraphs
+from .outline import fix_outline_paragraphs, remove_all_outline_levels_from_root
 from .path_utils import is_same_file_path
 from .process_runner import run_powershell_script
 from .stop_controller import StopController
@@ -234,6 +234,45 @@ def fix_docx_fast(
                 if item.filename == "word/document.xml" and not document_table_pages:
                     document_table_pages = get_rendered_table_start_pages(root)
 
+                if options.remove_all_outline_levels:
+                    if progress_callback:
+                        progress_callback(
+                            percent=((item_index + 0.25) / total_items) * 100,
+                            message=f"{item.filename}：去除所有大綱階層",
+                        )
+                    remove_all_outline_levels_from_root(
+                        root,
+                        stop=stop,
+                        summary=summary,
+                    )
+
+                if (
+                    (options.fix_paragraph or options.remove_preface_outline)
+                    and should_fix_paragraph_part(item.filename)
+                ):
+                    if progress_callback:
+                        message = "移除壹、序言前的大綱階層"
+                        if options.fix_paragraph:
+                            message = "處理文件編號段落與大綱階層（跳過目錄）"
+                        progress_callback(
+                            percent=((item_index + 0.95) / total_items) * 100,
+                            message=f"{item.filename}：{message}",
+                        )
+
+                    changed_paragraphs = fix_outline_paragraphs(
+                        root,
+                        include_tables=options.include_tables_in_paragraph,
+                        stop=stop,
+                        numbering_level_lookup=numbering_level_lookup,
+                        style_numbering_lookup=style_numbering_lookup,
+                        change_logs=summary.paragraph_logs,
+                        part_name=item.filename,
+                        summary=summary,
+                        remove_preface_outline=options.remove_preface_outline,
+                        fix_numbered_paragraphs=options.fix_paragraph,
+                    )
+                    summary.paragraphs += changed_paragraphs
+
                 if options.fix_table_layout or options.fix_color:
                     tables = root.xpath(".//w:tbl", namespaces=NS)
                     table_count = len(tables)
@@ -284,33 +323,6 @@ def fix_docx_fast(
                             )
 
                     summary.tables += table_count
-
-                if (
-                    (options.fix_paragraph or options.remove_preface_outline)
-                    and should_fix_paragraph_part(item.filename)
-                ):
-                    if progress_callback:
-                        message = "移除壹、序言前的大綱階層"
-                        if options.fix_paragraph:
-                            message = "處理文件編號段落與大綱階層（跳過目錄）"
-                        progress_callback(
-                            percent=((item_index + 0.95) / total_items) * 100,
-                            message=f"{item.filename}：{message}",
-                        )
-
-                    changed_paragraphs = fix_outline_paragraphs(
-                        root,
-                        include_tables=options.include_tables_in_paragraph,
-                        stop=stop,
-                        numbering_level_lookup=numbering_level_lookup,
-                        style_numbering_lookup=style_numbering_lookup,
-                        change_logs=summary.paragraph_logs,
-                        part_name=item.filename,
-                        summary=summary,
-                        remove_preface_outline=options.remove_preface_outline,
-                        fix_numbered_paragraphs=options.fix_paragraph,
-                    )
-                    summary.paragraphs += changed_paragraphs
 
                 data = etree.tostring(
                     root,

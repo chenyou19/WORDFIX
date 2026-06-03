@@ -54,6 +54,7 @@ class DocxFixerApp:
         self.fix_table_var = tk.BooleanVar(value=True)
         self.fix_color_var = tk.BooleanVar(value=True)
         self.fix_paragraph_var = tk.BooleanVar(value=True)
+        self.remove_all_outline_var = tk.BooleanVar(value=False)
         self.remove_preface_outline_var = tk.BooleanVar(value=True)
         self.paragraph_in_tables_var = tk.BooleanVar(value=False)
 
@@ -101,7 +102,7 @@ class DocxFixerApp:
         hint.grid(row=2, column=1, padx=8, pady=(0, 8), sticky="w")
 
         # 功能選項
-        option_frame = ttk.LabelFrame(process_tab, text="可勾選的四種方案")
+        option_frame = ttk.LabelFrame(process_tab, text="可勾選的處理方案")
         option_frame.pack(fill="x", pady=(0, 10))
 
         ttk.Checkbutton(
@@ -114,6 +115,12 @@ class DocxFixerApp:
             option_frame,
             text="調整顏色：BFBFBF／A6A6A6／808080 改 D9D9D9；F2F2F2 保持；其他顏色改無色彩",
             variable=self.fix_color_var,
+        ).pack(anchor="w", padx=8, pady=4)
+
+        ttk.Checkbutton(
+            option_frame,
+            text="去除所有大綱階層",
+            variable=self.remove_all_outline_var,
         ).pack(anchor="w", padx=8, pady=4)
 
         ttk.Checkbutton(
@@ -392,6 +399,7 @@ class DocxFixerApp:
             fix_paragraph=self.fix_paragraph_var.get(),
             include_tables_in_paragraph=self.paragraph_in_tables_var.get(),
             remove_preface_outline=self.remove_preface_outline_var.get(),
+            remove_all_outline_levels=self.remove_all_outline_var.get(),
         )
 
         if not (
@@ -399,6 +407,7 @@ class DocxFixerApp:
             or options.fix_color
             or options.fix_paragraph
             or options.remove_preface_outline
+            or options.remove_all_outline_levels
         ):
             messagebox.showwarning("尚未選擇方案", "請至少勾選一種修改方案。")
             return None
@@ -576,6 +585,7 @@ class DocxFixerApp:
                     self.append_log(f"總段落數：{summary.total_paragraphs}")
                     self.append_log(f"跳過目錄段落數：{summary.skipped_toc_paragraphs}")
                     self.append_log(f"跳過表格段落數：{summary.skipped_table_paragraphs}")
+                    self.append_log(f"移除全文件既有大綱階層的段落數：{summary.removed_all_outline_paragraphs}")
                     self.append_log(f"移除壹、序言前大綱階層的段落數：{summary.removed_preface_outline_paragraphs}")
                     for level, count in enumerate(summary.paragraph_level_counts, start=1):
                         self.append_log(f"成功套用第 {level} 階數量：{count}")
