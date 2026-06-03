@@ -43,6 +43,7 @@ class ProcessSummary:
     paragraph_logs: list[str] = field(default_factory=list)
     numbering_measurements: dict[str, dict[str, object]] = field(default_factory=dict)
     numbering_debug_logs: list[str] = field(default_factory=list)
+    body_indent_debug_logs: list[str] = field(default_factory=list)
     character_indent_attrs_removed: int = 0
 
     @property

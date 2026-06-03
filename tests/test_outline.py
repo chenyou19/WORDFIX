@@ -131,6 +131,17 @@ def add_ind_with_char_attrs(p):
     return ind
 
 
+def add_tab_stop(p, pos="999"):
+    pPr = p.find("./w:pPr", NS)
+    if pPr is None:
+        pPr = etree.SubElement(p, qn("pPr"))
+    tabs = etree.SubElement(pPr, qn("tabs"))
+    tab = etree.SubElement(tabs, qn("tab"))
+    tab.set(qn("val"), "left")
+    tab.set(qn("pos"), pos)
+    return tabs
+
+
 def assert_no_char_indent_attrs(testcase, element):
     for attr in ("leftChars", "startChars", "hangingChars", "firstLineChars"):
         testcase.assertIsNone(element.get(qn(attr)), attr)
@@ -520,6 +531,32 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[2]["body_left"])
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
+
+    def test_level_four_body_indent_uses_body_left_and_removes_hanging_and_tabs(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph("\u9019\u662f\u7b2c\u56db\u968e\u4e0b\u65b9 14 pt \u5167\u6587", font_size_pt=14)
+        ind = add_ind_with_char_attrs(body)
+        ind.set(qn("firstLine"), "111")
+        add_tab_stop(body, pos="1990")
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary)
+
+        body_ind = body.find("./w:pPr/w:ind", NS)
+        expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
+        self.assertEqual(body_ind.get(qn("left")), expected_left)
+        self.assertAlmostEqual(twips_to_cm(expected_left), 3.94, places=2)
+        self.assertIsNone(body_ind.get(qn("hanging")))
+        self.assertIsNone(body_ind.get(qn("firstLine")))
+        assert_no_char_indent_attrs(self, body_ind)
+        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("heading_level=3", debug)
+        self.assertIn("spec_body_left_cm=3.94", debug)
+        self.assertIn(f"written_left_twips={expected_left}", debug)
+        self.assertIn("tab_pos=None", debug)
 
     def test_body_indent_skips_non_14_pt_paragraph_and_logs_reason(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")

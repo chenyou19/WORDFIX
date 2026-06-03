@@ -53,6 +53,15 @@ def format_numbering_debug_log_lines(summary: ProcessSummary) -> list[str]:
     return lines
 
 
+def format_body_indent_debug_log_lines(summary: ProcessSummary) -> list[str]:
+    lines = ["Body indent debug:"]
+    if not summary.body_indent_debug_logs:
+        lines.append("No body indent debug records.")
+        return lines
+    lines.extend(summary.body_indent_debug_logs)
+    return lines
+
+
 def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
     log_path = get_process_log_path(output_docx)
     lines = [
@@ -92,6 +101,8 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         *format_numbering_indent_log_lines(summary),
         "",
         *format_numbering_debug_log_lines(summary),
+        "",
+        *format_body_indent_debug_log_lines(summary),
         "",
         "段落大綱階層修改紀錄：",
     ]

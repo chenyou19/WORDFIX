@@ -290,6 +290,12 @@ def normalize_tabs_to_text_position(pPr, text_position_twips: str) -> None:
     pPr.append(tabs)
 
 
+def remove_paragraph_tabs(pPr) -> None:
+    tabs = pPr.find("w:tabs", NS)
+    if tabs is not None:
+        pPr.remove(tabs)
+
+
 def apply_paragraph_outline_level(pPr, level: int) -> None:
     """設定 Word 段落屬性中的「大綱階層」。
 
@@ -708,6 +714,41 @@ def append_numbering_debug_log(
     )
 
 
+def append_body_indent_debug_log(
+    summary,
+    *,
+    part_name: str,
+    paragraph_index: int,
+    text: str,
+    p,
+    heading_level: int,
+    heading_uses_outline: bool,
+) -> None:
+    if summary is None:
+        return
+
+    spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
+    if spec is None:
+        return
+
+    paragraph_format = paragraph_indent_debug_format(p)
+    body_left_twips = spec.get("body_left", spec["left"])
+    preview = summarize_paragraph_text(text)
+    summary.body_indent_debug_logs.append(
+        f"[{part_name} #{paragraph_index}] "
+        f"text={preview!r}; heading_level={heading_level}; "
+        f"heading_uses_outline={heading_uses_outline}; "
+        f"spec_left_cm={twips_to_cm(spec['left']):.2f}; "
+        f"spec_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
+        f"spec_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
+        f"spec_body_left_cm={twips_to_cm(body_left_twips):.2f}; "
+        f"written_left_twips={paragraph_format.get('left')}; "
+        f"written_left_cm={twips_to_cm(paragraph_format.get('left')):.2f}; "
+        f"written_hanging={paragraph_format.get('hanging')}; "
+        f"tab_pos={paragraph_format.get('tab_pos')}"
+    )
+
+
 def summarize_paragraph_text(text: str, limit: int = 80) -> str:
     normalized = " ".join((text or "").split())
     if len(normalized) <= limit:
@@ -802,6 +843,7 @@ def apply_body_indent_from_heading(p, heading_level: int, heading_uses_outline: 
     ind = get_or_add(pPr, "ind")
     clear_indent_attrs(ind)
     ind.set(qn("left"), spec.get("body_left", spec["left"]))
+    remove_paragraph_tabs(pPr)
     return True
 
 
@@ -1068,6 +1110,15 @@ def fix_outline_paragraphs(
                         continue
                     if apply_body_indent_from_heading(p, heading_level, heading_uses_outline):
                         changed_count += 1
+                        append_body_indent_debug_log(
+                            summary,
+                            part_name=part_name,
+                            paragraph_index=paragraph_index,
+                            text=text,
+                            p=p,
+                            heading_level=heading_level,
+                            heading_uses_outline=heading_uses_outline,
+                        )
                         append_paragraph_change_log(
                             change_logs,
                             part_name,
