@@ -40,6 +40,25 @@ class IndentSettingsTests(unittest.TestCase):
         self.assertAlmostEqual(number_start_cm, 2.25, places=2)
         self.assertAlmostEqual(hanging_cm, 2.25, places=2)
 
+    def test_current_settings_expose_updated_body_indent_defaults_for_gui(self):
+        settings = current_indent_settings()
+        expected = [
+            (1.11, -0.04),
+            (1.8, 0.69),
+            (2.32, 1.32),
+            (3.79, 3.05),
+            (4.76, 3.53),
+            (5.27, 4.52),
+            (6.26, 5.02),
+            (6.96, 6.2),
+            (8.96, 7.72),
+        ]
+
+        for row, (left_cm, number_start_cm) in zip(settings["body"], expected):
+            with self.subTest(level=row["level"]):
+                self.assertAlmostEqual(float(row["left_cm"]), left_cm, places=2)
+                self.assertAlmostEqual(float(row["number_start_cm"]), number_start_cm, places=2)
+
     def test_save_and_load_settings_round_trips_preface_values(self):
         settings = current_indent_settings()
         settings["preface"][2]["left_cm"] = 3.01

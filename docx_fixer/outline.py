@@ -897,7 +897,7 @@ def fix_outline_paragraphs(
                     reason = "段落開頭手動編號"
 
             if level is None:
-                if main_outline_started and current_heading_indent is not None:
+                if current_heading_indent is not None:
                     heading_level, heading_uses_outline = current_heading_indent
                     if apply_body_indent_from_heading(p, heading_level, heading_uses_outline):
                         changed_count += 1
@@ -945,6 +945,7 @@ def fix_outline_paragraphs(
                 if indent_preface_paragraphs:
                     increment_indented_preface_count(summary)
                     actions.append(f"套用壹、序言前第 {indent_level + 1} 階縮排")
+                    current_heading_indent = (indent_level, False)
                 if outline_preface_paragraphs:
                     increment_outlined_preface_count(summary)
                     actions.append(f"套用壹、序言前第 {indent_level + 1} 階大綱階層")
