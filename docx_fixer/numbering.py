@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from lxml import etree
 
-from .constants import NS, TEMPLATE_OUTLINE_INDENTS
+from .constants import NS, OUTLINE_LEVEL_FONT_SIZE_PT, TEMPLATE_OUTLINE_INDENTS
 from .xml_utils import get_or_add, qn
 
 BULLET_OUTLINE_LEVEL = -1
@@ -271,6 +271,14 @@ def apply_numbering_level_outline_format(lvl, level: int) -> None:
     # 自動編號後面不要用 tab，也不要用 space。
     # tab 會形成一大片灰色留白；space 會形成一小塊灰色方塊。
     # 改成 nothing，讓灰底只包住編號本身。
+    font_size_pt = OUTLINE_LEVEL_FONT_SIZE_PT.get(level)
+    if font_size_pt is not None:
+        rPr = get_or_add(lvl, "rPr")
+        font_size = str(round(font_size_pt * 2))
+        for tag in ("sz", "szCs"):
+            size_el = get_or_add(rPr, tag)
+            size_el.set(qn("val"), font_size)
+
     suff = lvl.find("w:suff", NS)
     if suff is None:
         suff = etree.Element(qn("suff"))

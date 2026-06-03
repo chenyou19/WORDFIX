@@ -6,6 +6,7 @@ from lxml import etree
 
 from docx_fixer.constants import (
     NS,
+    OUTLINE_LEVEL_FONT_SIZE_PT,
     PREFACE_OUTLINE_INDENTS,
     TEMPLATE_OUTLINE_INDENTS,
     W_NS,
@@ -39,6 +40,7 @@ def make_paragraph(
     outline: int | None = None,
     num_id: str | None = None,
     ilvl: int | None = None,
+    font_size_pt: float | None = None,
 ):
     p = etree.Element(qn("p"))
     pPr = etree.SubElement(p, qn("pPr"))
@@ -60,6 +62,11 @@ def make_paragraph(
         num_id_el.set(qn("val"), num_id)
 
     r = etree.SubElement(p, qn("r"))
+    if font_size_pt is not None:
+        rPr = etree.SubElement(r, qn("rPr"))
+        for tag in ("sz", "szCs"):
+            size = etree.SubElement(rPr, qn(tag))
+            size.set(qn("val"), str(round(font_size_pt * 2)))
     t = etree.SubElement(r, qn("t"))
     t.text = text
     return p
@@ -93,6 +100,35 @@ def paragraph_outline(p):
     if outline is None:
         return None
     return outline.get(qn("val"))
+
+
+def paragraph_text_run_sizes(p):
+    sizes = []
+    for run in p.findall("./w:r", NS):
+        if not "".join(run.xpath(".//w:t/text()", namespaces=NS)):
+            continue
+        size = run.find("./w:rPr/w:sz", NS)
+        sizes.append(size.get(qn("val")) if size is not None else None)
+    return sizes
+
+
+def add_ind_with_char_attrs(p):
+    pPr = p.find("./w:pPr", NS)
+    if pPr is None:
+        pPr = etree.SubElement(p, qn("pPr"))
+    ind = pPr.find("w:ind", NS)
+    if ind is None:
+        ind = etree.SubElement(pPr, qn("ind"))
+    ind.set(qn("left"), "123")
+    ind.set(qn("hanging"), "45")
+    for attr in ("leftChars", "startChars", "hangingChars", "firstLineChars"):
+        ind.set(qn(attr), "99")
+    return ind
+
+
+def assert_no_char_indent_attrs(testcase, element):
+    for attr in ("leftChars", "startChars", "hangingChars", "firstLineChars"):
+        testcase.assertIsNone(element.get(qn(attr)), attr)
 
 
 def expected_indent(level: int):
@@ -179,6 +215,40 @@ class OutlineFixTests(unittest.TestCase):
         for paragraph, level in zip(paragraphs[4:], [0, 1, 2, 3, 4]):
             self.assertEqual(paragraph_indent(paragraph), expected_indent(level))
             self.assertEqual(paragraph_outline(paragraph), str(level))
+
+    def test_user_visible_level_two_text_is_set_to_16_pt(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00", font_size_pt=12)
+        level_two = make_paragraph("\u4e00\u3001\u6a19\u984c", font_size_pt=12)
+        level_three = make_paragraph("\uff08\u4e00\uff09\u6a19\u984c", font_size_pt=12)
+        add_ind_with_char_attrs(level_two)
+        root = make_root(marker, level_two, level_three)
+
+        fix_outline_paragraphs(root, include_tables=True)
+
+        self.assertEqual(OUTLINE_LEVEL_FONT_SIZE_PT[1], 16.0)
+        self.assertEqual(paragraph_text_run_sizes(level_two), ["32"])
+        self.assertEqual(paragraph_text_run_sizes(marker), ["24"])
+        self.assertEqual(paragraph_text_run_sizes(level_three), ["24"])
+        assert_no_char_indent_attrs(self, level_two.find("./w:pPr/w:ind", NS))
+
+    def test_auto_numbered_level_two_paragraph_text_is_set_to_16_pt(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00", font_size_pt=12)
+        auto_level_two = make_paragraph(
+            "\u81ea\u52d5\u7de8\u865f\u6a19\u984c",
+            num_id="1",
+            ilvl=1,
+            font_size_pt=12,
+        )
+        root = make_root(marker, auto_level_two)
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            numbering_level_lookup={("1", 1): 1},
+        )
+
+        self.assertEqual(paragraph_text_run_sizes(auto_level_two), ["32"])
+        self.assertEqual(paragraph_outline(auto_level_two), "1")
 
     def test_detects_all_manual_outline_numbering_shapes(self):
         samples = [
@@ -361,9 +431,9 @@ class OutlineFixTests(unittest.TestCase):
     def test_body_paragraph_after_heading_aligns_to_heading_text_start(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\u4e00\u3001\u5e8f\u8a00\u5167\u5c64")
-        body = make_paragraph("\u9019\u662f\u6a19\u984c\u4e0b\u65b9\u5167\u6587")
+        body = make_paragraph("\u9019\u662f\u6a19\u984c\u4e0b\u65b9\u5167\u6587", font_size_pt=14)
         nested_heading = make_paragraph("\uff08\u4e00\uff09\u5167\u5c64\u6a19\u984c")
-        nested_body = make_paragraph("\u9019\u662f\u5167\u5c64\u6a19\u984c\u4e0b\u65b9\u5167\u6587")
+        nested_body = make_paragraph("\u9019\u662f\u5167\u5c64\u6a19\u984c\u4e0b\u65b9\u5167\u6587", font_size_pt=14)
         root = make_root(marker, heading, body, nested_heading, nested_body)
         summary = ProcessSummary()
 
@@ -385,7 +455,7 @@ class OutlineFixTests(unittest.TestCase):
     def test_body_after_level_one_heading_aligns_to_heading_text_start_only(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\u4e00\u3001\u7814\u7a76\u76ee\u7684")
-        body = make_paragraph("\u9019\u662f\u666e\u901a\u5167\u6587")
+        body = make_paragraph("\u9019\u662f\u666e\u901a\u5167\u6587", font_size_pt=14)
         root = make_root(marker, heading, body)
 
         fix_outline_paragraphs(root, include_tables=True)
@@ -398,7 +468,7 @@ class OutlineFixTests(unittest.TestCase):
     def test_body_after_level_two_heading_aligns_to_heading_text_start_only(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\uff08\u4e00\uff09\u7814\u7a76\u65b9\u6cd5")
-        body = make_paragraph("\u9019\u662f\u666e\u901a\u5167\u6587")
+        body = make_paragraph("\u9019\u662f\u666e\u901a\u5167\u6587", font_size_pt=14)
         root = make_root(marker, heading, body)
 
         fix_outline_paragraphs(root, include_tables=True)
@@ -408,9 +478,45 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
 
+    def test_body_indent_skips_non_14_pt_paragraph_and_logs_reason(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\u4e00\u3001\u7814\u7a76\u76ee\u7684")
+        body = make_paragraph("\u9019\u662f 12 pt \u5167\u6587", font_size_pt=12)
+        original_ind = add_ind_with_char_attrs(body)
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary, change_logs=summary.paragraph_logs)
+
+        ind = body.find("./w:pPr/w:ind", NS)
+        self.assertIs(ind, original_ind)
+        self.assertEqual(ind.get(qn("left")), "123")
+        self.assertEqual(ind.get(qn("hanging")), "45")
+        self.assertEqual(ind.get(qn("leftChars")), "99")
+        self.assertTrue(any("字體大小不是 14 pt" in line for line in summary.paragraph_logs))
+
+    def test_body_indent_applies_only_to_14_pt_and_clears_char_indent_attrs(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\u4e00\u3001\u7814\u7a76\u76ee\u7684")
+        body_14 = make_paragraph("\u9019\u662f 14 pt \u5167\u6587", font_size_pt=14)
+        body_12 = make_paragraph("\u9019\u662f 12 pt \u5167\u6587", font_size_pt=12)
+        add_ind_with_char_attrs(body_14)
+        add_ind_with_char_attrs(body_12)
+        root = make_root(marker, heading, body_14, body_12)
+
+        fix_outline_paragraphs(root, include_tables=True)
+
+        body_14_ind = body_14.find("./w:pPr/w:ind", NS)
+        body_12_ind = body_12.find("./w:pPr/w:ind", NS)
+        self.assertEqual(body_14_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["left"])
+        self.assertIsNone(body_14_ind.get(qn("hanging")))
+        assert_no_char_indent_attrs(self, body_14_ind)
+        self.assertEqual(body_12_ind.get(qn("left")), "123")
+        self.assertEqual(body_12_ind.get(qn("leftChars")), "99")
+
     def test_preface_body_paragraph_aligns_to_preface_heading_when_indent_enabled(self):
         heading = make_paragraph("\u4e00\u3001\u524d\u7f6e\u9805")
-        body = make_paragraph("\u9019\u662f\u5e8f\u8a00\u524d\u7684\u5167\u6587", outline=2)
+        body = make_paragraph("\u9019\u662f\u5e8f\u8a00\u524d\u7684\u5167\u6587", outline=2, font_size_pt=14)
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         root = make_root(heading, body, marker)
         summary = ProcessSummary()
@@ -429,7 +535,7 @@ class OutlineFixTests(unittest.TestCase):
 
     def test_preface_body_aligns_when_preface_indent_is_enabled(self):
         heading = make_paragraph("\u4e00\u3001\u524d\u7f6e\u9805")
-        body = make_paragraph("\u9019\u662f\u5e8f\u8a00\u524d\u7684\u5167\u6587")
+        body = make_paragraph("\u9019\u662f\u5e8f\u8a00\u524d\u7684\u5167\u6587", font_size_pt=14)
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         root = make_root(heading, body, marker)
 
@@ -598,6 +704,47 @@ class OutlineFixTests(unittest.TestCase):
         bullet_lvl = root.xpath("./w:abstractNum/w:lvl[@w:ilvl='4']", namespaces=NS)[0]
         bullet_outline = bullet_lvl.find("./w:pPr/w:outlineLvl", NS)
         self.assertEqual(bullet_outline.get(qn("val")), "9")
+
+    def test_numbering_xml_level_two_font_and_indents_use_twips_without_char_attrs(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "1")
+
+        level_two = etree.SubElement(abstract, qn("lvl"))
+        level_two.set(qn("ilvl"), "1")
+        level_two_fmt = etree.SubElement(level_two, qn("numFmt"))
+        level_two_fmt.set(qn("val"), "custom")
+        level_two_text = etree.SubElement(level_two, qn("lvlText"))
+        level_two_text.set(qn("val"), "%1")
+        level_two_pPr = etree.SubElement(level_two, qn("pPr"))
+        level_two_ind = etree.SubElement(level_two_pPr, qn("ind"))
+        level_two_ind.set(qn("left"), "123")
+        for attr in ("leftChars", "startChars", "hangingChars", "firstLineChars"):
+            level_two_ind.set(qn(attr), "99")
+
+        level_three = etree.SubElement(abstract, qn("lvl"))
+        level_three.set(qn("ilvl"), "2")
+        level_three_fmt = etree.SubElement(level_three, qn("numFmt"))
+        level_three_fmt.set(qn("val"), "custom")
+        level_three_text = etree.SubElement(level_three, qn("lvlText"))
+        level_three_text.set(qn("val"), "%1")
+
+        updated = apply_numbering_outline_format(etree.tostring(root))
+        updated_root = etree.fromstring(updated)
+        updated_level_two = updated_root.xpath("./w:abstractNum/w:lvl[@w:ilvl='1']", namespaces=NS)[0]
+        updated_level_three = updated_root.xpath("./w:abstractNum/w:lvl[@w:ilvl='2']", namespaces=NS)[0]
+
+        rPr = updated_level_two.find("./w:rPr", NS)
+        self.assertEqual(rPr.find("./w:sz", NS).get(qn("val")), "32")
+        self.assertEqual(rPr.find("./w:szCs", NS).get(qn("val")), "32")
+
+        ind = updated_level_two.find("./w:pPr/w:ind", NS)
+        self.assertEqual(
+            (ind.get(qn("left")), ind.get(qn("hanging"))),
+            expected_indent(1),
+        )
+        assert_no_char_indent_attrs(self, ind)
+        self.assertIsNone(updated_level_three.find("./w:rPr/w:sz", NS))
 
 
 if __name__ == "__main__":

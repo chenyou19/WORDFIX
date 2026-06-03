@@ -26,12 +26,15 @@ from .path_utils import is_same_file_path
 from .process_log import write_process_log
 from .stop_controller import StopController
 
+DEFAULT_WINDOW_GEOMETRY = "900x720"
+MIN_WINDOW_SIZE = (820, 640)
+
 class DocxFixerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Word DOCX 快速整理工具")
-        self.root.geometry("780x560")
-        self.root.minsize(720, 520)
+        self.root.geometry(DEFAULT_WINDOW_GEOMETRY)
+        self.root.minsize(*MIN_WINDOW_SIZE)
 
         self.stop_controller = StopController()
         self.worker_thread: threading.Thread | None = None

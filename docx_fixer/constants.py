@@ -14,6 +14,11 @@ SIMPLE_NUM = "一二三四五六七八九十百千萬"
 
 POINTS_PER_CM = 28.3464567
 
+# User-visible level 2 ("一、") is internal level 1.
+OUTLINE_LEVEL_FONT_SIZE_PT = {
+    1: 16.0,
+}
+
 
 def cm_to_points(cm: float) -> float:
     return cm * POINTS_PER_CM

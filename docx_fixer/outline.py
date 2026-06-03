@@ -8,7 +8,14 @@ import unicodedata
 
 from lxml import etree
 
-from .constants import FINANCIAL_NUM, NS, PREFACE_OUTLINE_INDENTS, SIMPLE_NUM, TEMPLATE_OUTLINE_INDENTS
+from .constants import (
+    FINANCIAL_NUM,
+    NS,
+    OUTLINE_LEVEL_FONT_SIZE_PT,
+    PREFACE_OUTLINE_INDENTS,
+    SIMPLE_NUM,
+    TEMPLATE_OUTLINE_INDENTS,
+)
 from .indent_settings import twips_to_cm
 from .numbering import (
     detect_auto_number_level,
@@ -434,6 +441,63 @@ def get_number_prefix_run_properties(p) -> tuple[str, float]:
     return DEFAULT_NUMBER_FONT, DEFAULT_NUMBER_FONT_SIZE_PT
 
 
+def font_size_to_half_points(font_size_pt: float) -> str:
+    return str(round(font_size_pt * 2))
+
+
+def set_run_font_size_pt(run, font_size_pt: float) -> None:
+    rPr = get_or_add(run, "rPr", first=True)
+    value = font_size_to_half_points(font_size_pt)
+    for tag in ("sz", "szCs"):
+        size_el = get_or_add(rPr, tag)
+        size_el.set(qn("val"), value)
+
+
+def apply_outline_level_font_size(p, level: int) -> bool:
+    font_size_pt = OUTLINE_LEVEL_FONT_SIZE_PT.get(level)
+    if font_size_pt is None:
+        return False
+
+    changed = False
+    for run in p.findall("./w:r", NS):
+        text = "".join(run.xpath(".//w:t/text()", namespaces=NS))
+        if not text:
+            continue
+        set_run_font_size_pt(run, font_size_pt)
+        changed = True
+
+    return changed
+
+
+def primary_text_run_font_size_pt(p) -> float | None:
+    for run in p.findall("./w:r", NS):
+        text = "".join(run.xpath(".//w:t/text()", namespaces=NS))
+        if not text or not text.strip():
+            continue
+
+        size = run.find("./w:rPr/w:sz", NS)
+        if size is None:
+            return None
+
+        try:
+            return int(size.get(qn("val")) or "") / 2
+        except ValueError:
+            return None
+
+    return None
+
+
+def is_body_indent_font_size_allowed(p) -> bool:
+    font_size_pt = primary_text_run_font_size_pt(p)
+    return font_size_pt is not None and abs(font_size_pt - 14.0) < 0.01
+
+
+def format_font_size_for_log(font_size_pt: float | None) -> str:
+    if font_size_pt is None:
+        return "無法判斷"
+    return f"{font_size_pt:g} pt"
+
+
 def estimate_text_width_cm(text: str, font_size_pt: float) -> float:
     units = 0.0
     for ch in text:
@@ -602,9 +666,11 @@ def apply_outline_format(
     set_indent: bool,
     set_outline: bool,
     use_preface_indent: bool = False,
+    font_level: int | None = None,
 ) -> None:
     """依選項分別套用文件編號縮排與 Word 大綱階層。"""
     pPr = get_or_add(p, "pPr", first=True)
+    apply_outline_level_font_size(p, level if font_level is None else font_level)
 
     if set_outline:
         # level 0~8 對應 Word UI 的「大綱階層 1~9」。
@@ -641,6 +707,9 @@ def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
 
 def apply_body_indent_from_heading(p, heading_level: int, heading_uses_outline: bool) -> bool:
     """讓標題下方的普通內文左縮排對齊該標題的文字起點。"""
+    if not is_body_indent_font_size_allowed(p):
+        return False
+
     spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
     if spec is None:
         return False
@@ -899,6 +968,18 @@ def fix_outline_paragraphs(
             if level is None:
                 if current_heading_indent is not None:
                     heading_level, heading_uses_outline = current_heading_indent
+                    body_font_size_pt = primary_text_run_font_size_pt(p)
+                    if not is_body_indent_font_size_allowed(p):
+                        append_paragraph_change_log(
+                            change_logs,
+                            part_name,
+                            paragraph_index,
+                            text,
+                            before_outline,
+                            before_outline,
+                            f"跳過內文縮排：字體大小不是 14 pt（實際：{format_font_size_for_log(body_font_size_pt)}）",
+                        )
+                        continue
                     if apply_body_indent_from_heading(p, heading_level, heading_uses_outline):
                         changed_count += 1
                         append_paragraph_change_log(
@@ -938,6 +1019,7 @@ def fix_outline_paragraphs(
                     set_indent=indent_preface_paragraphs,
                     set_outline=outline_preface_paragraphs,
                     use_preface_indent=True,
+                    font_level=level,
                 )
                 changed_count += 1
                 after_outline = str(indent_level) if outline_preface_paragraphs else before_outline
