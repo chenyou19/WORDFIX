@@ -8,7 +8,7 @@ from .constants import (
     POINTS_PER_CM,
     PREFACE_OUTLINE_INDENTS,
     TEMPLATE_OUTLINE_INDENTS,
-    cm_to_twips,
+    make_outline_indent_spec,
 )
 
 INDENT_SETTINGS_FILENAME = "indent_defaults.json"
@@ -52,44 +52,45 @@ def format_cm(value: float) -> str:
     return text.rstrip("0").rstrip(".")
 
 
-def spec_to_cm_values(spec: dict[str, str]) -> tuple[float, float]:
-    left = twips_to_cm(spec["left"])
+def spec_to_cm_values(spec: dict[str, str]) -> tuple[float, float, float]:
     number_start = twips_to_cm(spec.get("number_start", int(spec["left"]) - int(spec["hanging"])))
-    return left, number_start
+    hanging = twips_to_cm(spec["hanging"])
+    body_left = twips_to_cm(spec.get("body_left", spec["left"]))
+    return number_start, hanging, body_left
 
 
-def make_indent_spec(left_cm: float, number_start_cm: float) -> dict[str, str]:
-    hanging_cm = left_cm - number_start_cm
+def make_indent_spec(number_start_cm: float, hanging_cm: float, body_left_cm: float) -> dict[str, str]:
     if hanging_cm <= 0:
-        raise ValueError("懸掛值必須大於 0，請確認文字起點大於編號起點。")
+        raise ValueError("凸排距離必須大於 0。")
 
-    return {
-        "left": cm_to_twips(left_cm),
-        "hanging": cm_to_twips(hanging_cm),
-        "number_start": cm_to_twips(number_start_cm),
-    }
+    return make_outline_indent_spec(number_start_cm, hanging_cm, body_left_cm)
 
 
 def built_in_indent_settings() -> dict[str, list[dict[str, float | int | str]]]:
     return {
         "body": [
-            {
-                "level": level,
-                "label": BODY_LEVEL_LABELS[level],
-                "left_cm": spec_to_cm_values(spec)[0],
-                "number_start_cm": spec_to_cm_values(spec)[1],
-            }
+            make_settings_row(level, BODY_LEVEL_LABELS[level], spec)
             for level, spec in TEMPLATE_OUTLINE_INDENTS.items()
         ],
         "preface": [
-            {
-                "level": level,
-                "label": PREFACE_LEVEL_LABELS[level],
-                "left_cm": spec_to_cm_values(PREFACE_OUTLINE_INDENTS.get(level, TEMPLATE_OUTLINE_INDENTS[level]))[0],
-                "number_start_cm": spec_to_cm_values(PREFACE_OUTLINE_INDENTS.get(level, TEMPLATE_OUTLINE_INDENTS[level]))[1],
-            }
+            make_settings_row(
+                level,
+                PREFACE_LEVEL_LABELS[level],
+                PREFACE_OUTLINE_INDENTS.get(level, TEMPLATE_OUTLINE_INDENTS[level]),
+            )
             for level in range(len(PREFACE_LEVEL_LABELS))
         ],
+    }
+
+
+def make_settings_row(level: int, label: str, spec: dict[str, str]) -> dict[str, float | int | str]:
+    number_start_cm, hanging_cm, body_left_cm = spec_to_cm_values(spec)
+    return {
+        "level": level,
+        "label": label,
+        "number_start_cm": number_start_cm,
+        "hanging_cm": hanging_cm,
+        "body_left_cm": body_left_cm,
     }
 
 
@@ -97,14 +98,37 @@ def current_indent_settings() -> dict[str, list[dict[str, float | int | str]]]:
     settings = built_in_indent_settings()
     for row in settings["body"]:
         level = int(row["level"])
-        row["left_cm"], row["number_start_cm"] = spec_to_cm_values(TEMPLATE_OUTLINE_INDENTS[level])
+        row.update(make_settings_row(level, str(row["label"]), TEMPLATE_OUTLINE_INDENTS[level]))
 
     for row in settings["preface"]:
         level = int(row["level"])
         spec = PREFACE_OUTLINE_INDENTS.get(level, TEMPLATE_OUTLINE_INDENTS[level])
-        row["left_cm"], row["number_start_cm"] = spec_to_cm_values(spec)
+        row.update(make_settings_row(level, str(row["label"]), spec))
 
     return settings
+
+
+def normalize_row(row: dict, level: int, label: str) -> dict[str, float | int | str]:
+    if "hanging_cm" in row or "body_left_cm" in row:
+        number_start_cm = float(row["number_start_cm"])
+        hanging_cm = float(row["hanging_cm"])
+        body_left_cm = float(row["body_left_cm"])
+    else:
+        # Backward compatibility for old indent_defaults.json:
+        # left_cm was the heading text start. Body text followed that same value.
+        left_cm = float(row["left_cm"])
+        number_start_cm = float(row["number_start_cm"])
+        hanging_cm = left_cm - number_start_cm
+        body_left_cm = left_cm
+
+    make_indent_spec(number_start_cm, hanging_cm, body_left_cm)
+    return {
+        "level": level,
+        "label": label,
+        "number_start_cm": number_start_cm,
+        "hanging_cm": hanging_cm,
+        "body_left_cm": body_left_cm,
+    }
 
 
 def normalize_indent_settings(settings: dict) -> dict[str, list[dict[str, float | int | str]]]:
@@ -132,16 +156,7 @@ def normalize_indent_settings(settings: dict) -> dict[str, list[dict[str, float 
             if level not in by_level:
                 raise ValueError(f"{section} 缺少第 {level + 1} 階設定。")
 
-            row = by_level[level]
-            left_cm = float(row["left_cm"])
-            number_start_cm = float(row["number_start_cm"])
-            make_indent_spec(left_cm, number_start_cm)
-            normalized[section].append({
-                "level": level,
-                "label": label,
-                "left_cm": left_cm,
-                "number_start_cm": number_start_cm,
-            })
+            normalized[section].append(normalize_row(by_level[level], level, label))
 
     return normalized
 
@@ -152,15 +167,17 @@ def apply_indent_settings(settings: dict) -> dict[str, list[dict[str, float | in
     TEMPLATE_OUTLINE_INDENTS.clear()
     for row in normalized["body"]:
         TEMPLATE_OUTLINE_INDENTS[int(row["level"])] = make_indent_spec(
-            float(row["left_cm"]),
             float(row["number_start_cm"]),
+            float(row["hanging_cm"]),
+            float(row["body_left_cm"]),
         )
 
     PREFACE_OUTLINE_INDENTS.clear()
     for row in normalized["preface"]:
         PREFACE_OUTLINE_INDENTS[int(row["level"])] = make_indent_spec(
-            float(row["left_cm"]),
             float(row["number_start_cm"]),
+            float(row["hanging_cm"]),
+            float(row["body_left_cm"]),
         )
 
     return normalized

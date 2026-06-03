@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from copy import deepcopy
 from pathlib import Path
 
@@ -26,59 +27,97 @@ class IndentSettingsTests(unittest.TestCase):
         PREFACE_OUTLINE_INDENTS.clear()
         PREFACE_OUTLINE_INDENTS.update(self.original_preface)
 
-    def test_apply_settings_uses_left_and_number_start_to_compute_hanging(self):
+    def test_apply_settings_uses_number_start_and_hanging_to_compute_heading_left(self):
         settings = current_indent_settings()
-        settings["body"][3]["left_cm"] = 4.50
         settings["body"][3]["number_start_cm"] = 2.25
+        settings["body"][3]["hanging_cm"] = 1.50
+        settings["body"][3]["body_left_cm"] = 9.25
 
         apply_indent_settings(settings)
 
-        left_cm, number_start_cm = spec_to_cm_values(TEMPLATE_OUTLINE_INDENTS[3])
-        hanging_cm = left_cm - number_start_cm
+        spec = TEMPLATE_OUTLINE_INDENTS[3]
+        number_start_cm, hanging_cm, body_left_cm = spec_to_cm_values(spec)
 
-        self.assertAlmostEqual(left_cm, 4.50, places=2)
         self.assertAlmostEqual(number_start_cm, 2.25, places=2)
-        self.assertAlmostEqual(hanging_cm, 2.25, places=2)
+        self.assertAlmostEqual(hanging_cm, 1.50, places=2)
+        self.assertAlmostEqual(body_left_cm, 9.25, places=2)
+        self.assertAlmostEqual(number_start_cm + hanging_cm, 3.75, places=2)
 
-    def test_current_settings_expose_updated_body_indent_defaults_for_gui(self):
+    def test_current_settings_expose_new_body_indent_defaults_for_gui(self):
         settings = current_indent_settings()
         expected = [
-            (1.11, -0.04),
-            (1.8, 0.69),
-            (2.32, 1.32),
-            (3.79, 3.05),
-            (4.76, 3.53),
-            (5.27, 4.52),
-            (6.26, 5.02),
-            (6.96, 6.2),
-            (8.96, 7.72),
+            (-0.04, 1.15, 0),
+            (0.70, 1.12, 1.83),
+            (1.47, 1.48, 2.96),
+            (3.20, 0.74, 3.94),
+            (3.68, 1.23, 4.91),
+            (4.67, 0.74, 5.41),
+            (5.16, 1.24, 6.41),
+            (6.65, 0.74, 7.11),
+            (7.72, 1.24, 8.96),
         ]
 
-        for row, (left_cm, number_start_cm) in zip(settings["body"], expected):
+        for row, (number_start_cm, hanging_cm, body_left_cm) in zip(settings["body"], expected):
             with self.subTest(level=row["level"]):
-                self.assertAlmostEqual(float(row["left_cm"]), left_cm, places=2)
                 self.assertAlmostEqual(float(row["number_start_cm"]), number_start_cm, places=2)
+                self.assertAlmostEqual(float(row["hanging_cm"]), hanging_cm, places=2)
+                self.assertAlmostEqual(float(row["body_left_cm"]), body_left_cm, places=2)
+
+    def test_body_left_is_independent_from_heading_left(self):
+        settings = current_indent_settings()
+        level_8 = settings["body"][7]
+
+        heading_left = float(level_8["number_start_cm"]) + float(level_8["hanging_cm"])
+        self.assertAlmostEqual(heading_left, 7.39, places=2)
+        self.assertAlmostEqual(float(level_8["body_left_cm"]), 7.11, places=2)
+        self.assertNotAlmostEqual(float(level_8["body_left_cm"]), heading_left, places=2)
 
     def test_save_and_load_settings_round_trips_preface_values(self):
         settings = current_indent_settings()
-        settings["preface"][2]["left_cm"] = 3.01
-        settings["preface"][2]["number_start_cm"] = 2.00
+        settings["preface"][2]["number_start_cm"] = 3.01
+        settings["preface"][2]["hanging_cm"] = 1.01
+        settings["preface"][2]["body_left_cm"] = 4.88
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "indent_defaults.json"
             save_indent_settings(settings, path)
+            saved = json.loads(path.read_text(encoding="utf-8"))
 
             PREFACE_OUTLINE_INDENTS.clear()
             self.assertTrue(load_saved_indent_settings(path))
 
-        left_cm, number_start_cm = spec_to_cm_values(PREFACE_OUTLINE_INDENTS[2])
-        self.assertAlmostEqual(left_cm, 3.01, places=2)
-        self.assertAlmostEqual(number_start_cm, 2.00, places=2)
+        self.assertIn("number_start_cm", saved["preface"][2])
+        self.assertIn("hanging_cm", saved["preface"][2])
+        self.assertIn("body_left_cm", saved["preface"][2])
+        self.assertNotIn("left_cm", saved["preface"][2])
 
-    def test_invalid_number_start_is_rejected(self):
+        number_start_cm, hanging_cm, body_left_cm = spec_to_cm_values(PREFACE_OUTLINE_INDENTS[2])
+        self.assertAlmostEqual(number_start_cm, 3.01, places=2)
+        self.assertAlmostEqual(hanging_cm, 1.01, places=2)
+        self.assertAlmostEqual(body_left_cm, 4.88, places=2)
+
+    def test_old_saved_settings_are_converted_to_new_format(self):
         settings = current_indent_settings()
-        settings["body"][0]["left_cm"] = 1.00
-        settings["body"][0]["number_start_cm"] = 1.00
+        old_settings = {"body": [], "preface": []}
+        for section in ("body", "preface"):
+            for row in settings[section]:
+                old_settings[section].append({
+                    "level": row["level"],
+                    "label": row["label"],
+                    "left_cm": 4.50,
+                    "number_start_cm": 2.25,
+                })
+
+        normalized = apply_indent_settings(old_settings)
+
+        first = normalized["body"][0]
+        self.assertAlmostEqual(float(first["number_start_cm"]), 2.25, places=2)
+        self.assertAlmostEqual(float(first["hanging_cm"]), 2.25, places=2)
+        self.assertAlmostEqual(float(first["body_left_cm"]), 4.50, places=2)
+
+    def test_invalid_hanging_is_rejected(self):
+        settings = current_indent_settings()
+        settings["body"][0]["hanging_cm"] = 0
 
         with self.assertRaises(ValueError):
             apply_indent_settings(settings)

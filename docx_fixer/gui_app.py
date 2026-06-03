@@ -26,8 +26,8 @@ from .path_utils import is_same_file_path
 from .process_log import write_process_log
 from .stop_controller import StopController
 
-DEFAULT_WINDOW_GEOMETRY = "900x720"
-MIN_WINDOW_SIZE = (820, 640)
+DEFAULT_WINDOW_GEOMETRY = "1080x760"
+MIN_WINDOW_SIZE = (980, 680)
 
 class DocxFixerApp:
     def __init__(self, root: tk.Tk) -> None:
@@ -43,7 +43,7 @@ class DocxFixerApp:
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
-        self.indent_vars: dict[str, list[tuple[int, str, tk.StringVar, tk.StringVar]]] = {
+        self.indent_vars: dict[str, list[tuple[int, str, tk.StringVar, tk.StringVar, tk.StringVar]]] = {
             "preface": [],
             "body": [],
         }
@@ -259,21 +259,23 @@ class DocxFixerApp:
         frame.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
         parent.columnconfigure(column, weight=1)
 
-        headers = ["階層", "編號格式", "文字起點 cm", "編號起點 cm"]
+        headers = ["階層", "編號格式", "標號起點 cm", "凸排距離 cm", "內文起點 cm"]
         for col, header in enumerate(headers):
             ttk.Label(frame, text=header).grid(row=0, column=col, padx=4, pady=(6, 4), sticky="w")
 
         for index, item in enumerate(rows, start=1):
             level = int(item["level"])
             label = str(item["label"])
-            left_var = tk.StringVar(value=format_cm(float(item["left_cm"])))
             number_start_var = tk.StringVar(value=format_cm(float(item["number_start_cm"])))
+            hanging_var = tk.StringVar(value=format_cm(float(item["hanging_cm"])))
+            body_left_var = tk.StringVar(value=format_cm(float(item["body_left_cm"])))
 
             ttk.Label(frame, text=str(index)).grid(row=index, column=0, padx=4, pady=3, sticky="w")
             ttk.Label(frame, text=label).grid(row=index, column=1, padx=4, pady=3, sticky="w")
-            ttk.Entry(frame, textvariable=left_var, width=9).grid(row=index, column=2, padx=4, pady=3)
-            ttk.Entry(frame, textvariable=number_start_var, width=9).grid(row=index, column=3, padx=4, pady=3)
-            self.indent_vars[section].append((level, label, left_var, number_start_var))
+            ttk.Entry(frame, textvariable=number_start_var, width=9).grid(row=index, column=2, padx=4, pady=3)
+            ttk.Entry(frame, textvariable=hanging_var, width=9).grid(row=index, column=3, padx=4, pady=3)
+            ttk.Entry(frame, textvariable=body_left_var, width=9).grid(row=index, column=4, padx=4, pady=3)
+            self.indent_vars[section].append((level, label, number_start_var, hanging_var, body_left_var))
 
     def collect_indent_entries(self) -> dict[str, list[dict[str, float | int | str]]]:
         settings: dict[str, list[dict[str, float | int | str]]] = {"preface": [], "body": []}
@@ -283,10 +285,11 @@ class DocxFixerApp:
         }
 
         for section, rows in self.indent_vars.items():
-            for display_index, (level, label, left_var, number_start_var) in enumerate(rows, start=1):
+            for display_index, (level, label, number_start_var, hanging_var, body_left_var) in enumerate(rows, start=1):
                 try:
-                    left_cm = float(left_var.get().strip())
                     number_start_cm = float(number_start_var.get().strip())
+                    hanging_cm = float(hanging_var.get().strip())
+                    body_left_cm = float(body_left_var.get().strip())
                 except ValueError as exc:
                     raise ValueError(
                         f"{section_names[section]}第 {display_index} 階請輸入數字。"
@@ -295,8 +298,9 @@ class DocxFixerApp:
                 settings[section].append({
                     "level": level,
                     "label": label,
-                    "left_cm": left_cm,
                     "number_start_cm": number_start_cm,
+                    "hanging_cm": hanging_cm,
+                    "body_left_cm": body_left_cm,
                 })
 
         return settings

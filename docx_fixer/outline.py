@@ -716,7 +716,7 @@ def apply_body_indent_from_heading(p, heading_level: int, heading_uses_outline: 
     pPr = get_or_add(p, "pPr", first=True)
     ind = get_or_add(pPr, "ind")
     clear_indent_attrs(ind)
-    ind.set(qn("left"), spec["left"])
+    ind.set(qn("left"), spec.get("body_left", spec["left"]))
     return True
 
 

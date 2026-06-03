@@ -95,6 +95,11 @@ def paragraph_left_indent(p):
     return ind.get(qn("left"))
 
 
+def expected_body_left(level: int, set_outline: bool = True):
+    spec = TEMPLATE_OUTLINE_INDENTS[level] if set_outline else PREFACE_OUTLINE_INDENTS[level]
+    return spec["body_left"]
+
+
 def paragraph_outline(p):
     outline = p.find("./w:pPr/w:outlineLvl", NS)
     if outline is None:
@@ -170,27 +175,24 @@ class OutlineFixTests(unittest.TestCase):
 
     def test_template_indents_match_requested_cm_values(self):
         expected = {
-            0: (1.11, -0.04),
-            1: (1.8, 0.69),
-            2: (2.32, 1.32),
-            3: (3.79, 3.05),
-            4: (4.76, 3.53),
-            5: (5.27, 4.52),
-            6: (6.26, 5.02),
-            7: (6.96, 6.2),
-            8: (8.96, 7.72),
+            0: (1.11, -0.04, 1.15, 0),
+            1: (1.82, 0.70, 1.12, 1.83),
+            2: (2.95, 1.47, 1.48, 2.96),
+            3: (3.94, 3.20, 0.74, 3.94),
+            4: (4.91, 3.68, 1.23, 4.91),
+            5: (5.41, 4.67, 0.74, 5.41),
+            6: (6.40, 5.16, 1.24, 6.41),
+            7: (7.39, 6.65, 0.74, 7.11),
+            8: (8.96, 7.72, 1.24, 8.96),
         }
 
-        for level, (left_cm, number_start_cm) in expected.items():
+        for level, (left_cm, number_start_cm, hanging_cm, body_left_cm) in expected.items():
             with self.subTest(level=level):
                 spec = TEMPLATE_OUTLINE_INDENTS[level]
                 self.assertAlmostEqual(twips_to_cm(spec["left"]), left_cm, places=2)
                 self.assertAlmostEqual(twips_to_cm(spec["number_start"]), number_start_cm, places=2)
-                self.assertAlmostEqual(
-                    twips_to_cm(spec["hanging"]),
-                    left_cm - number_start_cm,
-                    places=2,
-                )
+                self.assertAlmostEqual(twips_to_cm(spec["hanging"]), hanging_cm, places=2)
+                self.assertAlmostEqual(twips_to_cm(spec["body_left"]), body_left_cm, places=2)
 
     def test_manual_numbering_gets_outline_and_indent(self):
         paragraphs = [
@@ -439,9 +441,9 @@ class OutlineFixTests(unittest.TestCase):
 
         fix_outline_paragraphs(root, include_tables=True, summary=summary)
 
-        self.assertEqual(paragraph_left_indent(body), expected_indent(1)[0])
+        self.assertEqual(paragraph_left_indent(body), expected_body_left(1))
         self.assertIsNone(paragraph_indent(body)[1])
-        self.assertEqual(paragraph_left_indent(nested_body), expected_indent(2)[0])
+        self.assertEqual(paragraph_left_indent(nested_body), expected_body_left(2))
         self.assertIsNone(paragraph_indent(nested_body)[1])
         self.assertIsNone(paragraph_outline(body))
         self.assertIsNone(paragraph_outline(nested_body))
@@ -461,7 +463,7 @@ class OutlineFixTests(unittest.TestCase):
         fix_outline_paragraphs(root, include_tables=True)
 
         self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[1]["left"])
-        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[1]["left"])
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
 
@@ -474,7 +476,7 @@ class OutlineFixTests(unittest.TestCase):
         fix_outline_paragraphs(root, include_tables=True)
 
         self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[2]["left"])
-        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[2]["left"])
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[2]["body_left"])
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
 
@@ -508,7 +510,7 @@ class OutlineFixTests(unittest.TestCase):
 
         body_14_ind = body_14.find("./w:pPr/w:ind", NS)
         body_12_ind = body_12.find("./w:pPr/w:ind", NS)
-        self.assertEqual(body_14_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["left"])
+        self.assertEqual(body_14_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
         self.assertIsNone(body_14_ind.get(qn("hanging")))
         assert_no_char_indent_attrs(self, body_14_ind)
         self.assertEqual(body_12_ind.get(qn("left")), "123")
@@ -528,7 +530,7 @@ class OutlineFixTests(unittest.TestCase):
             indent_preface_paragraphs=True,
         )
 
-        self.assertEqual(paragraph_left_indent(body), PREFACE_OUTLINE_INDENTS[0]["left"])
+        self.assertEqual(paragraph_left_indent(body), PREFACE_OUTLINE_INDENTS[0]["body_left"])
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertEqual(paragraph_outline(body), "2")
         self.assertEqual(summary.indented_preface_paragraphs, 1)
@@ -545,7 +547,7 @@ class OutlineFixTests(unittest.TestCase):
             indent_preface_paragraphs=True,
         )
 
-        self.assertEqual(paragraph_left_indent(body), PREFACE_OUTLINE_INDENTS[0]["left"])
+        self.assertEqual(paragraph_left_indent(body), PREFACE_OUTLINE_INDENTS[0]["body_left"])
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
 

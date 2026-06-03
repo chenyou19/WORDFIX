@@ -28,73 +28,31 @@ def cm_to_twips(cm: float) -> str:
     return str(round(cm_to_points(cm) * 20))
 
 
+def make_outline_indent_spec(number_start_cm: float, hanging_cm: float, body_left_cm: float) -> dict[str, str]:
+    return {
+        "left": cm_to_twips(number_start_cm + hanging_cm),
+        "hanging": cm_to_twips(hanging_cm),
+        "number_start": cm_to_twips(number_start_cm),
+        "body_left": cm_to_twips(body_left_cm),
+    }
+
+
 TEMPLATE_OUTLINE_INDENTS = {
-    # 壹、
-    0: {
-        "left": cm_to_twips(1.11),
-        "hanging": cm_to_twips(1.15),
-        "number_start": cm_to_twips(-0.04),
-    },
-    # 一、
-    1: {
-        "left": cm_to_twips(1.8),
-        "hanging": cm_to_twips(1.8 - 0.69),
-        "number_start": cm_to_twips(0.69),
-    },
-    # （一）
-    2: {
-        "left": cm_to_twips(2.32),
-        "hanging": cm_to_twips(2.32 - 1.32),
-        "number_start": cm_to_twips(1.32),
-    },
-    # 1.
-    3: {
-        "left": cm_to_twips(3.79),
-        "hanging": cm_to_twips(3.79 - 3.05),
-        "number_start": cm_to_twips(3.05),
-    },
-    # （1）
-    4: {
-        "left": cm_to_twips(4.76),
-        "hanging": cm_to_twips(4.76 - 3.53),
-        "number_start": cm_to_twips(3.53),
-    },
-    # A.
-    5: {
-        "left": cm_to_twips(5.27),
-        "hanging": cm_to_twips(5.27 - 4.52),
-        "number_start": cm_to_twips(4.52),
-    },
-    # （A）
-    6: {
-        "left": cm_to_twips(6.26),
-        "hanging": cm_to_twips(6.26 - 5.02),
-        "number_start": cm_to_twips(5.02),
-    },
-    # a.
-    7: {
-        "left": cm_to_twips(6.96),
-        "hanging": cm_to_twips(6.96 - 6.2),
-        "number_start": cm_to_twips(6.2),
-    },
-    # （a）
-    8: {
-        "left": cm_to_twips(8.96),
-        "hanging": cm_to_twips(1.24),
-        "number_start": cm_to_twips(7.72),
-    },
+    0: make_outline_indent_spec(-0.04, 1.15, 0),
+    1: make_outline_indent_spec(0.70, 1.12, 1.83),
+    2: make_outline_indent_spec(1.47, 1.48, 2.96),
+    3: make_outline_indent_spec(3.20, 0.74, 3.94),
+    4: make_outline_indent_spec(3.68, 1.23, 4.91),
+    5: make_outline_indent_spec(4.67, 0.74, 5.41),
+    6: make_outline_indent_spec(5.16, 1.24, 6.41),
+    7: make_outline_indent_spec(6.65, 0.74, 7.11),
+    8: make_outline_indent_spec(7.72, 1.24, 8.96),
 }
 
 
 PREFACE_OUTLINE_INDENTS = {
-    # 一、
-    0: {"left": cm_to_twips(1.11), "hanging": cm_to_twips(1.15), "number_start": cm_to_twips(-0.04)},
-    # （一）
-    1: {"left": cm_to_twips(1.54), "hanging": cm_to_twips(0.85), "number_start": cm_to_twips(0.69)},
-    # 1.
-    2: {"left": cm_to_twips(3.01), "hanging": cm_to_twips(1.01), "number_start": cm_to_twips(2.00)},
-    # （1）
-    3: {"left": cm_to_twips(4.02), "hanging": cm_to_twips(1.72), "number_start": cm_to_twips(2.30)},
+    level: dict(TEMPLATE_OUTLINE_INDENTS[level])
+    for level in range(8)
 }
 
 
@@ -107,7 +65,7 @@ def validate_template_outline_indents(tolerance: int = 1) -> bool:
 
         assert abs(cur_number_start - expected_number_start) <= tolerance, (
             f"level {level} 不符合縮排規則："
-            f"編號起點 {cur_number_start} != 指定編號起點 {expected_number_start}"
+            f"編號起點 {cur_number_start} != 預期編號起點 {expected_number_start}"
         )
 
     return True
