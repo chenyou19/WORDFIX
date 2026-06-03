@@ -71,7 +71,8 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         f"跳過目錄段落數：{summary.skipped_toc_paragraphs}",
         f"跳過表格段落數：{summary.skipped_table_paragraphs}",
         f"移除全文件既有大綱階層的段落數：{summary.removed_all_outline_paragraphs}",
-        f"移除壹、序言前大綱階層的段落數：{summary.removed_preface_outline_paragraphs}",
+        f"套用壹、序言前縮排的段落數：{summary.indented_preface_paragraphs}",
+        f"套用壹、序言前大綱階層的段落數：{summary.outlined_preface_paragraphs}",
         *[
             f"成功套用第 {level} 階數量：{count}"
             for level, count in enumerate(summary.paragraph_level_counts, start=1)

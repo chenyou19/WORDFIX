@@ -8,8 +8,9 @@ class ProcessOptions:
     fix_color: bool
     fix_paragraph: bool
     include_tables_in_paragraph: bool
-    remove_preface_outline: bool = False
     remove_all_outline_levels: bool = False
+    indent_preface_paragraphs: bool = False
+    outline_preface_paragraphs: bool = False
 
 
 @dataclass
@@ -35,7 +36,8 @@ class ProcessSummary:
     skipped_toc_paragraphs: int = 0
     skipped_table_paragraphs: int = 0
     removed_all_outline_paragraphs: int = 0
-    removed_preface_outline_paragraphs: int = 0
+    indented_preface_paragraphs: int = 0
+    outlined_preface_paragraphs: int = 0
     unknown_paragraphs: int = 0
     paragraph_level_counts: list[int] = field(default_factory=lambda: [0] * 9)
     paragraph_logs: list[str] = field(default_factory=list)

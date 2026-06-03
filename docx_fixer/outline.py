@@ -595,19 +595,27 @@ def get_outline_indent_spec(level: int, set_outline: bool = True) -> dict[str, s
     return spec
 
 
-def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
-    """依範本.docx的階層縮排標準套用段落縮排，可選擇是否同步設定 Word 大綱階層。"""
-    spec = get_outline_indent_spec(level, set_outline=set_outline)
-    if spec is None:
-        return
-
+def apply_outline_format(
+    p,
+    level: int,
+    *,
+    set_indent: bool,
+    set_outline: bool,
+    use_preface_indent: bool = False,
+) -> None:
+    """依選項分別套用文件編號縮排與 Word 大綱階層。"""
     pPr = get_or_add(p, "pPr", first=True)
 
     if set_outline:
         # level 0~8 對應 Word UI 的「大綱階層 1~9」。
         apply_paragraph_outline_level(pPr, level)
-    else:
-        remove_paragraph_outline_level(p)
+
+    if not set_indent:
+        return
+
+    spec = get_outline_indent_spec(level, set_outline=not use_preface_indent)
+    if spec is None:
+        return
 
     ind = get_or_add(pPr, "ind")
 
@@ -618,6 +626,17 @@ def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
 
     # 修正「編號後面被舊 tab stop 推出奇怪留白」的問題。
     normalize_tabs_to_text_position(pPr, spec["left"])
+
+
+def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
+    """依範本.docx的階層縮排標準套用段落縮排，可選擇是否同步設定 Word 大綱階層。"""
+    apply_outline_format(
+        p,
+        level,
+        set_indent=True,
+        set_outline=set_outline,
+        use_preface_indent=not set_outline,
+    )
 
 
 def apply_body_indent_from_heading(p, heading_level: int, heading_uses_outline: bool) -> bool:
@@ -774,9 +793,14 @@ def increment_paragraph_level_count(summary, level: int) -> None:
         summary.paragraph_level_counts[level] += 1
 
 
-def increment_removed_preface_outline_count(summary) -> None:
+def increment_indented_preface_count(summary) -> None:
     if summary is not None:
-        summary.removed_preface_outline_paragraphs += 1
+        summary.indented_preface_paragraphs += 1
+
+
+def increment_outlined_preface_count(summary) -> None:
+    if summary is not None:
+        summary.outlined_preface_paragraphs += 1
 
 
 def fix_outline_paragraphs(
@@ -788,8 +812,9 @@ def fix_outline_paragraphs(
     change_logs: list[str] | None = None,
     part_name: str = "word/document.xml",
     summary=None,
-    remove_preface_outline: bool = False,
     fix_numbered_paragraphs: bool = True,
+    indent_preface_paragraphs: bool = False,
+    outline_preface_paragraphs: bool = False,
 ) -> int:
     paragraphs = root.xpath(".//w:p", namespaces=NS)
     if summary is not None:
@@ -806,7 +831,7 @@ def fix_outline_paragraphs(
     )
 
     changed_count = 0
-    outline_processing_started = not remove_preface_outline
+    main_outline_started = False
     current_heading_indent: tuple[int, bool] | None = None
 
     for paragraph_index, p in enumerate(paragraphs, start=1):
@@ -824,47 +849,23 @@ def fix_outline_paragraphs(
                 continue
 
             if id(p) in toc_paragraph_ids:
-                if not outline_processing_started and remove_preface_outline:
-                    before_outline = get_paragraph_outline_level_value(p)
-                    if remove_paragraph_outline_level(p):
-                        changed_count += 1
-                        increment_removed_preface_outline_count(summary)
-                        append_paragraph_change_log(
-                            change_logs,
-                            part_name,
-                            paragraph_index,
-                            text,
-                            before_outline,
-                            "無",
-                            "壹、序言前目錄段落，移除既有 Word 大綱階層",
-                        )
-
                 if summary is not None:
                     summary.skipped_toc_paragraphs += 1
                 continue
 
             before_outline = get_paragraph_outline_level_value(p)
-            if not outline_processing_started and is_processing_start_marker(
+            if not main_outline_started and is_processing_start_marker(
                 p,
                 text,
                 numbering_level_lookup=numbering_level_lookup,
                 style_numbering_lookup=style_numbering_lookup,
             ):
-                outline_processing_started = True
+                main_outline_started = True
 
-            if not fix_numbered_paragraphs:
-                if not outline_processing_started and remove_paragraph_outline_level(p):
-                    changed_count += 1
-                    increment_removed_preface_outline_count(summary)
-                    append_paragraph_change_log(
-                        change_logs,
-                        part_name,
-                        paragraph_index,
-                        text,
-                        before_outline,
-                        "無",
-                        "壹、序言前段落，移除既有 Word 大綱階層",
-                    )
+            if main_outline_started:
+                if not fix_numbered_paragraphs:
+                    continue
+            elif not (indent_preface_paragraphs or outline_preface_paragraphs):
                 continue
 
             level = None
@@ -896,14 +897,9 @@ def fix_outline_paragraphs(
                     reason = "段落開頭手動編號"
 
             if level is None:
-                if current_heading_indent is not None:
+                if main_outline_started and current_heading_indent is not None:
                     heading_level, heading_uses_outline = current_heading_indent
                     if apply_body_indent_from_heading(p, heading_level, heading_uses_outline):
-                        after_outline = before_outline
-                        if not outline_processing_started and remove_paragraph_outline_level(p):
-                            after_outline = "無"
-                            increment_removed_preface_outline_count(summary)
-
                         changed_count += 1
                         append_paragraph_change_log(
                             change_logs,
@@ -911,52 +907,57 @@ def fix_outline_paragraphs(
                             paragraph_index,
                             text,
                             before_outline,
-                            after_outline,
+                            before_outline,
                             "標題下方內文段落，左縮排對齊上一個標題的文字起點",
                         )
                         continue
 
-                if not outline_processing_started and remove_paragraph_outline_level(p):
-                    changed_count += 1
-                    increment_removed_preface_outline_count(summary)
-                    append_paragraph_change_log(
-                        change_logs,
-                        part_name,
-                        paragraph_index,
-                        text,
-                        before_outline,
-                        "無",
-                        "壹、序言前段落，移除既有 Word 大綱階層",
-                    )
-                    continue
-
-                if summary is not None:
+                if main_outline_started and summary is not None:
                     summary.unknown_paragraphs += 1
                 continue
 
-            set_outline = outline_processing_started
-            indent_level = effective_indent_level(level, set_outline=set_outline)
+            if main_outline_started:
+                indent_level = level
+                apply_outline_format(
+                    p,
+                    indent_level,
+                    set_indent=True,
+                    set_outline=True,
+                    use_preface_indent=False,
+                )
+                current_heading_indent = (indent_level, True)
+                changed_count += 1
+                increment_paragraph_level_count(summary, level)
+                after_outline = str(level)
+                action = f"套用第 {level + 1} 階大綱階層與縮排"
+            else:
+                indent_level = effective_indent_level(level, set_outline=False)
+                apply_outline_format(
+                    p,
+                    indent_level,
+                    set_indent=indent_preface_paragraphs,
+                    set_outline=outline_preface_paragraphs,
+                    use_preface_indent=True,
+                )
+                changed_count += 1
+                after_outline = str(indent_level) if outline_preface_paragraphs else before_outline
+                actions = []
+                if indent_preface_paragraphs:
+                    increment_indented_preface_count(summary)
+                    actions.append(f"套用壹、序言前第 {indent_level + 1} 階縮排")
+                if outline_preface_paragraphs:
+                    increment_outlined_preface_count(summary)
+                    actions.append(f"套用壹、序言前第 {indent_level + 1} 階大綱階層")
+                action = "，".join(actions)
 
-            apply_outline_indent(p, indent_level, set_outline=set_outline)
-            current_heading_indent = (indent_level, set_outline)
             record_numbering_measurement(
                 summary,
                 text=text,
                 p=p,
                 level=level,
                 indent_level=indent_level,
-                set_outline=set_outline,
+                set_outline=main_outline_started or outline_preface_paragraphs,
             )
-            changed_count += 1
-            if set_outline:
-                increment_paragraph_level_count(summary, level)
-                after_outline = str(level)
-                action = f"套用第 {level + 1} 階大綱階層與縮排"
-            else:
-                if before_outline != "無":
-                    increment_removed_preface_outline_count(summary)
-                after_outline = "無"
-                action = f"壹、序言前段落，只套用第 {indent_level + 1} 階縮排並移除大綱階層"
 
             append_paragraph_change_log(
                 change_logs,

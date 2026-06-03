@@ -293,15 +293,13 @@ def fix_docx_fast(
                 if (
                     (
                         options.fix_paragraph
-                        or (
-                            options.remove_preface_outline
-                            and not options.remove_all_outline_levels
-                        )
+                        or options.indent_preface_paragraphs
+                        or options.outline_preface_paragraphs
                     )
                     and should_fix_paragraph_part(item.filename)
                 ):
                     if progress_callback:
-                        message = "移除壹、序言前的大綱階層"
+                        message = "處理壹、序言前段落"
                         if options.fix_paragraph:
                             message = "處理文件編號段落與大綱階層（跳過目錄）"
                         progress_callback(
@@ -318,8 +316,9 @@ def fix_docx_fast(
                         change_logs=summary.paragraph_logs,
                         part_name=item.filename,
                         summary=summary,
-                        remove_preface_outline=options.remove_preface_outline,
                         fix_numbered_paragraphs=options.fix_paragraph,
+                        indent_preface_paragraphs=options.indent_preface_paragraphs,
+                        outline_preface_paragraphs=options.outline_preface_paragraphs,
                     )
                     summary.paragraphs += changed_paragraphs
 
