@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import json
 import tempfile
+import sys
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 from zipfile import ZipFile
 
 from lxml import etree
 
 from docx_fixer.constants import NS, TEMPLATE_OUTLINE_INDENTS, W_NS
-from docx_fixer.docx_processor import fix_docx_fast
+from docx_fixer.docx_processor import (
+    _verify_and_fix_body_indents_with_word_com_in_process,
+    find_word_paragraph_index_for_record,
+    fix_docx_fast,
+    verify_and_fix_body_indents_with_word_com,
+)
 from docx_fixer.models import ProcessOptions
 from docx_fixer.xml_utils import qn
 
@@ -126,11 +135,15 @@ def make_styles_with_character_indent() -> bytes:
     return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
-def make_styles_with_default_text_font(font_size_pt: float = 14) -> bytes:
+def make_styles_with_default_text_font(font_size_pt: float = 14, start_twips: str | None = None) -> bytes:
     styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
     style = etree.SubElement(styles, qn("style"))
     style.set(qn("type"), "paragraph")
     style.set(qn("styleId"), "DefaultText")
+    if start_twips is not None:
+        pPr = etree.SubElement(style, qn("pPr"))
+        ind = etree.SubElement(pPr, qn("ind"))
+        ind.set(qn("start"), start_twips)
     rPr = etree.SubElement(style, qn("rPr"))
     sz = etree.SubElement(rPr, qn("sz"))
     sz.set(qn("val"), str(round(font_size_pt * 2)))
@@ -176,6 +189,113 @@ def make_unrecognized_numbering_with_character_indent() -> bytes:
     pPr = etree.SubElement(lvl, qn("pPr"))
     make_ind(pPr, left="360", leftChars="88", hangingChars="44")
     return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_level_four_numbering_with_old_indents() -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    abstract = etree.SubElement(numbering, qn("abstractNum"))
+    abstract.set(qn("abstractNumId"), "1")
+    lvl = etree.SubElement(abstract, qn("lvl"))
+    lvl.set(qn("ilvl"), "3")
+    lvl_jc = etree.SubElement(lvl, qn("lvlJc"))
+    lvl_jc.set(qn("val"), "right")
+    suff = etree.SubElement(lvl, qn("suff"))
+    suff.set(qn("val"), "nothing")
+    num_fmt = etree.SubElement(lvl, qn("numFmt"))
+    num_fmt.set(qn("val"), "decimal")
+    lvl_text = etree.SubElement(lvl, qn("lvlText"))
+    lvl_text.set(qn("val"), "%1.")
+    pPr = etree.SubElement(lvl, qn("pPr"))
+    tabs = etree.SubElement(pPr, qn("tabs"))
+    tab = etree.SubElement(tabs, qn("tab"))
+    tab.set(qn("val"), "left")
+    tab.set(qn("pos"), "1990")
+    make_ind(
+        pPr,
+        left="1990",
+        start="1990",
+        hanging="420",
+        leftChars="20",
+        startChars="20",
+        hangingChars="20",
+        firstLineChars="20",
+    )
+    num = etree.SubElement(numbering, qn("num"))
+    num.set(qn("numId"), "1")
+    abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+    abstract_ref.set(qn("val"), "1")
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_styles_with_level_four_numbered_and_plain_old_indents() -> bytes:
+    styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
+
+    numbered = etree.SubElement(styles, qn("style"))
+    numbered.set(qn("type"), "paragraph")
+    numbered.set(qn("styleId"), "NumberedL4")
+    numbered_pPr = etree.SubElement(numbered, qn("pPr"))
+    num_pr = etree.SubElement(numbered_pPr, qn("numPr"))
+    ilvl = etree.SubElement(num_pr, qn("ilvl"))
+    ilvl.set(qn("val"), "3")
+    num_id = etree.SubElement(num_pr, qn("numId"))
+    num_id.set(qn("val"), "1")
+    make_ind(
+        numbered_pPr,
+        left="1990",
+        start="1990",
+        hanging="420",
+        leftChars="20",
+        startChars="20",
+        hangingChars="20",
+        firstLineChars="20",
+    )
+
+    plain = etree.SubElement(styles, qn("style"))
+    plain.set(qn("type"), "paragraph")
+    plain.set(qn("styleId"), "BodyText")
+    plain_pPr = etree.SubElement(plain, qn("pPr"))
+    make_ind(
+        plain_pPr,
+        left="720",
+        start="720",
+        hanging="360",
+        firstLine="240",
+        leftChars="20",
+        startChars="20",
+        hangingChars="20",
+        firstLineChars="20",
+    )
+    tabs = etree.SubElement(plain_pPr, qn("tabs"))
+    tab = etree.SubElement(tabs, qn("tab"))
+    tab.set(qn("val"), "left")
+    tab.set(qn("pos"), "720")
+
+    return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_document_with_style_level_four_heading_and_body() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+
+    for text, style, font_size_pt in [
+        ("\u58f9\u3001\u5e8f\u8a00", None, None),
+        ("\u7b2c\u56db\u968e\u81ea\u52d5\u6a19\u984c", "NumberedL4", None),
+        ("\u7b2c\u56db\u968e\u6a19\u984c\u4e0b\u65b9\u666e\u901a\u5167\u6587", "BodyText", 14),
+    ]:
+        p = etree.SubElement(body, qn("p"))
+        pPr = etree.SubElement(p, qn("pPr"))
+        if style is not None:
+            p_style = etree.SubElement(pPr, qn("pStyle"))
+            p_style.set(qn("val"), style)
+        r = etree.SubElement(p, qn("r"))
+        if font_size_pt is not None:
+            rPr = etree.SubElement(r, qn("rPr"))
+            sz = etree.SubElement(rPr, qn("sz"))
+            sz.set(qn("val"), str(font_size_pt * 2))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
 def read_part_root(path: Path, part_name: str):
@@ -229,6 +349,333 @@ def assert_all_document_outlines_are_body(test_case: unittest.TestCase, path: Pa
 
 
 class DocxProcessorTests(unittest.TestCase):
+    def test_find_word_paragraph_index_for_record_prefers_direct_index_then_falls_back_to_preview(self):
+        paragraph_texts = [
+            "壹、序言\r",
+            "（一）第三階標題\r",
+            "階層3內文\r",
+        ]
+        direct_record = {
+            "paragraph_index": 3,
+            "text_preview": "階層3內文",
+        }
+        fallback_record = {
+            "paragraph_index": 2,
+            "text_preview": "階層3內文",
+        }
+
+        self.assertEqual(find_word_paragraph_index_for_record(paragraph_texts, direct_record), 3)
+        self.assertEqual(find_word_paragraph_index_for_record(paragraph_texts, fallback_record), 3)
+
+    def test_word_com_gen_py_cache_error_cleans_retries_and_falls_back_to_dynamic_dispatch(self):
+        class FakeRange:
+            Text = "body text\r"
+
+        class FakeFormat:
+            LeftIndent = 0.0
+            FirstLineIndent = 0.0
+            CharacterUnitLeftIndent = 2
+            CharacterUnitFirstLineIndent = 3
+
+        class FakeParagraph:
+            def __init__(self):
+                self.Range = FakeRange()
+                self.Format = FakeFormat()
+
+        class FakeParagraphs:
+            Count = 1
+
+            def __init__(self, paragraph):
+                self.paragraph = paragraph
+
+            def __call__(self, index):
+                if index != 1:
+                    raise IndexError(index)
+                return self.paragraph
+
+        class FakeDocument:
+            def __init__(self):
+                self.Paragraphs = FakeParagraphs(FakeParagraph())
+                self.saved = False
+                self.closed = False
+
+            def Save(self):
+                self.saved = True
+
+            def Close(self, save_changes):
+                self.closed = True
+
+        class FakeDocuments:
+            def __init__(self, document):
+                self.document = document
+
+            def Open(self, *args, **kwargs):
+                return self.document
+
+        class FakeWord:
+            def __init__(self, document):
+                self.Documents = FakeDocuments(document)
+                self.Visible = True
+                self.quit = False
+
+            def Quit(self):
+                self.quit = True
+
+        fake_document = FakeDocument()
+        fake_word = FakeWord(fake_document)
+        win32com_module = types.ModuleType("win32com")
+        win32com_module.__path__ = []
+        client_module = types.ModuleType("win32com.client")
+        client_module.__path__ = []
+        gencache_module = types.ModuleType("win32com.client.gencache")
+        dynamic_module = types.ModuleType("win32com.client.dynamic")
+
+        client_module.DispatchEx = Mock(
+            side_effect=[
+                AttributeError("module has no attribute CLSIDToClassMap"),
+                RuntimeError("retry still broken"),
+            ]
+        )
+        gencache_module.GetGeneratePath = Mock(return_value="C:\\fake\\gen_py")
+        gencache_module.Rebuild = Mock()
+        dynamic_module.Dispatch = Mock(return_value=fake_word)
+        win32com_module.client = client_module
+        client_module.gencache = gencache_module
+        client_module.dynamic = dynamic_module
+
+        fake_modules = {
+            "win32com": win32com_module,
+            "win32com.client": client_module,
+            "win32com.client.gencache": gencache_module,
+            "win32com.client.dynamic": dynamic_module,
+        }
+        records = [
+            {
+                "paragraph_index": 1,
+                "text_preview": "body text",
+                "expected_left_cm": 1.0,
+                "expected_left_points": 28.3464567,
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            with patch.dict(sys.modules, fake_modules), patch("shutil.rmtree") as rmtree:
+                logs = _verify_and_fix_body_indents_with_word_com_in_process(output_docx, records)
+
+        joined = "\n".join(logs)
+        self.assertEqual(client_module.DispatchEx.call_count, 2)
+        rmtree.assert_called_once_with("C:\\fake\\gen_py", ignore_errors=True)
+        gencache_module.Rebuild.assert_called_once()
+        dynamic_module.Dispatch.assert_called_once_with("Word.Application")
+        self.assertTrue(fake_document.saved)
+        self.assertTrue(fake_word.quit)
+        self.assertIn("WORD_COM_RETRY_CLEAR_GEN_PY", joined)
+        self.assertIn("WORD_COM_RETRY_AFTER_CLEAR_GEN_PY status=failed", joined)
+        self.assertIn("WORD_COM_DYNAMIC_DISPATCH status=ok", joined)
+        self.assertIn("WORD_COM_BODY_INDENT_FIX:", joined)
+        self.assertNotIn("WORD_COM_BODY_INDENT_FIX_SKIPPED", joined)
+
+    def test_word_com_body_indent_uses_powershell_wrapper_with_logs(self):
+        records = [
+            {
+                "paragraph_index": 1,
+                "text_preview": "body text",
+                "expected_left_cm": 1.0,
+                "expected_left_points": 28.3464567,
+            }
+        ]
+        captured: dict[str, object] = {}
+
+        def fake_run(script_path, *, arguments=None, **kwargs):
+            captured["script_path"] = Path(script_path)
+            captured["arguments"] = list(arguments or [])
+            records_path = Path(arguments[3])
+            result_path = Path(arguments[5])
+            captured["records"] = json.loads(records_path.read_text(encoding="utf-8"))
+            captured["script_text"] = Path(script_path).read_text(encoding="utf-8")
+            result_path.write_text(
+                "\n".join(
+                    [
+                        "WORD_COM_PS_STARTED",
+                        "WORD_COM_PS_RECORDS_LOADED count=1",
+                        "WORD_COM_PS_WORD_CREATED",
+                        "WORD_COM_PS_DOC_OPENED",
+                        "WORD_COM_PS_BEFORE_LOOP",
+                        "WORD_COM_PS_PARAGRAPHS_COUNT count=1",
+                        "WORD_COM_RECORD_BEGIN i=1 paragraph_index=1 expected_left_cm=1.0 text=body text",
+                        "WORD_COM_RECORD_MATCHED i=1 word_index=1",
+                        "WORD_COM_BODY_INDENT_FIX: paragraph_index=1; matched_paragraph_index=1; text=body text; expected_left_cm=1.00; before_left_cm=0.00; after_left_cm=1.00; status=ok",
+                        "WORD_COM_PS_BEFORE_SAVE",
+                        "WORD_COM_PS_DOC_SAVED",
+                        "WORD_COM_PS_DONE",
+                        "WORD_COM_BODY_INDENT_FIX_SUMMARY processed=1 ok=1 mismatch=0 not_found=0 errors=0",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            return types.SimpleNamespace(
+                stdout="",
+                stderr="",
+                returncode=0,
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
+            with patch("docx_fixer.docx_processor.run_powershell_file", side_effect=fake_run) as runner:
+                logs = verify_and_fix_body_indents_with_word_com(output_docx, records)
+
+        self.assertIn("WORD_COM_BODY_INDENT_FIX_STARTED", logs)
+        self.assertTrue(any("WORD_COM_POWERSHELL_SCRIPT_PATH=" in line for line in logs))
+        self.assertTrue(any("WORD_COM_RECORDS_JSON_PATH=" in line for line in logs))
+        self.assertTrue(any("WORD_COM_DOCX_WORK_PATH=" in line for line in logs))
+        self.assertTrue(any("WORD_COM_RESULT_LOG_PATH=" in line for line in logs))
+        self.assertTrue(any("WORD_COM_POWERSHELL_RETURN_CODE=0" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX:" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_SUMMARY" in line for line in logs))
+        self.assertTrue(any("WORD_COM_PS_STARTED" in line for line in logs))
+        self.assertTrue(any("WORD_COM_PS_DONE" in line for line in logs))
+        self.assertTrue(any("WORD_COM_PS_BEFORE_LOOP" in line for line in logs))
+        self.assertTrue(any("WORD_COM_PS_PARAGRAPHS_COUNT count=1" in line for line in logs))
+        self.assertEqual(captured["records"], records)
+        self.assertIn("param(", captured["script_text"])
+        self.assertIn("$RecordsPath", captured["script_text"])
+        self.assertIn("Add-Log", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_BEGIN", captured["script_text"])
+        runner.assert_called_once()
+
+    def test_word_com_body_indent_reads_result_file_when_stdout_is_empty(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
+
+            def fake_run(script_path, *, arguments=None, **kwargs):
+                result_path = Path(arguments[5])
+                result_path.write_text(
+                    "\n".join(
+                        [
+                            "WORD_COM_PS_STARTED",
+                            "WORD_COM_PS_RECORDS_LOADED count=1",
+                            "WORD_COM_PS_DONE",
+                            "WORD_COM_BODY_INDENT_FIX_SUMMARY processed=1 ok=0 mismatch=0 not_found=1 errors=0",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+            with patch(
+                "docx_fixer.docx_processor.run_powershell_file",
+                side_effect=fake_run,
+            ):
+                logs = verify_and_fix_body_indents_with_word_com(
+                    output_docx,
+                    [{"paragraph_index": 1, "text_preview": "body text", "expected_left_cm": 1.0, "expected_left_points": 28.3464567}],
+                )
+
+        self.assertTrue(any("WORD_COM_PS_STARTED" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_SUMMARY" in line for line in logs))
+        self.assertFalse(any("powershell_no_logs" in line for line in logs))
+
+    def test_word_com_body_indent_logs_stderr_when_stdout_is_empty(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
+            with patch(
+                "docx_fixer.docx_processor.run_powershell_file",
+                return_value=types.SimpleNamespace(stdout="", stderr="boom on stderr", returncode=1),
+            ):
+                logs = verify_and_fix_body_indents_with_word_com(
+                    output_docx,
+                    [{"paragraph_index": 1, "text_preview": "body text", "expected_left_cm": 1.0, "expected_left_points": 28.3464567}],
+                )
+
+        self.assertTrue(any("WORD_COM_POWERSHELL_STDERR=boom on stderr" in line for line in logs))
+        self.assertTrue(any("WORD_COM_POWERSHELL_RETURN_CODE=1" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_no_logs:boom on stderr" in line for line in logs))
+
+    def test_word_com_body_indent_logs_script_exception(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
+
+            def fake_run(script_path, *, arguments=None, **kwargs):
+                result_path = Path(arguments[5])
+                result_path.write_text(
+                    "\n".join(
+                        [
+                            "WORD_COM_PS_STARTED",
+                            "WORD_COM_PS_EXCEPTION System.Exception:boom",
+                            "WORD_COM_PS_STACK at fix_word_indent",
+                            "WORD_COM_PS_FINALLY_BEGIN",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                return types.SimpleNamespace(stdout="", stderr="", returncode=1)
+
+            with patch(
+                "docx_fixer.docx_processor.run_powershell_file",
+                side_effect=fake_run,
+            ):
+                logs = verify_and_fix_body_indents_with_word_com(
+                    output_docx,
+                    [{"paragraph_index": 1, "text_preview": "body text", "expected_left_cm": 1.0, "expected_left_points": 28.3464567}],
+                )
+
+        self.assertTrue(any("WORD_COM_PS_EXCEPTION System.Exception:boom" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_FAILED_AFTER_PARTIAL_LOGS" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_script_failed" in line for line in logs))
+
+    def test_word_com_body_indent_large_records_use_json_file_and_short_command(self):
+        records = [
+            {
+                "paragraph_index": index + 1,
+                "text_preview": f"body text {index}",
+                "expected_left_cm": 1.0,
+                "expected_left_points": 28.3464567,
+            }
+            for index in range(5000)
+        ]
+        observed: dict[str, object] = {}
+
+        def fake_run(script_path, *, arguments=None, **kwargs):
+            args = list(arguments or [])
+            records_path = Path(args[3])
+            docx_path = Path(args[1])
+            observed["args"] = args
+            observed["script_path"] = Path(script_path)
+            observed["records_path"] = records_path
+            observed["docx_path"] = docx_path
+            observed["records_count"] = len(json.loads(records_path.read_text(encoding="utf-8")))
+            observed["command_length"] = sum(
+                len(part)
+                for part in ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path), *args]
+            ) + (10 - 1)
+            return types.SimpleNamespace(
+                stdout='["WORD_COM_BODY_INDENT_FIX_SUMMARY records=5000; ok=0; mismatch=0; not_found=5000"]',
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            long_dir = Path(temp_dir) / ("nested_" * 12)
+            long_dir.mkdir(parents=True, exist_ok=True)
+            output_docx = long_dir / "very_long_output_name.docx"
+            output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
+
+            with patch("docx_fixer.docx_processor.run_powershell_file", side_effect=fake_run):
+                logs = verify_and_fix_body_indents_with_word_com(output_docx, records)
+
+        command_length_line = next(line for line in logs if line.startswith("command_length="))
+        work_path_line = next(line for line in logs if line.startswith("WORD_COM_DOCX_WORK_PATH="))
+        self.assertEqual(observed["records_count"], 5000)
+        self.assertNotIn("body text 4999", " ".join(observed["args"]))
+        self.assertTrue(str(observed["records_path"]).endswith(".json"))
+        self.assertTrue(str(observed["script_path"]).endswith(".ps1"))
+        self.assertLess(int(command_length_line.split("=", 1)[1]), 400)
+        self.assertLess(len(work_path_line.split("=", 1)[1]), len(str(output_docx)))
+
     def test_body_indent_uses_styles_xml_font_size_lookup(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_docx = Path(temp_dir) / "input.docx"
@@ -254,10 +701,112 @@ class DocxProcessorTests(unittest.TestCase):
             body_paragraph = root.xpath(".//w:p", namespaces=NS)[2]
             ind = body_paragraph.find("./w:pPr/w:ind", NS)
             self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+            self.assertIsNone(ind.get(qn("start")))
             self.assertIsNone(ind.get(qn("hanging")))
             self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
             debug = "\n".join(summary.body_indent_debug_logs)
             self.assertIn("font_size_source=paragraph_style:DefaultText", debug)
+            self.assertTrue(any(int(record["paragraph_index"]) == 3 for record in summary.body_indent_records))
+
+    def test_body_indent_direct_format_overrides_styles_xml_start_indent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_document_with_styled_level_four_body(),
+                styles_xml=make_styles_with_default_text_font(14, start_twips="1480"),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    include_tables_in_paragraph=False,
+                ),
+            )
+
+            root = read_document_root(output_docx)
+            body_paragraph = root.xpath(".//w:p", namespaces=NS)[2]
+            ind = body_paragraph.find("./w:pPr/w:ind", NS)
+            self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+            self.assertIsNone(ind.get(qn("start")))
+            self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
+            debug = "\n".join(summary.body_indent_debug_logs)
+            self.assertIn("written_start_twips=None", debug)
+            self.assertIn("validation=ok", debug)
+
+    def test_level_four_indents_are_normalized_in_document_numbering_and_styles(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_document_with_style_level_four_heading_and_body(),
+                styles_xml=make_styles_with_level_four_numbered_and_plain_old_indents(),
+                numbering_xml=make_level_four_numbering_with_old_indents(),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    include_tables_in_paragraph=False,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            spec = TEMPLATE_OUTLINE_INDENTS[3]
+            document_root = read_part_root(output_docx, "word/document.xml")
+            paragraphs = document_root.xpath(".//w:p", namespaces=NS)
+            heading_ind = paragraphs[1].find("./w:pPr/w:ind", NS)
+            body_ind = paragraphs[2].find("./w:pPr/w:ind", NS)
+            self.assertEqual(heading_ind.get(qn("left")), spec["left"])
+            self.assertEqual(heading_ind.get(qn("hanging")), spec["hanging"])
+            self.assertAlmostEqual(int(heading_ind.get(qn("left"))) / 20 / 28.3464567, 3.94, places=2)
+            self.assertAlmostEqual(int(heading_ind.get(qn("hanging"))) / 20 / 28.3464567, 0.74, places=2)
+            self.assertEqual(body_ind.get(qn("left")), spec["body_left"])
+            self.assertIsNone(body_ind.get(qn("hanging")))
+            self.assertIsNone(body_ind.get(qn("firstLine")))
+            self.assertIsNone(body_ind.get(qn("start")))
+            self.assertIsNone(paragraphs[2].find("./w:pPr/w:tabs", NS))
+
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            numbering_lvl = numbering_root.find(".//w:lvl", NS)
+            numbering_ind = numbering_lvl.find("./w:pPr/w:ind", NS)
+            numbering_tab = numbering_lvl.find("./w:pPr/w:tabs/w:tab", NS)
+            self.assertEqual(numbering_ind.get(qn("left")), spec["left"])
+            self.assertEqual(numbering_ind.get(qn("hanging")), spec["hanging"])
+            self.assertIsNone(numbering_ind.get(qn("start")))
+            self.assertEqual(numbering_lvl.find("./w:suff", NS).get(qn("val")), "tab")
+            self.assertEqual(numbering_tab.get(qn("pos")), spec["left"])
+
+            styles_root = read_part_root(output_docx, "word/styles.xml")
+            numbered_style = styles_root.xpath("./w:style[@w:styleId='NumberedL4']", namespaces=NS)[0]
+            numbered_ind = numbered_style.find("./w:pPr/w:ind", NS)
+            self.assertEqual(numbered_ind.get(qn("left")), spec["left"])
+            self.assertEqual(numbered_ind.get(qn("hanging")), spec["hanging"])
+            self.assertIsNone(numbered_ind.get(qn("start")))
+            plain_style = styles_root.xpath("./w:style[@w:styleId='BodyText']", namespaces=NS)[0]
+            self.assertIsNone(plain_style.find("./w:pPr/w:ind", NS))
+            self.assertIsNone(plain_style.find("./w:pPr/w:tabs", NS))
+
+            assert_docx_has_no_character_indent_attrs(self, output_docx)
+            logs = "\n".join(summary.numbering_xml_logs)
+            self.assertIn("NUMBERING_XML_LEVEL_INDENT", logs)
+            self.assertIn("STYLES_XML_NUMBERED_STYLE_INDENT", logs)
+            self.assertIn("expected_number_start_cm=3.20", logs)
+            records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
+            self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.94, places=2)
+            self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_hanging_cm"], 0.74, places=2)
+            self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.94, places=2)
+            self.assertEqual(records_by_kind["body"]["expected_firstline_cm"], 0.0)
 
     def test_document_xml_character_indent_attrs_are_removed_but_twips_remain(self):
         with tempfile.TemporaryDirectory() as temp_dir:

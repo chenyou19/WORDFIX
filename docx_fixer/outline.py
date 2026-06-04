@@ -297,6 +297,40 @@ def remove_paragraph_tabs(pPr) -> None:
         pPr.remove(tabs)
 
 
+def apply_indent_spec_to_pPr(pPr, spec: dict[str, str], mode: str) -> dict[str, str | None]:
+    """
+    Apply a template indent spec in one place so heading and body rules cannot drift.
+
+    heading_numbered writes the numbered paragraph/list-template geometry:
+    text left = number_start + hanging, first line hangs back by hanging.
+
+    body_plain writes only the body text left indent. It removes hanging,
+    firstLine, tabs, bidi start/end, right/end, and character-unit indents.
+    """
+    ind = get_or_add(pPr, "ind")
+    clear_indent_attrs(ind)
+
+    if mode == "heading_numbered":
+        ind.set(qn("left"), spec["left"])
+        ind.set(qn("hanging"), spec["hanging"])
+        normalize_tabs_to_text_position(pPr, spec["left"])
+    elif mode == "body_plain":
+        body_left = spec.get("body_left", spec["left"])
+        ind.set(qn("left"), body_left)
+        remove_paragraph_tabs(pPr)
+    else:
+        raise ValueError(f"Unknown indent mode: {mode}")
+
+    return {
+        "left": ind.get(qn("left")),
+        "hanging": ind.get(qn("hanging")),
+        "firstLine": ind.get(qn("firstLine")),
+        "tab_pos": pPr.find("./w:tabs/w:tab", NS).get(qn("pos"))
+        if pPr.find("./w:tabs/w:tab", NS) is not None
+        else None,
+    }
+
+
 def apply_paragraph_outline_level(pPr, level: int) -> None:
     """設定 Word 段落屬性中的「大綱階層」。
 
@@ -560,6 +594,12 @@ def format_font_size_for_log(font_size_pt: float | None) -> str:
     return f"{font_size_pt:g} pt"
 
 
+def format_twips_cm(value: str | int | None) -> str:
+    if value is None:
+        return "None"
+    return f"{twips_to_cm(value):.2f}"
+
+
 def estimate_text_width_cm(text: str, font_size_pt: float) -> float:
     units = 0.0
     for ch in text:
@@ -700,12 +740,22 @@ def paragraph_indent_debug_format(p) -> dict[str, str | None]:
     ind = pPr.find("w:ind", NS) if pPr is not None else None
     tab = pPr.find("./w:tabs/w:tab", NS) if pPr is not None else None
     left = ind.get(qn("left")) if ind is not None else None
+    start = ind.get(qn("start")) if ind is not None else None
     hanging = ind.get(qn("hanging")) if ind is not None else None
     return {
         "left": left,
+        "start": start,
         "hanging": hanging,
+        "firstLine": ind.get(qn("firstLine")) if ind is not None else None,
+        "leftChars": ind.get(qn("leftChars")) if ind is not None else None,
+        "startChars": ind.get(qn("startChars")) if ind is not None else None,
+        "hangingChars": ind.get(qn("hangingChars")) if ind is not None else None,
+        "firstLineChars": ind.get(qn("firstLineChars")) if ind is not None else None,
         "number_start": calculated_number_start(left, hanging),
         "tab_pos": tab.get(qn("pos")) if tab is not None else None,
+        "has_tabs": "yes" if pPr is not None and pPr.find("w:tabs", NS) is not None else "no",
+        "has_pPrChange": "yes" if pPr is not None and pPr.find("w:pPrChange", NS) is not None else "no",
+        "has_numPr": "yes" if pPr is not None and pPr.find("w:numPr", NS) is not None else "no",
     }
 
 
@@ -720,6 +770,17 @@ def numbering_identity_for_debug(p, style_numbering_lookup=None) -> tuple[str | 
         return style_num_id, style_ilvl, style_id
 
     return None, None, style_id
+
+
+def paragraph_numbering_kind(text: str, p, style_numbering_lookup=None) -> str:
+    if has_auto_numbering(p):
+        return "auto"
+    style_id = paragraph_style_id(p)
+    if style_id and style_numbering_lookup and style_id in style_numbering_lookup:
+        return "auto(style)"
+    if detect_manual_numbering_prefix(text) is not None:
+        return "manual"
+    return "body"
 
 
 def append_numbering_debug_log(
@@ -771,6 +832,125 @@ def append_numbering_debug_log(
     )
 
 
+def body_indent_validation_errors(p, expected_left: str) -> list[str]:
+    errors: list[str] = []
+    pPr = p.find("./w:pPr", NS)
+    ind = pPr.find("w:ind", NS) if pPr is not None else None
+    tabs = pPr.find("w:tabs", NS) if pPr is not None else None
+
+    if ind is None:
+        return ["missing_ind"]
+
+    if ind.get(qn("left")) != expected_left:
+        errors.append(f"left={ind.get(qn('left'))}")
+    for attr in (
+        "start",
+        "right",
+        "end",
+        "hanging",
+        "firstLine",
+        "leftChars",
+        "startChars",
+        "rightChars",
+        "endChars",
+        "hangingChars",
+        "firstLineChars",
+    ):
+        if ind.get(qn(attr)) is not None:
+            errors.append(f"{attr}={ind.get(qn(attr))}")
+    if tabs is not None:
+        errors.append("tabs_present")
+
+    return errors
+
+
+def append_body_indent_record(
+    summary,
+    *,
+    paragraph_index: int,
+    text: str,
+    heading_level: int,
+    expected_left_twips: str,
+    paragraph_style_id_value: str | None,
+    heading_uses_outline: bool = True,
+) -> None:
+    if summary is None:
+        return
+
+    spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
+    expected_hanging_twips = spec["hanging"] if spec is not None else "0"
+    expected_heading_left_twips = spec["left"] if spec is not None else expected_left_twips
+    expected_number_start_twips = (
+        spec.get("number_start", str(int(expected_heading_left_twips) - int(expected_hanging_twips)))
+        if spec is not None
+        else "0"
+    )
+    summary.body_indent_records.append(
+        {
+            "paragraph_index": paragraph_index,
+            "text_preview": summarize_paragraph_text(text, 80),
+            "kind": "body",
+            "heading_level": heading_level,
+            "level": heading_level,
+            "expected_number_start_cm": twips_to_cm(expected_number_start_twips),
+            "expected_hanging_cm": 0.0,
+            "expected_heading_left_cm": twips_to_cm(expected_heading_left_twips),
+            "expected_body_left_cm": twips_to_cm(expected_left_twips),
+            "expected_left_twips": expected_left_twips,
+            "expected_left_cm": twips_to_cm(expected_left_twips),
+            "expected_left_points": int(expected_left_twips) / 20,
+            "expected_firstline_cm": 0.0,
+            "expected_firstline_points": 0.0,
+            "xml_written_left_cm": twips_to_cm(expected_left_twips),
+            "xml_written_hanging_cm": None,
+            "paragraph_style_id": paragraph_style_id_value,
+        }
+    )
+
+
+def append_heading_indent_record(
+    summary,
+    *,
+    paragraph_index: int,
+    text: str,
+    level: int,
+    kind: str,
+    p,
+) -> None:
+    if summary is None:
+        return
+
+    spec = get_outline_indent_spec(level, set_outline=True)
+    if spec is None:
+        return
+
+    paragraph_format = paragraph_indent_debug_format(p)
+    left_twips = spec["left"]
+    hanging_twips = spec["hanging"]
+    number_start_twips = spec.get("number_start", str(int(left_twips) - int(hanging_twips)))
+    summary.body_indent_records.append(
+        {
+            "paragraph_index": paragraph_index,
+            "text_preview": summarize_paragraph_text(text, 80),
+            "kind": kind,
+            "heading_level": level,
+            "level": level,
+            "expected_number_start_cm": twips_to_cm(number_start_twips),
+            "expected_hanging_cm": twips_to_cm(hanging_twips),
+            "expected_heading_left_cm": twips_to_cm(left_twips),
+            "expected_body_left_cm": twips_to_cm(spec.get("body_left", left_twips)),
+            "expected_left_twips": left_twips,
+            "expected_left_cm": twips_to_cm(left_twips),
+            "expected_left_points": int(left_twips) / 20,
+            "expected_firstline_cm": -twips_to_cm(hanging_twips),
+            "expected_firstline_points": -int(hanging_twips) / 20,
+            "xml_written_left_cm": format_twips_cm(paragraph_format.get("left")),
+            "xml_written_hanging_cm": format_twips_cm(paragraph_format.get("hanging")),
+            "paragraph_style_id": paragraph_style_id(p),
+        }
+    )
+
+
 def append_body_indent_debug_log(
     summary,
     *,
@@ -795,7 +975,10 @@ def append_body_indent_debug_log(
         style_font_size_lookup,
     )
     body_left_twips = spec.get("body_left", spec["left"])
+    validation_errors = body_indent_validation_errors(p, body_left_twips)
     preview = summarize_paragraph_text(text)
+    pPr = p.find("./w:pPr", NS)
+    ppr_xml = etree.tostring(pPr, encoding="unicode") if pPr is not None else ""
     summary.body_indent_debug_logs.append(
         f"[{part_name} #{paragraph_index}] "
         f"text={preview!r}; heading_level={heading_level}; "
@@ -804,14 +987,28 @@ def append_body_indent_debug_log(
         f"spec_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
         f"spec_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
         f"spec_body_left_cm={twips_to_cm(body_left_twips):.2f}; "
+        f"spec_body_left_twips={body_left_twips}; "
         f"font_size_pt={format_font_size_for_log(font_size_pt)}; "
         f"font_size_source={font_size_source}; "
         f"paragraph_style_id={paragraph_style}; "
         f"run_style_id={run_style}; "
         f"written_left_twips={paragraph_format.get('left')}; "
-        f"written_left_cm={twips_to_cm(paragraph_format.get('left')):.2f}; "
+        f"written_left_cm={format_twips_cm(paragraph_format.get('left'))}; "
+        f"written_start_twips={paragraph_format.get('start')}; "
+        f"written_start_cm={format_twips_cm(paragraph_format.get('start'))}; "
         f"written_hanging={paragraph_format.get('hanging')}; "
-        f"tab_pos={paragraph_format.get('tab_pos')}"
+        f"written_firstLine={paragraph_format.get('firstLine')}; "
+        f"leftChars={paragraph_format.get('leftChars')}; "
+        f"startChars={paragraph_format.get('startChars')}; "
+        f"hangingChars={paragraph_format.get('hangingChars')}; "
+        f"firstLineChars={paragraph_format.get('firstLineChars')}; "
+        f"tab_pos={paragraph_format.get('tab_pos')}; "
+        f"has_tabs={paragraph_format.get('has_tabs')}; "
+        f"has_pPrChange={paragraph_format.get('has_pPrChange')}; "
+        f"has_numPr={paragraph_format.get('has_numPr')}; "
+        f"validation={'ok' if not validation_errors else 'BODY_INDENT_VALIDATE_FAILED'}; "
+        f"validation_errors={','.join(validation_errors) if validation_errors else 'none'}; "
+        f"pPr_xml={ppr_xml}"
     )
 
 
@@ -874,12 +1071,7 @@ def apply_outline_format(
     if spec is None:
         return
 
-    ind = get_or_add(pPr, "ind")
-
-    clear_indent_attrs(ind)
-
-    ind.set(qn("left"), spec["left"])
-    ind.set(qn("hanging"), spec["hanging"])
+    apply_indent_spec_to_pPr(pPr, spec, "heading_numbered")
 
     # 修正「編號後面被舊 tab stop 推出奇怪留白」的問題。
     normalize_tabs_to_text_position(pPr, spec["left"])
@@ -911,10 +1103,7 @@ def apply_body_indent_from_heading(
         return False
 
     pPr = get_or_add(p, "pPr", first=True)
-    ind = get_or_add(pPr, "ind")
-    clear_indent_attrs(ind)
-    ind.set(qn("left"), spec.get("body_left", spec["left"]))
-    remove_paragraph_tabs(pPr)
+    apply_indent_spec_to_pPr(pPr, spec, "body_plain")
     return True
 
 
@@ -1199,6 +1388,17 @@ def fix_outline_paragraphs(
                         style_font_size_lookup,
                     ):
                         changed_count += 1
+                        spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
+                        if spec is not None:
+                            append_body_indent_record(
+                                summary,
+                                paragraph_index=paragraph_index,
+                                text=text,
+                                heading_level=heading_level,
+                                expected_left_twips=spec.get("body_left", spec["left"]),
+                                paragraph_style_id_value=paragraph_style_id(p),
+                                heading_uses_outline=heading_uses_outline,
+                            )
                         append_body_indent_debug_log(
                             summary,
                             part_name=part_name,
@@ -1232,6 +1432,14 @@ def fix_outline_paragraphs(
                     set_indent=True,
                     set_outline=True,
                     use_preface_indent=False,
+                )
+                append_heading_indent_record(
+                    summary,
+                    paragraph_index=paragraph_index,
+                    text=text,
+                    level=indent_level,
+                    kind=paragraph_numbering_kind(text, p, style_numbering_lookup),
+                    p=p,
                 )
                 current_heading_indent = (indent_level, True)
                 changed_count += 1

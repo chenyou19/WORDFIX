@@ -11,6 +11,7 @@ class ProcessOptions:
     remove_all_outline_levels: bool = False
     indent_preface_paragraphs: bool = False
     outline_preface_paragraphs: bool = False
+    normalize_with_word_com: bool = True
 
 
 @dataclass
@@ -42,8 +43,11 @@ class ProcessSummary:
     paragraph_level_counts: list[int] = field(default_factory=lambda: [0] * 9)
     paragraph_logs: list[str] = field(default_factory=list)
     numbering_measurements: dict[str, dict[str, object]] = field(default_factory=dict)
+    numbering_xml_logs: list[str] = field(default_factory=list)
     numbering_debug_logs: list[str] = field(default_factory=list)
     body_indent_debug_logs: list[str] = field(default_factory=list)
+    body_indent_records: list[dict[str, object]] = field(default_factory=list)
+    word_com_body_indent_logs: list[str] = field(default_factory=list)
     character_indent_attrs_removed: int = 0
 
     @property

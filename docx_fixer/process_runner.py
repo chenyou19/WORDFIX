@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import time
@@ -12,22 +13,16 @@ def _ps_single_quoted(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def run_powershell_script(
-    script: str,
+def _run_powershell_process(
+    command: list[str],
     *,
+    env: dict[str, str] | None = None,
     stop: StopController | None = None,
     timeout: float = 180,
     stop_grace_seconds: float = 8,
+    stop_token: str,
 ) -> subprocess.CompletedProcess:
-    stop_path = Path(tempfile.gettempdir()) / f"docx_fixer_stop_{id(script)}_{time.time_ns()}.flag"
-    stop_literal = _ps_single_quoted(str(stop_path))
-    wrapped_script = f"""
-$CodexStopPath = {stop_literal}
-function Test-CodexStop {{
-    return [System.IO.File]::Exists($CodexStopPath)
-}}
-{script}
-"""
+    stop_path = Path(tempfile.gettempdir()) / f"{stop_token}_{time.time_ns()}.flag"
 
     def signal_stop() -> None:
         try:
@@ -35,14 +30,20 @@ function Test-CodexStop {{
         except Exception:
             pass
 
+    process_env = os.environ.copy()
+    if env:
+        process_env.update(env)
+    process_env["CODEX_STOP_PATH"] = str(stop_path)
+
     if stop is not None:
         stop.register_stop_callback(signal_stop)
 
     process = subprocess.Popen(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", wrapped_script],
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=process_env,
     )
 
     start_time = time.monotonic()
@@ -87,3 +88,52 @@ function Test-CodexStop {{
             pass
         except Exception:
             pass
+
+
+def run_powershell_script(
+    script: str,
+    *,
+    stop: StopController | None = None,
+    timeout: float = 180,
+    stop_grace_seconds: float = 8,
+) -> subprocess.CompletedProcess:
+    stop_literal = _ps_single_quoted("%CODEX_STOP_PATH%")
+    wrapped_script = f"""
+$CodexStopPath = $env:CODEX_STOP_PATH
+function Test-CodexStop {{
+    return [System.IO.File]::Exists($CodexStopPath)
+}}
+{script}
+"""
+    return _run_powershell_process(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", wrapped_script],
+        stop=stop,
+        timeout=timeout,
+        stop_grace_seconds=stop_grace_seconds,
+        stop_token="docx_fixer_stop_script",
+    )
+
+
+def run_powershell_file(
+    script_path: str | Path,
+    *,
+    arguments: list[str] | None = None,
+    stop: StopController | None = None,
+    timeout: float = 180,
+    stop_grace_seconds: float = 8,
+) -> subprocess.CompletedProcess:
+    return _run_powershell_process(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            *(arguments or []),
+        ],
+        stop=stop,
+        timeout=timeout,
+        stop_grace_seconds=stop_grace_seconds,
+        stop_token=f"docx_fixer_stop_{Path(script_path).stem}",
+    )

@@ -101,6 +101,13 @@ def paragraph_left_indent(p):
     return ind.get(qn("left"))
 
 
+def paragraph_start_indent(p):
+    ind = p.find("./w:pPr/w:ind", NS)
+    if ind is None:
+        return None
+    return ind.get(qn("start"))
+
+
 def expected_body_left(level: int, set_outline: bool = True):
     spec = TEMPLATE_OUTLINE_INDENTS[level] if set_outline else PREFACE_OUTLINE_INDENTS[level]
     return spec["body_left"]
@@ -191,6 +198,7 @@ def make_styles_font_xml(
     doc_default_pt: float | None = None,
     paragraph_styles: dict[str, tuple[float | None, str | None]] | None = None,
     character_styles: dict[str, tuple[float | None, str | None]] | None = None,
+    paragraph_style_indents: dict[str, dict[str, str]] | None = None,
 ):
     root = etree.Element(qn("styles"), nsmap={"w": W_NS})
     if doc_default_pt is not None:
@@ -215,6 +223,12 @@ def make_styles_font_xml(
                 rPr = etree.SubElement(style, qn("rPr"))
                 sz = etree.SubElement(rPr, qn("sz"))
                 sz.set(qn("val"), str(round(font_size_pt * 2)))
+            indent_attrs = (paragraph_style_indents or {}).get(style_id) if style_type == "paragraph" else None
+            if indent_attrs:
+                pPr = etree.SubElement(style, qn("pPr"))
+                ind = etree.SubElement(pPr, qn("ind"))
+                for attr_name, attr_value in indent_attrs.items():
+                    ind.set(qn(attr_name), attr_value)
 
     return etree.tostring(root)
 
@@ -567,9 +581,49 @@ class OutlineFixTests(unittest.TestCase):
         fix_outline_paragraphs(root, include_tables=True)
 
         self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[2]["left"])
+        self.assertIsNone(paragraph_start_indent(heading))
         self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[2]["body_left"])
+        self.assertIsNone(paragraph_start_indent(body))
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
+
+    def test_level_three_body_indent_writes_left_only_and_clears_old_indent_attrs(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\uff08\u4e00\uff09\u7b2c\u4e09\u968e\u6a19\u984c")
+        body = make_paragraph("\u968e\u5c643\u5167\u6587", font_size_pt=14)
+        ind = add_ind_with_char_attrs(body)
+        ind.set(qn("left"), "1480")
+        ind.set(qn("start"), "1480")
+        ind.set(qn("hanging"), "300")
+        ind.set(qn("firstLine"), "200")
+        ind.set(qn("leftChars"), "100")
+        ind.set(qn("startChars"), "100")
+        ind.set(qn("hangingChars"), "100")
+        ind.set(qn("firstLineChars"), "100")
+        add_tab_stop(body, pos="1480")
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary)
+
+        expected = TEMPLATE_OUTLINE_INDENTS[2]["body_left"]
+        body_ind = body.find("./w:pPr/w:ind", NS)
+        self.assertEqual(body_ind.get(qn("left")), expected)
+        self.assertIsNone(body_ind.get(qn("start")))
+        self.assertAlmostEqual(twips_to_cm(expected), 2.96, places=2)
+        self.assertIsNone(body_ind.get(qn("hanging")))
+        self.assertIsNone(body_ind.get(qn("firstLine")))
+        self.assertIsNone(body_ind.get(qn("leftChars")))
+        self.assertIsNone(body_ind.get(qn("startChars")))
+        self.assertIsNone(body_ind.get(qn("hangingChars")))
+        self.assertIsNone(body_ind.get(qn("firstLineChars")))
+        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("heading_level=2", debug)
+        self.assertIn("spec_body_left_cm=2.96", debug)
+        self.assertIn(f"written_left_twips={expected}", debug)
+        self.assertIn("written_start_twips=None", debug)
+        self.assertIn("validation=ok", debug)
 
     def test_level_four_body_indent_uses_body_left_and_removes_hanging_and_tabs(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
@@ -624,6 +678,36 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
         self.assertIn("font_size_source=paragraph_style:DefaultText", "\n".join(summary.body_indent_debug_logs))
+
+    def test_body_indent_direct_format_overrides_style_start_indent(self):
+        styles = make_styles_font_xml(
+            paragraph_styles={"DefaultText": (14, None)},
+            paragraph_style_indents={"DefaultText": {"start": "1480"}},
+        )
+        style_lookup = build_style_font_size_lookup(styles)
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\uff08\u4e00\uff09\u7b2c\u4e09\u968e\u6a19\u984c")
+        body = make_paragraph(
+            "\u53d7 style start \u5e72\u64fe\u7684\u5167\u6587",
+            style="DefaultText",
+        )
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            style_font_size_lookup=style_lookup,
+        )
+
+        expected = TEMPLATE_OUTLINE_INDENTS[2]["body_left"]
+        self.assertEqual(paragraph_left_indent(body), expected)
+        self.assertIsNone(paragraph_start_indent(body))
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("paragraph_style_id=DefaultText", debug)
+        self.assertIn("written_start_twips=None", debug)
+        self.assertIn("validation=ok", debug)
 
     def test_body_indent_uses_based_on_paragraph_style_font_size(self):
         styles = make_styles_font_xml(
@@ -1011,6 +1095,7 @@ class OutlineFixTests(unittest.TestCase):
             (ind.get(qn("left")), ind.get(qn("hanging"))),
             expected_indent(1),
         )
+        self.assertIsNone(ind.get(qn("start")))
         self.assertEqual(tab.get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[1]["left"])
         self.assertEqual(suff.get(qn("val")), "tab")
         self.assertEqual(lvl_jc.get(qn("val")), "left")

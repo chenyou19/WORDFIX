@@ -253,24 +253,20 @@ def build_style_numbering_lookup(styles_xml: bytes | None) -> dict[str, tuple[st
     return resolved
 
 
-def apply_numbering_level_outline_format(lvl, level: int) -> None:
-    """
-    同步修改 numbering.xml 裡的自動編號層級格式。
+def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str] | None = None) -> None:
+    """Normalize a numbering level to the configured outline geometry.
 
-    只改本工具可辨識的 0~8 階編號。重點是：
-    1. 套用與範本一致的 left/hanging。
-    2. 清掉舊 tab stop，避免編號後面出現過長留白。
-    3. 將自動編號後綴由 tab/space 改成 nothing，避免灰底／反白延伸出額外色塊。
+    Word uses the list suffix tab and the level tab stop when calculating
+    the effective text start. Keep suff=tab, but always rewrite the tab stop
+    to spec["left"] so reopening the file cannot shift the indent.
     """
-    from .outline import clear_indent_attrs, normalize_tabs_to_text_position
+    from .indent_settings import twips_to_cm
+    from .outline import apply_indent_spec_to_pPr
 
     spec = TEMPLATE_OUTLINE_INDENTS.get(level)
     if spec is None:
         return
 
-    # 自動編號後面不要用 tab，也不要用 space。
-    # tab 會形成一大片灰色留白；space 會形成一小塊灰色方塊。
-    # 改成 nothing，讓灰底只包住編號本身。
     font_size_pt = OUTLINE_LEVEL_FONT_SIZE_PT.get(level)
     if font_size_pt is not None:
         rPr = get_or_add(lvl, "rPr")
@@ -289,13 +285,20 @@ def apply_numbering_level_outline_format(lvl, level: int) -> None:
     suff.set(qn("val"), "tab")
 
     pPr = get_or_add(lvl, "pPr")
-    ind = get_or_add(pPr, "ind")
-    clear_indent_attrs(ind)
-    ind.set(qn("left"), spec["left"])
-    ind.set(qn("hanging"), spec["hanging"])
+    written = apply_indent_spec_to_pPr(pPr, spec, "heading_numbered")
 
-    normalize_tabs_to_text_position(pPr, spec["left"])
-
+    if change_logs is not None:
+        number_start = int(spec["left"]) - int(spec["hanging"])
+        change_logs.append(
+            "NUMBERING_XML_LEVEL_INDENT: "
+            f"level={level}; "
+            f"expected_number_start_cm={twips_to_cm(number_start):.2f}; "
+            f"expected_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
+            f"expected_heading_left_cm={twips_to_cm(spec['left']):.2f}; "
+            f"xml_written_left_cm={twips_to_cm(written.get('left') or spec['left']):.2f}; "
+            f"xml_written_hanging_cm={twips_to_cm(written.get('hanging') or spec['hanging']):.2f}; "
+            f"suff=tab; tab_pos_cm={twips_to_cm(written.get('tab_pos') or spec['left']):.2f}"
+        )
 
 def _calculated_number_start(left: str | None, hanging: str | None) -> str | None:
     if left is None or hanging is None:
@@ -389,7 +392,10 @@ def apply_numbering_level_body_text_format(lvl) -> bool:
     return True
 
 
-def apply_numbering_outline_format(numbering_xml: bytes | None) -> bytes | None:
+def apply_numbering_outline_format(
+    numbering_xml: bytes | None,
+    change_logs: list[str] | None = None,
+) -> bytes | None:
     """
     將 numbering.xml 裡可辨識的自動編號格式同步套用範本縮排。
     若解析失敗，回傳原始 XML，避免中斷整份文件處理。
@@ -424,7 +430,7 @@ def apply_numbering_outline_format(numbering_xml: bytes | None) -> bytes | None:
                 outline_level = ilvl
 
         if outline_level is not None:
-            apply_numbering_level_outline_format(lvl, outline_level)
+            apply_numbering_level_outline_format(lvl, outline_level, change_logs=change_logs)
             changed = True
 
     # 個別 num 的 override 定義。
@@ -447,11 +453,121 @@ def apply_numbering_outline_format(numbering_xml: bytes | None) -> bytes | None:
                 outline_level = ilvl
 
         if outline_level is not None:
-            apply_numbering_level_outline_format(lvl, outline_level)
+            apply_numbering_level_outline_format(lvl, outline_level, change_logs=change_logs)
             changed = True
 
     if not changed:
         return numbering_xml
+
+    return etree.tostring(
+        root,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
+
+
+def _style_direct_num_identity(style) -> tuple[str | None, int | None]:
+    num_pr = style.find("./w:pPr/w:numPr", NS)
+    if num_pr is None:
+        return None, None
+
+    num_id_el = num_pr.find("w:numId", NS)
+    ilvl_el = num_pr.find("w:ilvl", NS)
+    num_id = num_id_el.get(qn("val")) if num_id_el is not None else None
+    try:
+        ilvl = int(ilvl_el.get(qn("val"))) if ilvl_el is not None else 0
+    except Exception:
+        ilvl = None
+    return num_id, ilvl
+
+
+def clean_plain_style_pPr(pPr) -> None:
+    from .outline import clear_indent_attrs, remove_paragraph_tabs
+
+    ind = pPr.find("w:ind", NS)
+    if ind is not None:
+        clear_indent_attrs(ind)
+        if not ind.attrib:
+            pPr.remove(ind)
+    remove_paragraph_tabs(pPr)
+
+
+def apply_styles_outline_format_to_root(
+    root,
+    numbering_level_lookup=None,
+    style_numbering_lookup=None,
+    change_logs: list[str] | None = None,
+) -> bool:
+    from .indent_settings import twips_to_cm
+    from .outline import apply_indent_spec_to_pPr
+
+    style_numbering_lookup = style_numbering_lookup or {}
+    changed = False
+
+    for style in root.xpath("./w:style[@w:type='paragraph']", namespaces=NS):
+        style_id = style.get(qn("styleId")) or ""
+        pPr = style.find("w:pPr", NS)
+        direct_num_id, direct_ilvl = _style_direct_num_identity(style)
+        num_id, ilvl = style_numbering_lookup.get(style_id, (direct_num_id, direct_ilvl))
+        level = detect_number_level_from_identity(num_id, ilvl, numbering_level_lookup)
+
+        if level == BULLET_OUTLINE_LEVEL:
+            if pPr is not None:
+                clean_plain_style_pPr(pPr)
+                changed = True
+            continue
+
+        if level is not None and 0 <= level <= 8:
+            spec = TEMPLATE_OUTLINE_INDENTS.get(level)
+            if spec is None:
+                continue
+            if pPr is None:
+                pPr = get_or_add(style, "pPr")
+            written = apply_indent_spec_to_pPr(pPr, spec, "heading_numbered")
+            changed = True
+            if change_logs is not None:
+                change_logs.append(
+                    "STYLES_XML_NUMBERED_STYLE_INDENT: "
+                    f"styleId={style_id}; kind=auto(style); level={level}; "
+                    f"expected_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
+                    f"expected_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
+                    f"expected_heading_left_cm={twips_to_cm(spec['left']):.2f}; "
+                    f"xml_written_left_cm={twips_to_cm(written.get('left') or spec['left']):.2f}; "
+                    f"xml_written_hanging_cm={twips_to_cm(written.get('hanging') or spec['hanging']):.2f}; "
+                    f"suff=tab; tab_pos_cm={twips_to_cm(written.get('tab_pos') or spec['left']):.2f}"
+                )
+            continue
+
+        if pPr is not None:
+            clean_plain_style_pPr(pPr)
+            changed = True
+
+    return changed
+
+
+def apply_styles_outline_format(
+    styles_xml: bytes | None,
+    numbering_level_lookup=None,
+    change_logs: list[str] | None = None,
+) -> bytes | None:
+    if not styles_xml:
+        return styles_xml
+
+    try:
+        root = etree.fromstring(styles_xml)
+    except Exception:
+        return styles_xml
+
+    style_numbering_lookup = build_style_numbering_lookup(styles_xml)
+    changed = apply_styles_outline_format_to_root(
+        root,
+        numbering_level_lookup=numbering_level_lookup,
+        style_numbering_lookup=style_numbering_lookup,
+        change_logs=change_logs,
+    )
+    if not changed:
+        return styles_xml
 
     return etree.tostring(
         root,

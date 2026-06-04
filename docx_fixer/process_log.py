@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .indent_settings import format_cm
+from .indent_settings import current_indent_settings, format_cm
 from .models import ProcessSummary
 
 
@@ -46,8 +46,11 @@ def format_numbering_indent_log_lines(summary: ProcessSummary) -> list[str]:
 
 def format_numbering_debug_log_lines(summary: ProcessSummary) -> list[str]:
     lines = ["Numbering XML debug:"]
+    if summary.numbering_xml_logs:
+        lines.extend(summary.numbering_xml_logs)
     if not summary.numbering_debug_logs:
-        lines.append("No numbering XML debug records.")
+        if not summary.numbering_xml_logs:
+            lines.append("No numbering XML debug records.")
         return lines
     lines.extend(summary.numbering_debug_logs)
     return lines
@@ -59,6 +62,33 @@ def format_body_indent_debug_log_lines(summary: ProcessSummary) -> list[str]:
         lines.append("No body indent debug records.")
         return lines
     lines.extend(summary.body_indent_debug_logs)
+    return lines
+
+
+def format_indent_settings_log_lines() -> list[str]:
+    lines = ["Indent settings snapshot:"]
+    settings = current_indent_settings()
+    for row in settings["body"]:
+        level = int(row["level"])
+        left_cm = float(row["number_start_cm"]) + float(row["hanging_cm"])
+        body_left_twips = round(float(row["body_left_cm"]) * 20 * 28.3464567)
+        lines.append(
+            f"level={level}; "
+            f"number_start_cm={format_cm(float(row['number_start_cm']))}; "
+            f"hanging_cm={format_cm(float(row['hanging_cm']))}; "
+            f"left_cm={format_cm(left_cm)}; "
+            f"body_left_cm={format_cm(float(row['body_left_cm']))}; "
+            f"body_left_twips={body_left_twips}"
+        )
+    return lines
+
+
+def format_word_com_body_indent_log_lines(summary: ProcessSummary) -> list[str]:
+    lines = ["Word COM body indent fix:"]
+    if not summary.word_com_body_indent_logs:
+        lines.append("No Word COM body indent logs.")
+        return lines
+    lines.extend(summary.word_com_body_indent_logs)
     return lines
 
 
@@ -98,11 +128,15 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         ],
         f"無法判斷而跳過的段落數：{summary.unknown_paragraphs}",
         "",
+        *format_indent_settings_log_lines(),
+        "",
         *format_numbering_indent_log_lines(summary),
         "",
         *format_numbering_debug_log_lines(summary),
         "",
         *format_body_indent_debug_log_lines(summary),
+        "",
+        *format_word_com_body_indent_log_lines(summary),
         "",
         "段落大綱階層修改紀錄：",
     ]
