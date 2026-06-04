@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .constants import CONVERT_TO_GRAY_FILLS, DEFAULT_GRAY, KEEP_COLOR_FILLS
+from .constants import DEFAULT_GRAY
 from .xml_utils import qn
 
 SHADING_DEBUG_ATTRS = [
@@ -29,6 +29,33 @@ def normalize_fill_hex(value: str | None) -> str | None:
         return None
 
     return value
+
+
+def hex_to_rgb(fill_hex: str | None) -> tuple[int, int, int] | None:
+    normalized = normalize_fill_hex(fill_hex)
+    if normalized is None:
+        return None
+    return (
+        int(normalized[0:2], 16),
+        int(normalized[2:4], 16),
+        int(normalized[4:6], 16),
+    )
+
+
+def is_gray_hex(fill_hex: str | None) -> bool:
+    rgb = hex_to_rgb(fill_hex)
+    if rgb is None:
+        return False
+    red, green, blue = rgb
+    return red == green == blue
+
+
+def is_darker_than_default_gray(fill_hex: str | None, default_gray: str = DEFAULT_GRAY) -> bool:
+    fill_rgb = hex_to_rgb(fill_hex)
+    default_rgb = hex_to_rgb(default_gray)
+    if fill_rgb is None or default_rgb is None:
+        return False
+    return fill_rgb[0] < default_rgb[0]
 
 
 def is_no_color_shading(shd) -> bool:
@@ -79,12 +106,13 @@ def get_shading_decision(shd) -> dict[str, str | None]:
     if is_no_color_shading(shd):
         action = "keep"
         reason = "no color shading"
-    elif fill_hex in CONVERT_TO_GRAY_FILLS:
-        action = "gray"
-        reason = "fill_hex in convert-to-gray list"
-    elif fill_hex in KEEP_COLOR_FILLS:
-        action = "keep"
-        reason = "fill_hex in keep list"
+    elif is_gray_hex(fill_hex):
+        if is_darker_than_default_gray(fill_hex):
+            action = "gray"
+            reason = "gray hex darker than default gray"
+        else:
+            action = "keep"
+            reason = "gray hex lighter/equal default gray"
     elif has_theme_color and fill_hex is None:
         action = "keep"
         reason = "theme color unresolved"

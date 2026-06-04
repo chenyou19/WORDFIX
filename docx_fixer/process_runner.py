@@ -34,6 +34,8 @@ def _run_powershell_process(
     if env:
         process_env.update(env)
     process_env["CODEX_STOP_PATH"] = str(stop_path)
+    process_env["PYTHONIOENCODING"] = "utf-8"
+    process_env["PYTHONUTF8"] = "1"
 
     if stop is not None:
         stop.register_stop_callback(signal_stop)
@@ -43,6 +45,8 @@ def _run_powershell_process(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=process_env,
     )
 
@@ -97,8 +101,11 @@ def run_powershell_script(
     timeout: float = 180,
     stop_grace_seconds: float = 8,
 ) -> subprocess.CompletedProcess:
-    stop_literal = _ps_single_quoted("%CODEX_STOP_PATH%")
     wrapped_script = f"""
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+[Console]::InputEncoding = $utf8NoBom
 $CodexStopPath = $env:CODEX_STOP_PATH
 function Test-CodexStop {{
     return [System.IO.File]::Exists($CodexStopPath)
@@ -122,13 +129,25 @@ def run_powershell_file(
     timeout: float = 180,
     stop_grace_seconds: float = 8,
 ) -> subprocess.CompletedProcess:
+    wrapped_command = """
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+[Console]::InputEncoding = $utf8NoBom
+if ($args.Length -gt 1) {
+    & $args[0] @($args[1..($args.Length - 1)])
+} else {
+    & $args[0]
+}
+"""
     return _run_powershell_process(
         [
             "powershell",
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
-            "-File",
+            "-Command",
+            wrapped_command,
             str(script_path),
             *(arguments or []),
         ],

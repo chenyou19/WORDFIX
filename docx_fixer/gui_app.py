@@ -10,7 +10,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .constants import DEFAULT_GRAY, DEFAULT_SUFFIX
+from .constants import DEFAULT_SUFFIX
 from .docx_processor import fix_docx_fast
 from .exceptions import ProcessStopped
 from .indent_settings import (
@@ -29,6 +29,7 @@ from .stop_controller import StopController
 
 DEFAULT_WINDOW_GEOMETRY = "1080x760"
 MIN_WINDOW_SIZE = (980, 680)
+
 
 class DocxFixerApp:
     def __init__(self, root: tk.Tk) -> None:
@@ -64,14 +65,14 @@ class DocxFixerApp:
         self.level2_body_first_line_indent_var = tk.BooleanVar(value=False)
         self.word_com_check_body_font_var = tk.BooleanVar(value=False)
 
-        self.status_var = tk.StringVar(value="Choose a .docx file")
+        self.status_var = tk.StringVar(value="請選擇 .docx 檔案")
         self.progress_var = tk.DoubleVar(value=0)
 
         self._build_ui()
         if self.indent_settings_load_error:
             messagebox.showwarning(
-                "蝮格??身頛憭望?",
-                f"撌脫?典撱箇葬?身摰n\n{self.indent_settings_load_error}",
+                "縮排設定載入失敗",
+                f"已改用內建縮排設定，無法載入已儲存的設定：\n{self.indent_settings_load_error}",
             )
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
@@ -88,79 +89,76 @@ class DocxFixerApp:
 
         process_tab = ttk.Frame(notebook, padding=10)
         indent_tab = ttk.Frame(notebook, padding=10)
-        notebook.add(process_tab, text="靽格?辣")
-        notebook.add(indent_tab, text="蝮格??身")
+        notebook.add(process_tab, text="文件處理")
+        notebook.add(indent_tab, text="縮排設定")
 
-        # 瑼??豢?
-        file_frame = ttk.LabelFrame(process_tab, text="瑼?")
+        file_frame = ttk.LabelFrame(process_tab, text="檔案")
         file_frame.pack(fill="x", pady=(0, 10))
         file_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(file_frame, text="Input file:").grid(row=0, column=0, padx=8, pady=8, sticky="w")
+        ttk.Label(file_frame, text="輸入檔案：").grid(row=0, column=0, padx=8, pady=8, sticky="w")
         ttk.Entry(file_frame, textvariable=self.input_var).grid(row=0, column=1, padx=8, pady=8, sticky="ew")
-        ttk.Button(file_frame, text="?汗...", command=self.browse_input).grid(row=0, column=2, padx=8, pady=8)
+        ttk.Button(file_frame, text="瀏覽...", command=self.browse_input).grid(row=0, column=2, padx=8, pady=8)
 
-        ttk.Label(file_frame, text="Output file:").grid(row=1, column=0, padx=8, pady=8, sticky="w")
+        ttk.Label(file_frame, text="輸出檔案：").grid(row=1, column=0, padx=8, pady=8, sticky="w")
         ttk.Entry(file_frame, textvariable=self.output_var).grid(row=1, column=1, padx=8, pady=8, sticky="ew")
-        ttk.Button(file_frame, text="?血???..", command=self.browse_output).grid(row=1, column=2, padx=8, pady=8)
+        ttk.Button(file_frame, text="另存為...", command=self.browse_output).grid(row=1, column=2, padx=8, pady=8)
 
-        hint = ttk.Label(file_frame, text=f"Default output suffix: {DEFAULT_SUFFIX}.docx")
+        hint = ttk.Label(file_frame, text=f"預設輸出檔名後綴：{DEFAULT_SUFFIX}.docx")
         hint.grid(row=2, column=1, padx=8, pady=(0, 8), sticky="w")
 
-        # ??賊?
-        option_frame = ttk.LabelFrame(process_tab, text="?臬?貊????寞?")
+        option_frame = ttk.LabelFrame(process_tab, text="處理選項")
         option_frame.pack(fill="x", pady=(0, 10))
 
         ttk.Checkbutton(
             option_frame,
-            text="隤踵銵冽?澆?嚗蔭銝准?擃?擃?11?銵?頝?獢?暺??祝摨?100%",
+            text="修正表格版面：一般表格使用自動調整、寬度 100%、字級 11pt，特殊表格維持專案規則",
             variable=self.fix_table_var,
         ).pack(anchor="w", padx=8, pady=(8, 4))
 
         ttk.Checkbutton(
             option_frame,
-            text="Fix table colors",
+            text="修正表格底色",
             variable=self.fix_color_var,
         ).pack(anchor="w", padx=8, pady=4)
 
         ttk.Checkbutton(
             option_frame,
-            text="Remove all outline levels",
+            text="移除所有段落大綱層級",
             variable=self.remove_all_outline_var,
         ).pack(anchor="w", padx=8, pady=4)
 
         ttk.Checkbutton(
             option_frame,
-            text="隤踵畾菔嚗?蝭?惜??憯對?銝嚗?銝嚗?(銝)嚗?嚗?1嚗?(1)嚗嚗?A嚗?(A)嚗嚗?a嚗?(a) ?葬??銝血?銝?Word 憭抒雇?惜",
+            text="修正段落格式與編號層級，必要時交由 Word COM 再次確認",
             variable=self.fix_paragraph_var,
         ).pack(anchor="w", padx=8, pady=4)
 
         ttk.Checkbutton(
             option_frame,
-            text="Indent preface paragraphs",
+            text="前言段落套用縮排",
             variable=self.indent_preface_var,
         ).pack(anchor="w", padx=8, pady=4)
 
         ttk.Checkbutton(
             option_frame,
-            text="Outline preface paragraphs",
+            text="前言段落套用大綱層級",
             variable=self.outline_preface_var,
         ).pack(anchor="w", padx=8, pady=4)
 
         ttk.Checkbutton(
             option_frame,
-            text="Apply 560 twips first-line indent to plain body text under level 2 headings",
+            text="第二層標題下的純文字內文套用 560 twips 首行縮排",
             variable=self.level2_body_first_line_indent_var,
         ).pack(anchor="w", padx=28, pady=4)
 
         ttk.Checkbutton(
             option_frame,
-            text="When XML body font is not 14pt, ask Word COM to verify before applying body indent",
+            text="當 XML 內文字級不是 14pt 時，先由 Word COM 驗證後再套用內文縮排",
             variable=self.word_com_check_body_font_var,
         ).pack(anchor="w", padx=28, pady=(0, 8))
 
-        # ?脣漲????
-        progress_frame = ttk.LabelFrame(process_tab, text="?脣漲")
+        progress_frame = ttk.LabelFrame(process_tab, text="處理進度")
         progress_frame.pack(fill="x", pady=(0, 10))
 
         self.progress_bar = ttk.Progressbar(
@@ -173,20 +171,18 @@ class DocxFixerApp:
 
         ttk.Label(progress_frame, textvariable=self.status_var).pack(anchor="w", padx=8, pady=(0, 8))
 
-        # ??
         button_frame = ttk.Frame(process_tab)
         button_frame.pack(fill="x", pady=(0, 10))
 
-        self.start_button = ttk.Button(button_frame, text="??靽格", command=self.start_process)
+        self.start_button = ttk.Button(button_frame, text="開始處理", command=self.start_process)
         self.start_button.pack(side="left", padx=(0, 8))
 
-        self.stop_button = ttk.Button(button_frame, text="?迫靽格", command=self.stop_process, state="disabled")
+        self.stop_button = ttk.Button(button_frame, text="停止處理", command=self.stop_process, state="disabled")
         self.stop_button.pack(side="left", padx=8)
 
-        ttk.Button(button_frame, text="蝯迫蝔?", command=self.exit_app).pack(side="right")
+        ttk.Button(button_frame, text="結束", command=self.exit_app).pack(side="right")
 
-        # 閮蝝??
-        log_frame = ttk.LabelFrame(process_tab, text="閮")
+        log_frame = ttk.LabelFrame(process_tab, text="處理紀錄")
         log_frame.pack(fill="both", expand=True)
 
         self.log_text = tk.Text(log_frame, height=8, wrap="word")
@@ -227,7 +223,7 @@ class DocxFixerApp:
 
         self._build_indent_section(
             scroll_frame,
-            title="Preface indents",
+            title="前言縮排",
             section="preface",
             rows=settings["preface"],
             row=0,
@@ -235,7 +231,7 @@ class DocxFixerApp:
         )
         self._build_indent_section(
             scroll_frame,
-            title="Body indents",
+            title="內文縮排",
             section="body",
             rows=settings["body"],
             row=0,
@@ -245,13 +241,12 @@ class DocxFixerApp:
         button_frame = ttk.Frame(parent)
         button_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
-        ttk.Button(button_frame, text="憟?桀?閮剖?", command=self.apply_indent_entries).pack(side="left")
-        headers = ["Level", "Label", "Number start cm", "Hanging cm", "Body left cm"]
-        ttk.Button(button_frame, text="???啁??批遣?身", command=self.restore_builtin_indent_defaults).pack(side="left", padx=8)
+        ttk.Button(button_frame, text="套用目前設定", command=self.apply_indent_entries).pack(side="left")
+        ttk.Button(button_frame, text="還原內建預設值", command=self.restore_builtin_indent_defaults).pack(side="left", padx=8)
 
         path_label = ttk.Label(
             button_frame,
-            text=f"?身瑼?{get_indent_settings_path()}",
+            text=f"設定檔位置：{get_indent_settings_path()}",
         )
         path_label.pack(side="right")
 
@@ -268,7 +263,7 @@ class DocxFixerApp:
         frame.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
         parent.columnconfigure(column, weight=1)
 
-        headers = ["?惜", "蝺刻??澆?", "璅?韏琿? cm", "?豢?頝 cm", "?扳?韏琿? cm"]
+        headers = ["層級", "標籤", "編號起點 cm", "凸排 cm", "文字起點 cm"]
         for col, header in enumerate(headers):
             ttk.Label(frame, text=header).grid(row=0, column=col, padx=4, pady=(6, 4), sticky="w")
 
@@ -289,8 +284,8 @@ class DocxFixerApp:
     def collect_indent_entries(self) -> dict[str, list[dict[str, float | int | str]]]:
         settings: dict[str, list[dict[str, float | int | str]]] = {"preface": [], "body": []}
         section_names = {
-            "preface": "Preface",
-            "body": "Body",
+            "preface": "前言",
+            "body": "內文",
         }
 
         for section, rows in self.indent_vars.items():
@@ -301,7 +296,7 @@ class DocxFixerApp:
                     body_left_cm = float(body_left_var.get().strip())
                 except ValueError as exc:
                     raise ValueError(
-                        f"{section_names[section]} level {display_index}: please enter numeric cm values"
+                        f"{section_names[section]}第 {display_index} 列請輸入數字格式的公分值"
                     ) from exc
 
                 settings[section].append({
@@ -318,21 +313,20 @@ class DocxFixerApp:
         try:
             apply_indent_settings(self.collect_indent_entries())
         except Exception as exc:
-            messagebox.showerror("蝮格?閮剖??航炊", str(exc))
+            messagebox.showerror("縮排設定錯誤", str(exc))
             return False
 
-        self.status_var.set("Indent settings applied")
+        self.status_var.set("已套用縮排設定")
         return True
 
     def save_indent_defaults(self) -> None:
         try:
             path = save_indent_settings(self.collect_indent_entries())
         except Exception as exc:
-            messagebox.showerror("蝮格?閮剖??航炊", str(exc))
+            messagebox.showerror("縮排設定錯誤", str(exc))
             return
 
-        messagebox.showinfo("Saved", f"Indent settings saved:\n{path}")
-
+        messagebox.showinfo("已儲存", f"縮排設定已儲存：\n{path}")
 
     def restore_builtin_indent_defaults(self) -> None:
         settings = built_in_indent_settings()
@@ -345,16 +339,16 @@ class DocxFixerApp:
                 body_left_var.set(format_cm(float(row["body_left_cm"])))
 
         apply_indent_settings(settings)
-        self.status_var.set("Restored built-in indent settings")
+        self.status_var.set("已還原內建縮排設定")
 
     def browse_input(self) -> None:
         path = filedialog.askopenfilename(
-            title="?豢? Word DOCX 瑼?",
+            title="選擇 Word DOCX 檔案",
             filetypes=[("Word documents", "*.docx"), ("All files", "*.*")],
         )
         if path:
             self.input_var.set(path)
-            self.status_var.set("Input file selected")
+            self.status_var.set("已選擇輸入檔案")
 
     def browse_output(self) -> None:
         input_path = self.input_var.get().strip()
@@ -367,19 +361,19 @@ class DocxFixerApp:
             initialfile = f"{p.stem}{DEFAULT_SUFFIX}.docx"
 
         path = filedialog.asksaveasfilename(
-            title="?豢?頛詨瑼?",
+            title="選擇輸出檔案",
             defaultextension=".docx",
             initialdir=initialdir,
             initialfile=initialfile,
-            filetypes=[("Word ?辣", "*.docx")],
+            filetypes=[("Word 文件", "*.docx")],
         )
         if path:
             input_text = self.input_var.get().strip()
             if input_text and is_same_file_path(input_text, path):
                 messagebox.showerror(
-                    "頛詨瑼??航炊",
-                    "靽格敺?瑼?銝隞亥???瑼??詨??n\n"
-                    "Choose a different output path, for example *_fixed.docx.",
+                    "輸出檔案錯誤",
+                    "輸出檔案不能與輸入檔案相同。\n"
+                    "請選擇不同的輸出路徑，例如 *_fixed.docx。",
                 )
                 return
             self.output_var.set(path)
@@ -424,16 +418,16 @@ class DocxFixerApp:
     def validate_before_start(self):
         input_text = self.input_var.get().strip()
         if not input_text:
-            messagebox.showwarning("Missing input", "Please choose an input .docx file")
+            messagebox.showwarning("未選擇輸入檔案", "請先選擇一個 .docx 檔案")
             return None
 
         input_path = Path(input_text)
         if not input_path.exists():
-            messagebox.showerror("File not found", f"Input file does not exist:\n{input_path}")
+            messagebox.showerror("找不到檔案", f"輸入檔案不存在：\n{input_path}")
             return None
 
         if input_path.suffix.lower() != ".docx":
-            messagebox.showerror("Invalid file type", "Input file must be a .docx file")
+            messagebox.showerror("檔案類型錯誤", "輸入檔案必須是 .docx")
             return None
 
         if not self.apply_indent_entries():
@@ -458,23 +452,23 @@ class DocxFixerApp:
             or options.indent_preface_paragraphs
             or options.outline_preface_paragraphs
         ):
-            messagebox.showwarning("No options selected", "Please select at least one processing option")
+            messagebox.showwarning("未選擇處理項目", "請至少勾選一個處理選項")
             return None
 
         output_path = self.resolve_output_path(input_path)
 
         if is_same_file_path(input_path, output_path):
             messagebox.showerror(
-                "頛詨瑼??航炊",
-                "靽格敺?瑼?銝隞亥???瑼??詨??n\n"
-                "Choose a different output path, for example *_fixed.docx.",
+                "輸出檔案錯誤",
+                "輸出檔案不能與輸入檔案相同。\n"
+                "請選擇不同的輸出路徑，例如 *_fixed.docx。",
             )
             return None
 
         if output_path.exists():
             ok = messagebox.askyesno(
-                "Overwrite output file?",
-                f"頛詨瑼?撌脣??剁??臬閬?嚗n\n{output_path}",
+                "覆寫輸出檔案？",
+                f"輸出檔案已存在，是否要覆寫？\n\n{output_path}",
             )
             if not ok:
                 return None
@@ -482,7 +476,7 @@ class DocxFixerApp:
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
-            messagebox.showerror("Output folder error", str(exc))
+            messagebox.showerror("輸出資料夾錯誤", str(exc))
             return None
 
         return input_path, output_path, options
@@ -502,11 +496,11 @@ class DocxFixerApp:
 
         self.stop_controller.clear()
         self.progress_var.set(0)
-        self.status_var.set("Processing...")
+        self.status_var.set("處理中...")
         self.start_progress_animation()
-        self.append_log(f"Input: {input_path}")
-        self.append_log(f"Output: {output_path}")
-        self.append_log("Started processing")
+        self.append_log(f"輸入檔案: {input_path}")
+        self.append_log(f"輸出檔案: {output_path}")
+        self.append_log("開始處理")
         self.set_running_state(True)
 
         self.worker_thread = threading.Thread(
@@ -541,8 +535,7 @@ class DocxFixerApp:
                 os.replace(temp_output, output_path)
                 final_output = output_path
             except PermissionError:
-                # Windows ??格?瑼?鋡?Word??獢蜇蝞⊿?閬賜??潦neDrive 蝑??冽???閬???
-                # ?粹?歇??憟賜??怠?瑼◤?芣?嚗摮?撣嗆???瑼???
+                # 若目標檔案被 Word 或同步工具占用，改存成帶時間戳的備援檔案。
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 fallback_output = output_path.with_name(
                     f"{output_path.stem}_{timestamp}{output_path.suffix}"
@@ -551,7 +544,7 @@ class DocxFixerApp:
                 final_output = fallback_output
                 self.ui_queue.put((
                     "warning",
-                    f"Could not replace output file; wrote fallback: {fallback_output}",
+                    f"無法覆寫既有輸出檔，已改存備援檔案：{fallback_output}",
                 ))
 
             log_path = None
@@ -559,11 +552,11 @@ class DocxFixerApp:
             try:
                 log_path = write_process_log(final_output, summary)
             except Exception as exc:
-                self.ui_queue.put(("warning", f"Could not write process log: {exc}"))
+                self.ui_queue.put(("warning", f"無法寫入處理摘要 log：{exc}"))
             try:
                 table_log_path = write_table_log_file(final_output, summary)
             except Exception as exc:
-                self.ui_queue.put(("warning", f"Could not write table log: {exc}"))
+                self.ui_queue.put(("warning", f"無法寫入表格 log：{exc}"))
 
             self.ui_queue.put(("done", final_output, summary, log_path, table_log_path))
 
@@ -589,8 +582,8 @@ class DocxFixerApp:
         if self.worker_thread and self.worker_thread.is_alive():
             self.stop_controller.stop()
             self.stop_button.configure(state="disabled")
-            self.status_var.set("甇?銝剜迫???摨蒂?瑼???...")
-            self.append_log("Stop requested; waiting for current operation to finish")
+            self.status_var.set("已送出停止要求，正在等待目前步驟安全結束...")
+            self.append_log("已要求停止，等待目前作業完成")
 
     def exit_app(self) -> None:
         if self.worker_thread and self.worker_thread.is_alive():
@@ -610,14 +603,14 @@ class DocxFixerApp:
                 elif kind == "warning":
                     _, message = item
                     self.status_var.set(message)
-                    self.append_log("Warning: " + message)
+                    self.append_log("警告: " + message)
 
                 elif kind == "done":
                     _, output_path, summary, log_path, table_log_path = item
                     self.current_temp_output = None
                     self.stop_progress_animation(100)
-                    self.status_var.set("Done")
-                    self.append_log("Done")
+                    self.status_var.set("處理完成")
+                    self.append_log("處理完成")
                     self.append_log(f"tables={summary.tables}")
                     self.append_log(f"paragraphs_changed={summary.paragraphs}")
                     self.append_log(f"total_paragraphs={summary.total_paragraphs}")
@@ -631,24 +624,30 @@ class DocxFixerApp:
                     if table_log_path is not None:
                         self.append_log(f"table_log={table_log_path}")
                     self.set_running_state(False)
-                    messagebox.showinfo("摰?", f"靽格摰?嚗n\n頛詨瑼?嚗n{output_path}")
+                    messagebox.showinfo(
+                        "處理完成",
+                        "文件已處理完成。\n\n"
+                        f"輸出檔案：\n{output_path}\n\n"
+                        f"處理摘要 log：\n{log_path if log_path is not None else '未產生'}\n\n"
+                        f"表格 log：\n{table_log_path if table_log_path is not None else '未產生'}",
+                    )
 
                 elif kind == "stopped":
                     self.current_temp_output = None
                     self.stop_progress_animation()
-                    self.status_var.set("Stopped")
-                    self.append_log("Processing stopped")
+                    self.status_var.set("已停止")
+                    self.append_log("處理已停止")
                     self.set_running_state(False)
 
                 elif kind == "error":
                     _, err, tb = item
                     self.current_temp_output = None
                     self.stop_progress_animation()
-                    self.status_var.set("Error")
-                    self.append_log("Error: " + err)
+                    self.status_var.set("發生錯誤")
+                    self.append_log("錯誤: " + err)
                     self.append_log(tb)
                     self.set_running_state(False)
-                    messagebox.showerror("?航炊", err)
+                    messagebox.showerror("處理錯誤", err)
 
         except queue.Empty:
             pass

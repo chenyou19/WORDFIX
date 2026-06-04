@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-DEFAULT_SUFFIX = "_已修改"
+DEFAULT_SUFFIX = "_fixed"
 DEFAULT_GRAY = "D9D9D9"
-
-CONVERT_TO_GRAY_FILLS = {"BFBFBF", "A6A6A6", "808080"}
-KEEP_COLOR_FILLS = {"F2F2F2", DEFAULT_GRAY}
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}

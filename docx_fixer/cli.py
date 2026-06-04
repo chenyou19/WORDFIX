@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 from .constants import DEFAULT_GRAY
 from .docx_processor import fix_docx_fast
@@ -10,7 +11,18 @@ from .process_log import write_process_log, write_table_log_file
 from .stop_controller import StopController
 
 
+def _configure_stdio_utf8() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def run_cli(args) -> int:
+    _configure_stdio_utf8()
     load_saved_indent_settings()
 
     options = ProcessOptions(
