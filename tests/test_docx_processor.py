@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import tempfile
@@ -459,17 +459,17 @@ class DocxProcessorTests(unittest.TestCase):
 
     def test_find_word_paragraph_index_for_record_prefers_direct_index_then_falls_back_to_preview(self):
         paragraph_texts = [
-            "憯嫘?閮\r",
-            "嚗?嚗洵銝?璅?\r",
-            "?惜3?扳?\r",
+            "?臬??蹓??捍\r",
+            "????瘣菟??????\r",
+            "???3???\r",
         ]
         direct_record = {
             "paragraph_index": 3,
-            "text_preview": "?惜3?扳?",
+            "text_preview": "???3???",
         }
         fallback_record = {
             "paragraph_index": 2,
-            "text_preview": "?惜3?扳?",
+            "text_preview": "???3???",
         }
 
         self.assertEqual(find_word_paragraph_index_for_record(paragraph_texts, direct_record), 3)
@@ -1034,7 +1034,7 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_color=False,
                     fix_paragraph=True,
                     normalize_with_word_com=False,
-                    enable_level2_body_first_line_indent=True,
+                    enable_level1_level2_body_first_line_indent=True,
                 ),
             )
 
@@ -1337,3 +1337,5 @@ class DocxProcessorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

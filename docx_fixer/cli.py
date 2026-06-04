@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import sys
@@ -32,8 +32,9 @@ def run_cli(args) -> int:
         remove_all_outline_levels=args.remove_all_outline,
         indent_preface_paragraphs=args.indent_preface,
         outline_preface_paragraphs=args.outline_preface,
-        enable_level2_body_first_line_indent=args.level2_body_first_line_indent,
+        enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
         word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
+        skip_special_table_layout_under_chapter_three=args.skip_special_layout_under_chapter_three,
     )
 
     if not (
@@ -51,8 +52,9 @@ def run_cli(args) -> int:
             remove_all_outline_levels=False,
             indent_preface_paragraphs=False,
             outline_preface_paragraphs=False,
-            enable_level2_body_first_line_indent=args.level2_body_first_line_indent,
+            enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
             word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
+            skip_special_table_layout_under_chapter_three=args.skip_special_layout_under_chapter_three,
         )
 
     stop = StopController()
@@ -114,7 +116,20 @@ def parse_args(argv: list[str]):
     parser.add_argument("--remove-all-outline", action="store_true", help="Force all paragraph outline levels to body text")
     parser.add_argument("--indent-preface", action="store_true", help="Indent preface paragraphs before the main body marker")
     parser.add_argument("--outline-preface", action="store_true", help="Apply outline levels to preface paragraphs before the main body marker")
-    parser.add_argument("--level2-body-first-line-indent", action="store_true", help="Apply 560 twips first-line indent to plain body text under level 2 headings")
+    parser.add_argument(
+        "--level1-level2-body-first-line-indent",
+        "--level2-body-first-line-indent",
+        action="store_true",
+        dest="level1_level2_body_first_line_indent",
+        help="Apply 560 twips first-line indent to plain body text under level 1 and level 2 headings",
+    )
     parser.add_argument("--word-com-check-body-font", action="store_true", help="XML body font is not 14pt: ask Word COM to verify before applying body indent")
+    parser.add_argument(
+        "--skip-special-layout-under-chapter-three",
+        action="store_true",
+        help="Do not apply special table layout under chapter 參",
+    )
     parser.add_argument("--quiet", action="store_true", help="Do not print progress")
     return parser.parse_args(argv)
+
+

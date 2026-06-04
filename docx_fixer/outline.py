@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
@@ -27,23 +27,23 @@ from .stop_controller import StopController
 from .style_resolver import half_points_to_pt
 from .xml_utils import CHAR_INDENT_ATTRS, get_or_add, paragraph_text, qn
 
-NOTE_MARKER_PREFIXES = ("※",)
+NOTE_MARKER_PREFIXES = ("註",)
 STYLE_NUMBERING_MAX_TEXT_LENGTH = 35
 HEADING_ENDINGS = ("：", ":")
 PROCESSING_START_TITLE = "序言"
-PROCESSING_START_VISIBLE_PREFIX = "壹、序言"
+PROCESSING_START_VISIBLE_PREFIXES = ("壹、序言", "壹、前言")
 DEFAULT_NUMBER_FONT = "Microsoft JhengHei"
 DEFAULT_NUMBER_FONT_SIZE_PT = 12.0
 MANUAL_NUMBERING_SUFFIX_SPACES = {" ", "\t", "\u3000"}
-LEVEL_TWO_BODY_FIRST_LINE_TWIPS = "560"
+BODY_FIRST_LINE_TWIPS = "560"
 
 
 def body_first_line_twips_for_heading(
     heading_level: int,
-    enable_level2_body_first_line_indent: bool,
+    enable_level1_level2_body_first_line_indent: bool,
 ) -> str | None:
-    if enable_level2_body_first_line_indent and heading_level == 1:
-        return LEVEL_TWO_BODY_FIRST_LINE_TWIPS
+    if enable_level1_level2_body_first_line_indent and heading_level in {0, 1}:
+        return BODY_FIRST_LINE_TWIPS
     return None
 
 
@@ -57,9 +57,9 @@ def normalize_visible_text(text: str) -> str:
 
 def should_skip_style_numbering(text: str) -> bool:
     """
-    避免只因段落樣式帶編號，就把正文誤判成文件大綱。
+    ?踹??芸?畾菔璅??撣嗥楊??撠望?甇??隤文??隞嗅之蝬晞?
 
-    樣式編號主要用於短標題或短項目；長篇敘述文字不使用樣式編號回推階層。
+    璅??蝺刻?銝餉??冽?剜?憿??剝??殷??瑞??膩??銝蝙?冽見撘楊???券?撅扎?
     """
     normalized = normalize_visible_text(text)
     if starts_with_note_marker(normalized):
@@ -78,7 +78,7 @@ def is_processing_start_marker(
     style_numbering_lookup=None,
 ) -> bool:
     compact = compact_text(text)
-    if compact.startswith(PROCESSING_START_VISIBLE_PREFIX):
+    if compact.startswith(PROCESSING_START_VISIBLE_PREFIXES):
         return True
 
     if not compact.startswith(PROCESSING_START_TITLE):
@@ -107,8 +107,8 @@ def is_processing_start_marker(
 
 def effective_indent_level(level: int, set_outline: bool) -> int:
     """
-    在「壹、序言」前，前置段落不會出現壹、階層，因此一、視為階層 0。
-    從「壹、序言」開始，使用正式文件階層。
+    ?具ㄨ??閮??嚗?蝵格挾?賭???曉ㄨ??撅歹??迨銝???粹?撅?0??
+    敺ㄨ??閮??憪?雿輻甇???辣?惜??
     """
     if set_outline:
         return level
@@ -117,14 +117,14 @@ def effective_indent_level(level: int, set_outline: bool) -> int:
 
 def is_separator_char(ch: str) -> bool:
     return ch in {
-        "、", ".", "．", "。", ":", "：", ";", "；",
-        " ", "\t", "　",
+        "、", ".", "，", ",", ":", "：", ";", "；",
+        " ", "\t", "\u3000",
     }
 
 
 def is_strict_separator_char(ch: str) -> bool:
-    """英文字母層級用較嚴格分隔符，避免 A 公司 / a test 誤判。"""
-    return ch in {"、", ".", "．", "。", ":", "：", ";", "；"}
+    """Return separators that are safe after compact numbering markers."""
+    return ch in {"、", ".", "，", ",", ":", "：", ";", "；"}
 
 
 def is_end_or_separator(text: str, index: int) -> bool:
@@ -145,13 +145,13 @@ def is_ascii_letter_or_digit(ch: str) -> bool:
 
 def match_parenthesized_numbering(text: str):
     """
-    括號型文件編號：
-    層級 2：（一）或 (一)
-    層級 4：（1）或 (1)
-    層級 6：（A）或 (A)
-    層級 8：（a）或 (a)
+    ?祈???隞嗥楊??
+    撅斤? 2嚗?銝嚗? (銝)
+    撅斤? 4嚗?1嚗? (1)
+    撅斤? 6嚗?A嚗? (A)
+    撅斤? 8嚗?a嚗? (a)
 
-    同時支援半形括號與多位數，例如 (10)。
+    ???舀?耦?祈???雿嚗?憒?(10)??
     """
     patterns = [
         (rf"^[（(][{SIMPLE_NUM}]+[)）]", 2),
@@ -167,7 +167,7 @@ def match_parenthesized_numbering(text: str):
 
         end_index = m.end()
 
-        # 避免 (A)pple、(a)pple、(1)234 這類誤判。
+        # ?踹? (A)pple??a)pple??1)234 ??隤文??
         if end_index < len(text):
             next_char = text[end_index]
             if level in {4, 6, 8} and is_ascii_letter_or_digit(next_char):
@@ -180,14 +180,14 @@ def match_parenthesized_numbering(text: str):
 
 def match_plain_numbering(text: str):
     """
-    非括號型文件編號：
-    層級 0：壹、貳、參...
-    層級 1：一、二、三...
-    層級 3：1.
-    層級 5：A.
-    層級 7：a.
+    ????辣蝺刻?嚗?
+    撅斤? 0嚗ㄨ?眾??...
+    撅斤? 1嚗?????...
+    撅斤? 3嚗?.
+    撅斤? 5嚗.
+    撅斤? 7嚗.
 
-    必須帶指定標點，避免 1、一、A、a 這類單獨文字被誤判。
+    敹?撣嗆?摰?暺??踹? 1???? ???桃??鋡怨炊?扎?
     """
     checks = [
         (rf"^[{FINANCIAL_NUM}]+、", 0),
@@ -277,18 +277,18 @@ def trim_manual_numbering_suffix_spacing(p, text: str | None = None) -> tuple[bo
 
 def detect_outline_level(text: str):
     """
-    只有段落開頭符合文件編號格式時才回傳層級。
-    編號前只允許空白；若前面有其他文字，就不視為文件編號。
+    ?芣?畾菔?蝚血??辣蝺刻??澆????撅斤???
+    蝺刻???迂蝛箇嚗??隞?摮?撠曹?閬?辣蝺刻???
 
-    層級 0：壹、
-    層級 1：一、
-    層級 2：（一）或 (一)
-    層級 3：1.
-    層級 4：（1）或 (1)
-    層級 5：A.
-    層級 6：（A）或 (A)
-    層級 7：a.
-    層級 8：（a）或 (a)
+    撅斤? 0嚗ㄨ??
+    撅斤? 1嚗???
+    撅斤? 2嚗?銝嚗? (銝)
+    撅斤? 3嚗?.
+    撅斤? 4嚗?1嚗? (1)
+    撅斤? 5嚗.
+    撅斤? 6嚗?A嚗? (A)
+    撅斤? 7嚗.
+    撅斤? 8嚗?a嚗? (a)
     """
     if not text:
         return None
@@ -309,7 +309,7 @@ def detect_outline_level(text: str):
 
 
 def clear_indent_attrs(ind) -> None:
-    """清掉會互相干擾的縮排屬性，避免 left/start 或 firstLine/hanging 並存。"""
+    """Remove paragraph indentation attributes before writing a new spec."""
     for attr in [
         "left", "start", "right", "end",
         "firstLine", "hanging",
@@ -320,11 +320,11 @@ def clear_indent_attrs(ind) -> None:
 
 def normalize_tabs_to_text_position(pPr, text_position_twips: str) -> None:
     """
-    將段落／編號層級的 tab stop 統一到文字起點。
+    撠挾?踝?蝺刻?撅斤???tab stop 蝯曹??唳?摮絲暺?
 
-    Word 自動編號常會在編號後面放一個 tab；如果原本 tab stop 很遠，
-    就會出現「（一）」後方一大片留白。這裡先清掉舊 tabs，再補一個
-    與 left indent 相同位置的 tab stop，避免文字被舊 tab 推太遠。
+    Word ?芸?蝺刻?撣豢??函楊???Ｘ銝??tab嚗?????tab stop 敺?嚗?
+    撠望??箇??銝嚗??嫣?憭抒???ㄐ???? tabs嚗?鋆???
+    ??left indent ?詨?雿蔭??tab stop嚗??摮◤??tab ?典云??
     """
     tabs = pPr.find("w:tabs", NS)
     if tabs is not None:
@@ -392,11 +392,11 @@ def apply_indent_spec_to_pPr(
 
 
 def apply_paragraph_outline_level(pPr, level: int) -> None:
-    """設定 Word 段落屬性中的「大綱階層」。
+    """閮剖? Word 畾菔撅祆找葉?之蝬梢?撅扎?
 
-    Word 的「大綱階層 1~9」在 XML 裡是 w:outlineLvl，值為 0~8。
-    這不是只有縮排外觀，而是讓段落真的被 Word 視為對應的大綱階層，
-    可用於導覽窗格、目錄、大綱檢視等功能。
+    Word ?之蝬梢?撅?1~9? XML 鋆⊥ w:outlineLvl嚗潛 0~8??
+    ???臬?葬??閫嚗霈挾?賜??◤ Word 閬撠??之蝬梢?撅歹?
+    ?舐?澆?閬賜??潦?之蝬望炎閬????
     """
     if not (0 <= level <= 8):
         return
@@ -435,7 +435,7 @@ def remove_all_outline_levels_from_any_root(
     stop: StopController | None = None,
     summary=None,
 ) -> int:
-    """移除 XML part 內所有 pPr 底下既有的 w:outlineLvl。"""
+    """Remove outline levels from paragraph properties in this XML root."""
     removed_count = 0
     for outline_lvl in root.xpath(".//w:pPr/w:outlineLvl", namespaces=NS):
         if stop:
@@ -457,7 +457,7 @@ def force_all_paragraphs_to_body_outline_level(
     stop: StopController | None = None,
     summary=None,
 ) -> int:
-    """將 XML part 內所有段落明確設為 Word「本文」階層。"""
+    """Force every paragraph in this XML root to Word body outline level."""
     changed_count = 0
     for p in root.xpath(".//w:p", namespaces=NS):
         if stop:
@@ -491,8 +491,8 @@ def remove_all_outline_levels_from_root(
 def get_paragraph_outline_level_value(p) -> str:
     outline_lvl = p.find("./w:pPr/w:outlineLvl", NS)
     if outline_lvl is None:
-        return "無"
-    return outline_lvl.get(qn("val")) or "無"
+        return "none"
+    return outline_lvl.get(qn("val")) or "none"
 
 
 def get_auto_number_identity(p) -> tuple[str | None, int | None]:
@@ -700,7 +700,7 @@ def is_body_indent_font_size_allowed(p, style_font_size_lookup=None) -> bool:
 
 def format_font_size_for_log(font_size_pt: float | None) -> str:
     if font_size_pt is None:
-        return "無法判斷"
+        return "?⊥??斗"
     return f"{font_size_pt:g} pt"
 
 
@@ -813,7 +813,7 @@ def record_numbering_measurement(
     number_size_cm = measure_text_width_cm(prefix, font_name, font_size_pt)
     left_cm = twips_to_cm(spec["left"])
     number_start_cm = twips_to_cm(spec.get("number_start", int(spec["left"]) - int(spec["hanging"])))
-    section = "壹、序言後" if set_outline else "壹、序言前"
+    section = "body" if set_outline else "preface"
     key = f"{section}:{level}:{prefix}"
 
     current = summary.numbering_measurements.get(key)
@@ -1138,7 +1138,7 @@ def append_body_indent_debug_log(
     heading_level: int,
     heading_uses_outline: bool,
     style_font_size_lookup=None,
-    enable_level2_body_first_line_indent: bool = False,
+    enable_level1_level2_body_first_line_indent: bool = False,
 ) -> None:
     if summary is None:
         return
@@ -1150,7 +1150,7 @@ def append_body_indent_debug_log(
     paragraph_format = paragraph_indent_debug_format(p)
     expected_first_line_twips = body_first_line_twips_for_heading(
         heading_level,
-        enable_level2_body_first_line_indent,
+        enable_level1_level2_body_first_line_indent,
     )
     first_font_size_pt, first_font_size_source, paragraph_style, run_style = effective_text_run_font_size_pt(
         p,
@@ -1169,7 +1169,7 @@ def append_body_indent_debug_log(
         f"[{part_name} #{paragraph_index}] "
         f"text={preview!r}; heading_level={heading_level}; "
         f"heading_uses_outline={heading_uses_outline}; "
-        f"enable_level2_body_first_line_indent={enable_level2_body_first_line_indent}; "
+        f"enable_level1_level2_body_first_line_indent={enable_level1_level2_body_first_line_indent}; "
         f"spec_left_cm={twips_to_cm(spec['left']):.2f}; "
         f"spec_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
         f"spec_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
@@ -1209,7 +1209,7 @@ def summarize_paragraph_text(text: str, limit: int = 80) -> str:
     normalized = " ".join((text or "").split())
     if len(normalized) <= limit:
         return normalized
-    return normalized[:limit - 1] + "…"
+    return normalized[:limit - 3] + "..."
 
 
 def append_paragraph_change_log(
@@ -1224,11 +1224,11 @@ def append_paragraph_change_log(
     if change_logs is None:
         return
 
-    preview = summarize_paragraph_text(text) or "（無文字）"
+    preview = summarize_paragraph_text(text) or "(empty)"
     change_logs.append(
-        f"[{part_name} #{paragraph_index}] {reason}；"
-        f"大綱階層：{before_outline} -> {after_outline}；"
-        f"段落文字：{preview}"
+        f"[{part_name} #{paragraph_index}] {reason}; "
+        f"outline={before_outline} -> {after_outline}; "
+        f"text={preview}"
     )
 
 
@@ -1266,7 +1266,7 @@ def apply_outline_format(
     apply_indent_spec_to_pPr(pPr, spec, "heading_numbered", use_tab_stop=False)
 
 def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
-    """依範本.docx的階層縮排標準套用段落縮排，可選擇是否同步設定 Word 大綱階層。"""
+    """Apply the configured outline indentation to a paragraph."""
     apply_outline_format(
         p,
         level,
@@ -1281,9 +1281,9 @@ def apply_body_indent_from_heading(
     heading_level: int,
     heading_uses_outline: bool,
     style_font_size_lookup=None,
-    enable_level2_body_first_line_indent: bool = False,
+    enable_level1_level2_body_first_line_indent: bool = False,
 ) -> bool:
-    """讓標題下方的普通內文左縮排對齊該標題的文字起點。"""
+    """Apply plain body indentation from the current heading context."""
     if not is_body_indent_font_size_allowed(p, style_font_size_lookup):
         return False
 
@@ -1294,7 +1294,7 @@ def apply_body_indent_from_heading(
     pPr = get_or_add(p, "pPr", first=True)
     body_first_line_twips = body_first_line_twips_for_heading(
         heading_level,
-        enable_level2_body_first_line_indent,
+        enable_level1_level2_body_first_line_indent,
     )
     apply_indent_spec_to_pPr(
         pPr,
@@ -1306,7 +1306,7 @@ def apply_body_indent_from_heading(
 
 
 def get_paragraph_style_value(p) -> str:
-    """取得段落樣式值，例如 TOC1、TOC2、TOCHeading。"""
+    """Return the paragraph style id, if present."""
     style_el = p.find("./w:pPr/w:pStyle", NS)
     if style_el is None:
         return ""
@@ -1314,13 +1314,13 @@ def get_paragraph_style_value(p) -> str:
 
 
 def is_toc_style_value(style_value: str) -> bool:
-    """判斷段落樣式是否屬於 Word 目錄樣式。"""
+    """Return whether a style id looks like a Word TOC style."""
     if not style_value:
         return False
 
     normalized = style_value.replace(" ", "").replace("_", "").upper()
 
-    # Word 目錄項目通常是 TOC1~TOC9，目錄標題常是 TOCHeading。
+    # Word ?桅???虜??TOC1~TOC9嚗??憿虜??TOCHeading??
     if re.fullmatch(r"TOC\d+", normalized):
         return True
     if normalized in {"TOCHEADING", "目錄", "目录"}:
@@ -1332,40 +1332,31 @@ def is_toc_style_value(style_value: str) -> bool:
 
 
 def field_instr_is_toc(instr: str) -> bool:
-    """判斷 field instruction 是否為 TOC 欄位。"""
+    """Return whether a field instruction starts a TOC field."""
     if not instr:
         return False
     return re.search(r"(^|\s)TOC(\s|$|\\)", instr.upper()) is not None
 
 
 def collect_toc_paragraph_ids(root) -> set[int]:
-    """
-    收集目錄段落，避免目錄本身被加上大綱階層。
-
-    Word 目錄通常有兩種訊號：
-    1. 段落樣式為 TOC1~TOC9 / TOCHeading。
-    2. 由 TOC field 產生，內容位於 TOC field 的 begin/separate/end 範圍中。
-
-    這裡同時支援兩種方式；若是 TOC 裡面的 PAGEREF 子欄位，也不會誤把
-    TOC field 提早結束。
-    """
+    """Collect paragraph ids that belong to Word-generated TOC content."""
     toc_ids: set[int] = set()
     field_stack: list[dict[str, object]] = []
 
     for p in root.xpath(".//w:p", namespaces=NS):
         p_is_toc = is_toc_style_value(get_paragraph_style_value(p))
 
-        # 若目前已在 TOC field 內，這個段落也要跳過。
+        # ?亦?歇??TOC field ?改??挾?賭?閬歲??
         if any(frame.get("is_toc") for frame in field_stack):
             p_is_toc = True
 
-        # fldSimple 的簡單欄位形式。
+        # fldSimple ?陛?格?雿耦撘?
         for fld_simple in p.xpath("ancestor-or-self::w:fldSimple", namespaces=NS):
             if field_instr_is_toc(fld_simple.get(qn("instr")) or ""):
                 p_is_toc = True
                 break
 
-        # 依文件順序掃描複雜欄位：begin / instrText / separate / end。
+        # 靘?隞園?摨?????雿?begin / instrText / separate / end??
         for el in p.iter():
             if el.tag == qn("fldChar"):
                 fld_type = el.get(qn("fldCharType"))
@@ -1390,7 +1381,7 @@ def collect_toc_paragraph_ids(root) -> set[int]:
                 if field_stack:
                     field_stack[-1]["instr"] = str(field_stack[-1].get("instr", "")) + (el.text or "")
                     if field_instr_is_toc(str(field_stack[-1].get("instr", ""))):
-                        # TOC 指令所在段落本身也不要加大綱階層。
+                        # TOC ?誘??冽挾?賣頨思?銝??之蝬梢?撅扎?
                         p_is_toc = True
 
         if any(frame.get("is_toc") for frame in field_stack):
@@ -1403,7 +1394,7 @@ def collect_toc_paragraph_ids(root) -> set[int]:
 
 
 def is_plain_toc_heading(text: str) -> bool:
-    return compact_text(text) in {"目錄", "目录", "目次"}
+    return compact_text(text) in {"目錄", "目录", "TOC"}
 
 
 def collect_plain_toc_range_paragraph_ids(
@@ -1470,14 +1461,16 @@ def fix_outline_paragraphs(
     fix_numbered_paragraphs: bool = True,
     indent_preface_paragraphs: bool = False,
     outline_preface_paragraphs: bool = False,
-    enable_level2_body_first_line_indent: bool = False,
+    enable_level1_level2_body_first_line_indent: bool = False,
     word_com_check_body_font_when_xml_not_14: bool = False,
 ) -> int:
     paragraphs = root.xpath(".//w:p", namespaces=NS)
     if summary is not None:
         summary.total_paragraphs += len(paragraphs)
+        if change_logs is None:
+            change_logs = summary.paragraph_logs
 
-    # 目錄本身不要加大綱階層，避免 TOC 項目被 Word 當成正式章節。
+    # ?桅??祈澈銝??之蝬梢?撅歹??踹? TOC ?鋡?Word ?嗆?甇??蝡???
     toc_paragraph_ids = collect_toc_paragraph_ids(root)
     toc_paragraph_ids.update(
         collect_plain_toc_range_paragraph_ids(
@@ -1537,7 +1530,7 @@ def fix_outline_paragraphs(
                     numbering_level_lookup=numbering_level_lookup,
                     style_numbering_lookup=style_numbering_lookup,
                 )
-                reason = f"自動編號 numId={num_id} ilvl={ilvl} style={style_id or '無'}"
+                reason = f"auto numbering numId={num_id} ilvl={ilvl} style={style_id or 'none'}"
 
             if level is None and not should_skip_style_numbering(text):
                 style_id = paragraph_style_id(p)
@@ -1547,12 +1540,12 @@ def fix_outline_paragraphs(
                     style_numbering_lookup=style_numbering_lookup,
                 )
                 if level is not None:
-                    reason = f"段落樣式 style={style_id} 對應文件編號階層"
+                    reason = f"style numbering style={style_id}"
 
             if level is None:
                 level = detect_outline_level(text)
                 if level is not None:
-                    reason = "段落開頭手動編號"
+                    reason = "manual numbering"
 
             if level is None:
                 if current_heading_indent is not None:
@@ -1568,7 +1561,7 @@ def fix_outline_paragraphs(
                     spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
                     expected_first_line_twips = body_first_line_twips_for_heading(
                         heading_level,
-                        enable_level2_body_first_line_indent,
+                        enable_level1_level2_body_first_line_indent,
                     )
                     if not is_body_indent_font_size_allowed(p, style_font_size_lookup):
                         if word_com_check_body_font_when_xml_not_14 and spec is not None:
@@ -1596,7 +1589,7 @@ def fix_outline_paragraphs(
                                 f"XML font is not 14pt; queued for Word COM font check: "
                                 f"dominant_font_size={format_font_size_for_log(dominant_body_font_size_pt)} "
                                 f"source={dominant_body_font_size_source}; "
-                                f"enable_level2_body_first_line_indent={enable_level2_body_first_line_indent}; "
+                                f"enable_level1_level2_body_first_line_indent={enable_level1_level2_body_first_line_indent}; "
                                 f"expected_first_line_twips={expected_first_line_twips or 'None'}",
                             )
                             continue
@@ -1626,7 +1619,7 @@ def fix_outline_paragraphs(
                         heading_level,
                         heading_uses_outline,
                         style_font_size_lookup,
-                        enable_level2_body_first_line_indent=enable_level2_body_first_line_indent,
+                        enable_level1_level2_body_first_line_indent=enable_level1_level2_body_first_line_indent,
                     ):
                         changed_count += 1
                         if spec is not None:
@@ -1649,7 +1642,7 @@ def fix_outline_paragraphs(
                             heading_level=heading_level,
                             heading_uses_outline=heading_uses_outline,
                             style_font_size_lookup=style_font_size_lookup,
-                            enable_level2_body_first_line_indent=enable_level2_body_first_line_indent,
+                            enable_level1_level2_body_first_line_indent=enable_level1_level2_body_first_line_indent,
                         )
                         append_paragraph_change_log(
                             change_logs,
@@ -1660,7 +1653,7 @@ def fix_outline_paragraphs(
                             before_outline,
                             f"Body indent applied: left={spec.get('body_left', spec['left'])}; "
                             f"{'firstLine=560 twips' if expected_first_line_twips else 'firstLine cleared'}; "
-                            f"enable_level2_body_first_line_indent={enable_level2_body_first_line_indent}",
+                            f"enable_level1_level2_body_first_line_indent={enable_level1_level2_body_first_line_indent}",
                         )
                         continue
 
@@ -1702,7 +1695,7 @@ def fix_outline_paragraphs(
                 changed_count += 1
                 increment_paragraph_level_count(summary, level)
                 after_outline = str(level)
-                action = f"套用第 {level + 1} 階大綱階層與縮排"
+                action = f"apply level {level + 1} outline and indent"
             else:
                 indent_level = effective_indent_level(level, set_outline=False)
                 apply_outline_format(
@@ -1718,12 +1711,12 @@ def fix_outline_paragraphs(
                 actions = []
                 if indent_preface_paragraphs:
                     increment_indented_preface_count(summary)
-                    actions.append(f"套用壹、序言前第 {indent_level + 1} 階縮排")
+                    actions.append(f"apply preface level {indent_level + 1} indent")
                     current_heading_indent = (indent_level, False)
                 if outline_preface_paragraphs:
                     increment_outlined_preface_count(summary)
-                    actions.append(f"套用壹、序言前第 {indent_level + 1} 階大綱階層")
-                action = "，".join(actions)
+                    actions.append(f"apply preface level {indent_level + 1} outline")
+                action = "; ".join(actions)
 
             record_numbering_measurement(
                 summary,
@@ -1753,7 +1746,7 @@ def fix_outline_paragraphs(
                 text,
                 before_outline,
                 after_outline,
-                f"{reason or '編號段落'}，{action}",
+                f"{reason or 'numbering'}; {action}",
             )
         except Exception:
             if summary is not None:
@@ -1761,3 +1754,4 @@ def fix_outline_paragraphs(
             continue
 
     return changed_count
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -128,11 +128,11 @@ def should_sanitize_indent_unit_part(name: str) -> bool:
 
 def should_fix_paragraph_part(name: str) -> bool:
     """
-    文件階層縮排只處理本文。
+    ?辣?惜蝮格??芾????
 
-    頁首頁尾常有頁碼；頁碼文字可能只是「1」「2」這種數字，
-    若拿同一套文件編號規則判斷，會被誤認為第 3 階編號，
-    導致置中頁碼被套用 left/hanging 縮排而偏掉。
+    ???偏撣豢??Ⅳ嚗?蝣潭?摮?賢?胯????車?詨?嚗?
+    ?交??憟?隞嗥楊????瘀??◤隤方??箇洵 3 ?楊??
+    撠蝵桐葉?Ⅳ鋡怠???left/hanging 蝮格?????
     """
     return name == "word/document.xml"
 
@@ -140,7 +140,7 @@ def should_fix_paragraph_part(name: str) -> bool:
 def _normalize_table_log_text(text: str, limit: int = 100) -> str:
     normalized = " ".join((text or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").split())
     if not normalized:
-        return "未找到上方段落"
+        return "(empty)"
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 3].rstrip() + "..."
@@ -151,9 +151,22 @@ def find_previous_paragraph_text_for_table(root, tbl) -> str:
     paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
     for p in reversed(paragraphs):
         text = _normalize_table_log_text(paragraph_text(p))
-        if text != "未找到上方段落":
+        if text != "(empty)":
             return text
-    return "未找到上方段落"
+    return "(empty)"
+
+
+def is_table_under_chapter_three(tbl) -> bool:
+    paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
+    for p in reversed(paragraphs):
+        text = paragraph_text(p).strip()
+        manual = detect_manual_numbering_prefix(text)
+        if manual is None:
+            continue
+        level, prefix = manual
+        if level == 0:
+            return prefix == "參、"
+    return False
 
 
 def build_table_log_record(
@@ -1288,13 +1301,13 @@ def fix_docx_fast(
     output_docx = Path(output_docx)
 
     if is_same_file_path(input_docx, output_docx):
-        raise ValueError("輸出檔案不可與原始檔案相同，避免覆蓋原檔。請選擇另一個檔名或資料夾。")
+        raise ValueError("Input and output paths must be different")
 
     if not input_docx.exists():
-        raise FileNotFoundError(f"找不到輸入檔案：{input_docx}")
+        raise FileNotFoundError(f"Input file does not exist: {input_docx}")
 
     if input_docx.suffix.lower() != ".docx":
-        raise ValueError("目前只支援 .docx 檔案，不支援 .doc。")
+        raise ValueError("Input file must be a .docx file")
 
     parser = etree.XMLParser(remove_blank_text=False, recover=True)
     summary = ProcessSummary()
@@ -1323,7 +1336,7 @@ def fix_docx_fast(
             if progress_callback:
                 progress_callback(
                     percent=(item_index / total_items) * 100,
-                    message=f"讀取：{item.filename}",
+                    message=f"reading {item.filename}",
                 )
 
             data = zin.read(item.filename)
@@ -1333,7 +1346,7 @@ def fix_docx_fast(
                 if progress_callback:
                     progress_callback(
                         percent=((item_index + 0.25) / total_items) * 100,
-                        message=f"{item.filename}：去除所有大綱階層",
+                        message=f"{item.filename}: removing outline levels",
                     )
                 root = etree.fromstring(data, parser)
                 if should_force_body_outline_part(item.filename):
@@ -1355,13 +1368,12 @@ def fix_docx_fast(
                     standalone=True,
                 )
 
-            # 自動編號的縮排與「編號後方 tab/space」主要記在 numbering.xml；
-            # 若只改 document.xml 的段落 pPr，Word 仍可能用舊 tab stop 造成留白。
+            # Normalize numbering definitions before document paragraph formatting.
             if item.filename == "word/numbering.xml" and options.fix_paragraph:
                 if progress_callback:
                     progress_callback(
                         percent=((item_index + 0.5) / total_items) * 100,
-                        message="word/numbering.xml：修正自動編號縮排與後方留白",
+                        message="word/numbering.xml: normalizing numbering indents",
                     )
                 data = formatted_numbering_xml or data
                 if options.remove_all_outline_levels:
@@ -1406,12 +1418,12 @@ def fix_docx_fast(
                     and should_fix_paragraph_part(item.filename)
                 ):
                     if progress_callback:
-                        message = "處理壹、序言前段落"
+                        message = "processing preface paragraphs"
                         if options.fix_paragraph:
-                            message = "處理文件編號段落與大綱階層（跳過目錄）"
+                            message = "processing outline paragraphs"
                         progress_callback(
                             percent=((item_index + 0.95) / total_items) * 100,
-                            message=f"{item.filename}：{message}",
+                            message=f"{item.filename}: {message}",
                         )
 
                     changed_paragraphs = fix_outline_paragraphs(
@@ -1428,7 +1440,7 @@ def fix_docx_fast(
                         fix_numbered_paragraphs=options.fix_paragraph,
                         indent_preface_paragraphs=options.indent_preface_paragraphs,
                         outline_preface_paragraphs=options.outline_preface_paragraphs,
-                        enable_level2_body_first_line_indent=options.enable_level2_body_first_line_indent,
+                        enable_level1_level2_body_first_line_indent=options.enable_level1_level2_body_first_line_indent,
                         word_com_check_body_font_when_xml_not_14=options.word_com_check_body_font_when_xml_not_14,
                     )
                     summary.paragraphs += changed_paragraphs
@@ -1490,7 +1502,16 @@ def fix_docx_fast(
                             )
                             continue
 
-                        special_layout = options.fix_table_layout and column_count <= 4
+                        skip_special_layout_under_chapter_three = (
+                            options.skip_special_table_layout_under_chapter_three
+                            and item.filename == "word/document.xml"
+                            and is_table_under_chapter_three(tbl)
+                        )
+                        special_layout = (
+                            options.fix_table_layout
+                            and column_count <= 4
+                            and not skip_special_layout_under_chapter_three
+                        )
                         special_table_geometry = None
                         if special_layout:
                             special_table_geometry = _resolve_special_table_geometry(
@@ -1523,7 +1544,11 @@ def fix_docx_fast(
                                     if options.fix_color
                                     else "apply_normal_table_format"
                                 )
-                                reason = "column_count > 4"
+                                reason = (
+                                    "skipped special layout under chapter 參"
+                                    if skip_special_layout_under_chapter_three and column_count <= 4
+                                    else "column_count > 4"
+                                )
                         elif options.fix_color:
                             table_type = "color_only_table"
                             action = "apply_color_only"
@@ -1563,7 +1588,7 @@ def fix_docx_fast(
                             percent = ((item_index + inner_fraction) / total_items) * 100
                             progress_callback(
                                 percent=percent,
-                                message=f"{item.filename}：處理表格 {table_index}/{table_count}",
+                                message=f"{item.filename}: table {table_index}/{table_count}",
                             )
 
                     summary.tables += table_count
@@ -1598,6 +1623,8 @@ def fix_docx_fast(
         summary.word_com_body_indent_logs.append("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=disabled")
 
     if progress_callback:
-        progress_callback(percent=100, message="完成")
+        progress_callback(percent=100, message="done")
 
     return summary
+
+

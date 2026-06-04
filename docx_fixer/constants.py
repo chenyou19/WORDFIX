@@ -6,8 +6,8 @@ DEFAULT_GRAY = "D9D9D9"
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
 
-FINANCIAL_NUM = "壹貳參肆伍陸柒捌玖拾佰仟萬"
-SIMPLE_NUM = "一二三四五六七八九十百千萬"
+FINANCIAL_NUM = "壹貳參肆伍陸柒捌玖拾"
+SIMPLE_NUM = "一二三四五六七八九十"
 
 POINTS_PER_CM = 28.3464567
 
@@ -38,10 +38,10 @@ TEMPLATE_OUTLINE_INDENTS = {
     0: make_outline_indent_spec(-0.04, 1.15, 0),
     1: make_outline_indent_spec(0.70, 1.12, 1.83),
     2: make_outline_indent_spec(1.47, 1.48, 2.96),
-    3: make_outline_indent_spec(2.95, 0.50, 3.45),
-    4: make_outline_indent_spec(3.20, 1.24, 4.44),
-    5: make_outline_indent_spec(4.43, 0.50, 4.92),
-    6: make_outline_indent_spec(4.67, 1.24, 5.90),
+    3: make_outline_indent_spec(2.96, 0.50, 3.70),
+    4: make_outline_indent_spec(3.45, 1.23, 4.91),
+    5: make_outline_indent_spec(4.92, 0.50, 5.41),
+    6: make_outline_indent_spec(5.16, 1.24, 6.41),
     7: make_outline_indent_spec(6.39, 0.50, 6.85),
     8: make_outline_indent_spec(7.72, 1.24, 8.96),
 }
@@ -71,8 +71,8 @@ def validate_template_outline_indents(tolerance: int = 1) -> bool:
         expected_number_start = int(spec["number_start"])
 
         assert abs(cur_number_start - expected_number_start) <= tolerance, (
-            f"level {level} 不符合縮排規則："
-            f"編號起點 {cur_number_start} != 預期編號起點 {expected_number_start}"
+            f"level {level} number start mismatch: "
+            f"calculated {cur_number_start} != expected {expected_number_start}"
         )
 
     return True

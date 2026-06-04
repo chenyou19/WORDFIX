@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import datetime
 import os
@@ -62,17 +62,19 @@ class DocxFixerApp:
         self.remove_all_outline_var = tk.BooleanVar(value=True)
         self.indent_preface_var = tk.BooleanVar(value=False)
         self.outline_preface_var = tk.BooleanVar(value=False)
-        self.level2_body_first_line_indent_var = tk.BooleanVar(value=False)
+        self.level1_level2_body_first_line_indent_var = tk.BooleanVar(value=False)
         self.word_com_check_body_font_var = tk.BooleanVar(value=False)
+        self.skip_special_table_layout_under_chapter_three_var = tk.BooleanVar(value=False)
 
-        self.status_var = tk.StringVar(value="請選擇 .docx 檔案")
+        self.status_var = tk.StringVar(value="請先選擇 .docx 檔案")
         self.progress_var = tk.DoubleVar(value=0)
 
         self._build_ui()
         if self.indent_settings_load_error:
             messagebox.showwarning(
                 "縮排設定載入失敗",
-                f"已改用內建縮排設定，無法載入已儲存的設定：\n{self.indent_settings_load_error}",
+                "無法讀取既有的縮排設定，將改用目前內建預設。\n"
+                f"{self.indent_settings_load_error}",
             )
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
@@ -89,7 +91,7 @@ class DocxFixerApp:
 
         process_tab = ttk.Frame(notebook, padding=10)
         indent_tab = ttk.Frame(notebook, padding=10)
-        notebook.add(process_tab, text="文件處理")
+        notebook.add(process_tab, text="處理")
         notebook.add(indent_tab, text="縮排設定")
 
         file_frame = ttk.LabelFrame(process_tab, text="檔案")
@@ -102,61 +104,75 @@ class DocxFixerApp:
 
         ttk.Label(file_frame, text="輸出檔案：").grid(row=1, column=0, padx=8, pady=8, sticky="w")
         ttk.Entry(file_frame, textvariable=self.output_var).grid(row=1, column=1, padx=8, pady=8, sticky="ew")
-        ttk.Button(file_frame, text="另存為...", command=self.browse_output).grid(row=1, column=2, padx=8, pady=8)
+        ttk.Button(file_frame, text="另存...", command=self.browse_output).grid(row=1, column=2, padx=8, pady=8)
 
-        hint = ttk.Label(file_frame, text=f"預設輸出檔名後綴：{DEFAULT_SUFFIX}.docx")
+        hint = ttk.Label(file_frame, text=f"未指定輸出檔時，預設加上 {DEFAULT_SUFFIX}.docx")
         hint.grid(row=2, column=1, padx=8, pady=(0, 8), sticky="w")
 
         option_frame = ttk.LabelFrame(process_tab, text="處理選項")
         option_frame.pack(fill="x", pady=(0, 10))
+        option_frame.columnconfigure(0, weight=1)
+        option_frame.columnconfigure(1, weight=1)
 
         ttk.Checkbutton(
             option_frame,
-            text="修正表格版面：一般表格使用自動調整、寬度 100%、字級 11pt，特殊表格維持專案規則",
+            text="修正表格版面",
             variable=self.fix_table_var,
-        ).pack(anchor="w", padx=8, pady=(8, 4))
+        ).grid(row=0, column=0, padx=(12, 16), pady=(10, 4), sticky="w")
 
         ttk.Checkbutton(
             option_frame,
             text="修正表格底色",
             variable=self.fix_color_var,
-        ).pack(anchor="w", padx=8, pady=4)
+        ).grid(row=1, column=0, padx=(12, 16), pady=4, sticky="w")
 
         ttk.Checkbutton(
             option_frame,
-            text="移除所有段落大綱層級",
+            text="移除所有段落大綱階層",
             variable=self.remove_all_outline_var,
-        ).pack(anchor="w", padx=8, pady=4)
+        ).grid(row=0, column=1, padx=(12, 16), pady=(10, 4), sticky="w")
 
         ttk.Checkbutton(
             option_frame,
-            text="修正段落格式與編號層級，必要時交由 Word COM 再次確認",
+            text="修正段落大綱階層與縮排",
             variable=self.fix_paragraph_var,
-        ).pack(anchor="w", padx=8, pady=4)
+        ).grid(row=1, column=1, padx=(12, 16), pady=4, sticky="w")
+
+        preface_option_frame = ttk.Frame(option_frame)
+        preface_option_frame.grid(row=2, column=0, padx=(12, 16), pady=(4, 10), sticky="nw")
 
         ttk.Checkbutton(
-            option_frame,
+            preface_option_frame,
             text="前言段落套用縮排",
             variable=self.indent_preface_var,
-        ).pack(anchor="w", padx=8, pady=4)
+        ).grid(row=0, column=0, pady=4, sticky="w")
 
         ttk.Checkbutton(
-            option_frame,
-            text="前言段落套用大綱層級",
+            preface_option_frame,
+            text="前言段落套用大綱階層",
             variable=self.outline_preface_var,
-        ).pack(anchor="w", padx=8, pady=4)
+        ).grid(row=1, column=0, pady=4, sticky="w")
+
+        advanced_option_frame = ttk.Frame(option_frame)
+        advanced_option_frame.grid(row=2, column=1, padx=(12, 16), pady=(4, 10), sticky="nw")
 
         ttk.Checkbutton(
-            option_frame,
-            text="第二層標題下的純文字內文套用 560 twips 首行縮排",
-            variable=self.level2_body_first_line_indent_var,
-        ).pack(anchor="w", padx=28, pady=4)
+            advanced_option_frame,
+            text="階層 1、2 標題下方普通內文首行縮排兩個中文字",
+            variable=self.level1_level2_body_first_line_indent_var,
+        ).grid(row=0, column=0, pady=4, sticky="w")
 
         ttk.Checkbutton(
-            option_frame,
-            text="當 XML 內文字級不是 14pt 時，先由 Word COM 驗證後再套用內文縮排",
+            advanced_option_frame,
+            text="參、裡面的表格不要套用特殊縮排",
+            variable=self.skip_special_table_layout_under_chapter_three_var,
+        ).grid(row=1, column=0, pady=4, sticky="w")
+
+        ttk.Checkbutton(
+            advanced_option_frame,
+            text="XML 判斷非 14pt 時使用 Word COM 確認內文字號",
             variable=self.word_com_check_body_font_var,
-        ).pack(anchor="w", padx=28, pady=(0, 8))
+        ).grid(row=2, column=0, pady=(4, 0), sticky="w")
 
         progress_frame = ttk.LabelFrame(process_tab, text="處理進度")
         progress_frame.pack(fill="x", pady=(0, 10))
@@ -180,7 +196,7 @@ class DocxFixerApp:
         self.stop_button = ttk.Button(button_frame, text="停止處理", command=self.stop_process, state="disabled")
         self.stop_button.pack(side="left", padx=8)
 
-        ttk.Button(button_frame, text="結束", command=self.exit_app).pack(side="right")
+        ttk.Button(button_frame, text="離開", command=self.exit_app).pack(side="right")
 
         log_frame = ttk.LabelFrame(process_tab, text="處理紀錄")
         log_frame.pack(fill="both", expand=True)
@@ -242,7 +258,7 @@ class DocxFixerApp:
         button_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
         ttk.Button(button_frame, text="套用目前設定", command=self.apply_indent_entries).pack(side="left")
-        ttk.Button(button_frame, text="還原內建預設值", command=self.restore_builtin_indent_defaults).pack(side="left", padx=8)
+        ttk.Button(button_frame, text="還原內建預設", command=self.restore_builtin_indent_defaults).pack(side="left", padx=8)
 
         path_label = ttk.Label(
             button_frame,
@@ -263,7 +279,7 @@ class DocxFixerApp:
         frame.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
         parent.columnconfigure(column, weight=1)
 
-        headers = ["層級", "標籤", "編號起點 cm", "凸排 cm", "文字起點 cm"]
+        headers = ["階層", "標號", "起點 cm", "懸掛 cm", "內文起點 cm"]
         for col, header in enumerate(headers):
             ttk.Label(frame, text=header).grid(row=0, column=col, padx=4, pady=(6, 4), sticky="w")
 
@@ -296,7 +312,7 @@ class DocxFixerApp:
                     body_left_cm = float(body_left_var.get().strip())
                 except ValueError as exc:
                     raise ValueError(
-                        f"{section_names[section]}第 {display_index} 列請輸入數字格式的公分值"
+                        f"{section_names[section]}第 {display_index} 列請輸入有效數字"
                     ) from exc
 
                 settings[section].append({
@@ -348,7 +364,7 @@ class DocxFixerApp:
         )
         if path:
             self.input_var.set(path)
-            self.status_var.set("已選擇輸入檔案")
+            self.status_var.set("已選擇輸入檔")
 
     def browse_output(self) -> None:
         input_path = self.input_var.get().strip()
@@ -365,15 +381,14 @@ class DocxFixerApp:
             defaultextension=".docx",
             initialdir=initialdir,
             initialfile=initialfile,
-            filetypes=[("Word 文件", "*.docx")],
+            filetypes=[("Word documents", "*.docx")],
         )
         if path:
             input_text = self.input_var.get().strip()
             if input_text and is_same_file_path(input_text, path):
                 messagebox.showerror(
                     "輸出檔案錯誤",
-                    "輸出檔案不能與輸入檔案相同。\n"
-                    "請選擇不同的輸出路徑，例如 *_fixed.docx。",
+                    "輸出檔案不能與輸入檔案相同。\n請選擇其他輸出位置或使用 *_fixed.docx。",
                 )
                 return
             self.output_var.set(path)
@@ -418,16 +433,16 @@ class DocxFixerApp:
     def validate_before_start(self):
         input_text = self.input_var.get().strip()
         if not input_text:
-            messagebox.showwarning("未選擇輸入檔案", "請先選擇一個 .docx 檔案")
+            messagebox.showwarning("尚未選擇輸入檔", "請選擇一個 .docx 檔案")
             return None
 
         input_path = Path(input_text)
         if not input_path.exists():
-            messagebox.showerror("找不到檔案", f"輸入檔案不存在：\n{input_path}")
+            messagebox.showerror("檔案不存在", f"輸入檔案不存在：\n{input_path}")
             return None
 
         if input_path.suffix.lower() != ".docx":
-            messagebox.showerror("檔案類型錯誤", "輸入檔案必須是 .docx")
+            messagebox.showerror("檔案格式錯誤", "輸入檔案必須是 .docx")
             return None
 
         if not self.apply_indent_entries():
@@ -440,8 +455,9 @@ class DocxFixerApp:
             remove_all_outline_levels=self.remove_all_outline_var.get(),
             indent_preface_paragraphs=self.indent_preface_var.get(),
             outline_preface_paragraphs=self.outline_preface_var.get(),
-            enable_level2_body_first_line_indent=self.level2_body_first_line_indent_var.get(),
+            enable_level1_level2_body_first_line_indent=self.level1_level2_body_first_line_indent_var.get(),
             word_com_check_body_font_when_xml_not_14=self.word_com_check_body_font_var.get(),
+            skip_special_table_layout_under_chapter_three=self.skip_special_table_layout_under_chapter_three_var.get(),
         )
 
         if not (
@@ -452,7 +468,7 @@ class DocxFixerApp:
             or options.indent_preface_paragraphs
             or options.outline_preface_paragraphs
         ):
-            messagebox.showwarning("未選擇處理項目", "請至少勾選一個處理選項")
+            messagebox.showwarning("尚未選擇處理項目", "請至少勾選一個處理選項")
             return None
 
         output_path = self.resolve_output_path(input_path)
@@ -460,15 +476,14 @@ class DocxFixerApp:
         if is_same_file_path(input_path, output_path):
             messagebox.showerror(
                 "輸出檔案錯誤",
-                "輸出檔案不能與輸入檔案相同。\n"
-                "請選擇不同的輸出路徑，例如 *_fixed.docx。",
+                "輸出檔案不能與輸入檔案相同。\n請選擇其他輸出位置或使用 *_fixed.docx。",
             )
             return None
 
         if output_path.exists():
             ok = messagebox.askyesno(
                 "覆寫輸出檔案？",
-                f"輸出檔案已存在，是否要覆寫？\n\n{output_path}",
+                f"輸出檔案已存在，是否覆寫？\n\n{output_path}",
             )
             if not ok:
                 return None
@@ -535,7 +550,7 @@ class DocxFixerApp:
                 os.replace(temp_output, output_path)
                 final_output = output_path
             except PermissionError:
-                # 若目標檔案被 Word 或同步工具占用，改存成帶時間戳的備援檔案。
+                # If the target is open in Word, save beside it with a timestamp.
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 fallback_output = output_path.with_name(
                     f"{output_path.stem}_{timestamp}{output_path.suffix}"
@@ -544,7 +559,7 @@ class DocxFixerApp:
                 final_output = fallback_output
                 self.ui_queue.put((
                     "warning",
-                    f"無法覆寫既有輸出檔，已改存備援檔案：{fallback_output}",
+                    f"無法覆寫原輸出檔，已改存為：{fallback_output}",
                 ))
 
             log_path = None
@@ -552,7 +567,7 @@ class DocxFixerApp:
             try:
                 log_path = write_process_log(final_output, summary)
             except Exception as exc:
-                self.ui_queue.put(("warning", f"無法寫入處理摘要 log：{exc}"))
+                self.ui_queue.put(("warning", f"無法寫入處理 log：{exc}"))
             try:
                 table_log_path = write_table_log_file(final_output, summary)
             except Exception as exc:
@@ -582,8 +597,8 @@ class DocxFixerApp:
         if self.worker_thread and self.worker_thread.is_alive():
             self.stop_controller.stop()
             self.stop_button.configure(state="disabled")
-            self.status_var.set("已送出停止要求，正在等待目前步驟安全結束...")
-            self.append_log("已要求停止，等待目前作業完成")
+            self.status_var.set("已送出停止請求，正在收尾...")
+            self.append_log("已要求停止處理")
 
     def exit_app(self) -> None:
         if self.worker_thread and self.worker_thread.is_alive():
@@ -626,9 +641,9 @@ class DocxFixerApp:
                     self.set_running_state(False)
                     messagebox.showinfo(
                         "處理完成",
-                        "文件已處理完成。\n\n"
+                        "DOCX 處理完成。\n\n"
                         f"輸出檔案：\n{output_path}\n\n"
-                        f"處理摘要 log：\n{log_path if log_path is not None else '未產生'}\n\n"
+                        f"處理 log：\n{log_path if log_path is not None else '未產生'}\n\n"
                         f"表格 log：\n{table_log_path if table_log_path is not None else '未產生'}",
                     )
 
@@ -653,3 +668,5 @@ class DocxFixerApp:
             pass
 
         self.root.after(120, self._poll_queue)
+
+

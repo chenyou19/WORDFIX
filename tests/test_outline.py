@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import unittest
 
@@ -662,7 +662,7 @@ class OutlineFixTests(unittest.TestCase):
             include_tables=True,
             summary=summary,
             change_logs=summary.paragraph_logs,
-            enable_level2_body_first_line_indent=True,
+            enable_level1_level2_body_first_line_indent=True,
         )
 
         expected_left = TEMPLATE_OUTLINE_INDENTS[1]["body_left"]
@@ -682,6 +682,40 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIn("written_firstLine=560", debug)
         self.assertIn("validation=ok", debug)
         self.assertTrue(any("Body indent applied: left=" in line and "firstLine=560 twips" in line for line in summary.paragraph_logs))
+
+    def test_level_one_body_indent_uses_body_left_and_first_line_560_twips(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\u8cb3\u3001\u7b2c\u4e00\u968e\u6a19\u984c")
+        body = make_paragraph("\u9019\u662f\u7b2c\u4e00\u968e\u6a19\u984c\u4e0b\u65b9 14 pt \u5167\u6587", font_size_pt=14)
+        ind = add_ind_with_char_attrs(body)
+        ind.set(qn("left"), "1480")
+        ind.set(qn("firstLine"), "111")
+        ind.set(qn("firstLineChars"), "100")
+        add_tab_stop(body, pos="1480")
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            change_logs=summary.paragraph_logs,
+            enable_level1_level2_body_first_line_indent=True,
+        )
+
+        expected_left = TEMPLATE_OUTLINE_INDENTS[0]["body_left"]
+        body_ind = body.find("./w:pPr/w:ind", NS)
+        self.assertEqual(body_ind.get(qn("left")), expected_left)
+        self.assertEqual(body_ind.get(qn("firstLine")), "560")
+        self.assertIsNone(body_ind.get(qn("hanging")))
+        self.assertIsNone(body_ind.get(qn("start")))
+        self.assertIsNone(body_ind.get(qn("firstLineChars")))
+        assert_no_char_indent_attrs(self, body_ind)
+        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("heading_level=0", debug)
+        self.assertIn("spec_firstLine_twips=560", debug)
+        self.assertIn("written_firstLine=560", debug)
 
     def test_level_four_body_indent_uses_body_left_and_removes_hanging_and_tabs(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
@@ -939,7 +973,7 @@ class OutlineFixTests(unittest.TestCase):
     def test_body_indent_queues_word_com_font_check_when_xml_font_is_not_14_pt(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\u4e00\u3001\u7b2c\u4e8c\u968e\u6a19\u984c")
-        body = make_paragraph("\u9019\u662f XML 12 pt 但 Word 可能顯示 14 pt 的內文", font_size_pt=12)
+        body = make_paragraph("\u9019\u662f XML 12 pt \u4f46 Word \u986f\u793a\u70ba 14 pt \u7684\u5167\u6587", font_size_pt=12)
         root = make_root(marker, heading, body)
         summary = ProcessSummary()
 
@@ -948,7 +982,7 @@ class OutlineFixTests(unittest.TestCase):
             include_tables=True,
             summary=summary,
             change_logs=summary.paragraph_logs,
-            enable_level2_body_first_line_indent=True,
+            enable_level1_level2_body_first_line_indent=True,
             word_com_check_body_font_when_xml_not_14=True,
         )
 
@@ -1375,3 +1409,5 @@ class OutlineFixTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

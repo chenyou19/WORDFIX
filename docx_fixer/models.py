@@ -11,8 +11,9 @@ class ProcessOptions:
     indent_preface_paragraphs: bool = False
     outline_preface_paragraphs: bool = False
     normalize_with_word_com: bool = True
-    enable_level2_body_first_line_indent: bool = False
+    enable_level1_level2_body_first_line_indent: bool = False
     word_com_check_body_font_when_xml_not_14: bool = False
+    skip_special_table_layout_under_chapter_three: bool = False
 
 
 @dataclass

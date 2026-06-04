@@ -213,6 +213,63 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(table_setting(tables[3], "tblW", "type"), "pct")
             self.assertEqual(table_setting(tables[3], "tblW", "w"), "5000")
 
+    def test_processor_can_skip_special_layout_under_chapter_three_only(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("\u58f9\u3001\u5e8f\u8a00"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("\u53c3\u3001\u7b2c\u4e09\u7ae0"))
+        body.append(make_table([3, 3]))
+        body.append(make_paragraph("\u8086\u3001\u7b2c\u56db\u7ae0"))
+        body.append(make_table([3, 3]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=False,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_special_table_layout_under_chapter_three=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.tables, 3)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+            self.assertEqual(summary.normal_processed_tables, 1)
+            self.assertEqual(summary.special_autofit_right_tables, 1)
+            self.assertEqual(summary.table_log_records[1]["table_type"], "normal_table")
+            self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
+            self.assertEqual(
+                summary.table_log_records[1]["reason"],
+                "skipped special layout under chapter \u53c3",
+            )
+            self.assertEqual(summary.table_log_records[2]["table_type"], "special_table")
+            self.assertEqual(summary.table_log_records[2]["special_layout_used"], True)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+
+            self.assertEqual(table_setting(tables[1], "jc"), "center")
+            self.assertEqual(table_setting(tables[1], "tblLayout", "type"), "autofit")
+            self.assertEqual(table_setting(tables[1], "tblW", "type"), "pct")
+            self.assertEqual(table_setting(tables[1], "tblW", "w"), "5000")
+            self.assertIsNone(table_setting(tables[1], "tblInd", "w"))
+            self.assertEqual(table_setting(tables[2], "jc"), "right")
+
     def test_header_first_table_is_not_skipped_by_document_first_table_rule(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
