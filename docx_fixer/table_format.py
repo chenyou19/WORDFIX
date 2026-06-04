@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from .constants import NS
 from .models import ProcessOptions
-from .shading import fix_shading_to_gray, fix_shading_to_no_color, get_shading_action
+from .shading import (
+    fix_shading_to_gray,
+    fix_shading_to_no_color,
+    format_shading_decision,
+    get_shading_decision,
+)
 from .stop_controller import StopController
 from .xml_utils import get_or_add, qn
 
@@ -30,6 +35,17 @@ def table_column_count(tbl) -> int:
             column_counts.append(sum(_cell_grid_span(tc) for tc in cells))
 
     return max(column_counts, default=0)
+
+
+def _clear_fixed_width_constraints(tbl) -> None:
+    tbl_grid = tbl.find("w:tblGrid", NS)
+    if tbl_grid is not None:
+        tbl.remove(tbl_grid)
+
+    for tc_pr in tbl.xpath(".//w:tc/w:tcPr", namespaces=NS):
+        tc_w = tc_pr.find("w:tcW", NS)
+        if tc_w is not None:
+            tc_pr.remove(tc_w)
 
 
 def _apply_table_content_format(tbl, stop: StopController | None = None) -> None:
@@ -82,8 +98,10 @@ def apply_table_format(tbl, stop: StopController | None = None) -> None:
     tblW.set(qn("type"), "pct")
     tblW.set(qn("w"), "5000")
 
+    _clear_fixed_width_constraints(tbl)
+
     tblLayout = get_or_add(tblPr, "tblLayout")
-    tblLayout.set(qn("type"), "fixed")
+    tblLayout.set(qn("type"), "autofit")
 
     _apply_table_content_format(tbl, stop=stop)
 
@@ -136,9 +154,10 @@ def apply_autofit_contents_right_format(tbl, stop: StopController | None = None)
     _apply_table_content_format(tbl, stop=stop)
 
 
-def apply_table_color(tbl, stop: StopController | None = None) -> tuple[int, int]:
+def apply_table_color(tbl, stop: StopController | None = None) -> tuple[int, int, list[str]]:
     changed_to_gray = 0
     cleared_colors = 0
+    shading_debug_logs: list[str] = []
 
     for tc in tbl.xpath(".//w:tc", namespaces=NS):
         if stop:
@@ -149,7 +168,9 @@ def apply_table_color(tbl, stop: StopController | None = None) -> tuple[int, int
             continue
 
         for shd in tcPr.findall("w:shd", NS):
-            action = get_shading_action(shd)
+            decision = get_shading_decision(shd)
+            action = decision["action"]
+            shading_debug_logs.append(format_shading_decision(decision))
 
             if action == "gray":
                 fix_shading_to_gray(shd)
@@ -158,7 +179,7 @@ def apply_table_color(tbl, stop: StopController | None = None) -> tuple[int, int
                 fix_shading_to_no_color(shd)
                 cleared_colors += 1
 
-    return changed_to_gray, cleared_colors
+    return changed_to_gray, cleared_colors, shading_debug_logs
 
 
 def process_table(
@@ -168,9 +189,10 @@ def process_table(
     *,
     special_layout: bool = False,
     special_table_geometry: tuple[int, int] | None = None,
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     changed_to_gray = 0
     cleared_colors = 0
+    shading_debug_logs: list[str] = []
 
     if options.fix_table_layout:
         if special_layout:
@@ -188,6 +210,6 @@ def process_table(
             apply_table_format(tbl, stop=stop)
 
     if options.fix_color:
-        changed_to_gray, cleared_colors = apply_table_color(tbl, stop=stop)
+        changed_to_gray, cleared_colors, shading_debug_logs = apply_table_color(tbl, stop=stop)
 
-    return changed_to_gray, cleared_colors
+    return changed_to_gray, cleared_colors, shading_debug_logs

@@ -128,6 +128,7 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"color_fixed: {_bool_text(record['color_fixed'])}",
                 f"changed_to_gray: {record['changed_to_gray']}",
                 f"cleared_colors: {record['cleared_colors']}",
+                f"shading_debug: {' | '.join(record.get('shading_debug', [])) if record.get('shading_debug') else 'none'}",
                 "",
             ]
         )

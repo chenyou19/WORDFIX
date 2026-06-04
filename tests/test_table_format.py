@@ -86,17 +86,30 @@ class TableFormatTests(unittest.TestCase):
         top = etree.SubElement(tbl_borders, qn("top"))
         top.set(qn("val"), "single")
         top.set(qn("color"), "FF0000")
+        tbl_grid = etree.SubElement(tbl, qn("tblGrid"))
+        grid_col = etree.SubElement(tbl_grid, qn("gridCol"))
+        grid_col.set(qn("w"), "1200")
+        first_tc_pr = tbl.find("./w:tr/w:tc/w:tcPr", NS)
+        if first_tc_pr is None:
+            first_tc = tbl.find("./w:tr/w:tc", NS)
+            first_tc_pr = etree.SubElement(first_tc, qn("tcPr"))
+        tc_w = etree.SubElement(first_tc_pr, qn("tcW"))
+        tc_w.set(qn("type"), "dxa")
+        tc_w.set(qn("w"), "2400")
 
         apply_table_format(tbl)
 
         self.assertEqual(table_setting(tbl, "jc"), "center")
         self.assertEqual(table_setting(tbl, "tblW", "type"), "pct")
-        self.assertEqual(table_setting(tbl, "tblLayout", "type"), "fixed")
+        self.assertEqual(table_setting(tbl, "tblW", "w"), "5000")
+        self.assertEqual(table_setting(tbl, "tblLayout", "type"), "autofit")
         self.assertEqual(top.get(qn("val")), "single")
         self.assertEqual(top.get(qn("color")), "FF0000")
         self.assertIsNone(tbl.find("./w:tblPr/w:tblBorders/w:left", NS))
         self.assertIsNone(tbl.find("./w:tblPr/w:tblBorders/w:right", NS))
         self.assertIsNone(tbl.find("./w:tblPr/w:tblBorders/w:bottom", NS))
+        self.assertIsNone(tbl.find("./w:tblGrid", NS))
+        self.assertIsNone(tbl.find(".//w:tcPr/w:tcW", NS))
 
         for run in tbl.xpath(".//w:r", namespaces=NS):
             r_pr = run.find("w:rPr", NS)
@@ -196,6 +209,9 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(table_setting(tables[1], "tblLayout", "type"), "autofit")
             self.assertIsNone(tables[2].find("w:tblPr", NS))
             self.assertEqual(table_setting(tables[3], "jc"), "center")
+            self.assertEqual(table_setting(tables[3], "tblLayout", "type"), "autofit")
+            self.assertEqual(table_setting(tables[3], "tblW", "type"), "pct")
+            self.assertEqual(table_setting(tables[3], "tblW", "w"), "5000")
 
     def test_header_first_table_is_not_skipped_by_document_first_table_rule(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})

@@ -172,6 +172,7 @@ def build_table_log_record(
     color_fixed: bool,
     changed_to_gray: int,
     cleared_colors: int,
+    shading_debug: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "part_name": part_name,
@@ -188,6 +189,7 @@ def build_table_log_record(
         "color_fixed": color_fixed,
         "changed_to_gray": changed_to_gray,
         "cleared_colors": cleared_colors,
+        "shading_debug": list(shading_debug or []),
     }
 
 
@@ -1285,7 +1287,7 @@ def fix_docx_fast(
                                 numbering_level_lookup,
                                 style_numbering_lookup,
                             )
-                        changed_to_gray, cleared_colors = process_table(
+                        changed_to_gray, cleared_colors, shading_debug = process_table(
                             tbl,
                             options,
                             stop=stop,
@@ -1341,6 +1343,7 @@ def fix_docx_fast(
                                 color_fixed=color_fixed,
                                 changed_to_gray=changed_to_gray,
                                 cleared_colors=cleared_colors,
+                                shading_debug=shading_debug,
                             )
                         )
 
