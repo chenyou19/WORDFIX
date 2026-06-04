@@ -354,6 +354,8 @@ def get_numbering_level_format(lvl) -> dict[str, str | None]:
     tab = pPr.find("./w:tabs/w:tab", NS) if pPr is not None else None
     lvl_jc = lvl.find("w:lvlJc", NS)
     suff = lvl.find("w:suff", NS)
+    num_fmt = lvl.find("w:numFmt", NS)
+    lvl_text = lvl.find("w:lvlText", NS)
 
     left = ind.get(qn("left")) if ind is not None else None
     hanging = ind.get(qn("hanging")) if ind is not None else None
@@ -364,6 +366,8 @@ def get_numbering_level_format(lvl) -> dict[str, str | None]:
         "lvlJc": lvl_jc.get(qn("val")) if lvl_jc is not None else None,
         "suff": suff.get(qn("val")) if suff is not None else None,
         "tab_pos": tab.get(qn("pos")) if tab is not None else None,
+        "numFmt": num_fmt.get(qn("val")) if num_fmt is not None else None,
+        "lvlText": lvl_text.get(qn("val")) if lvl_text is not None else None,
     }
 
 

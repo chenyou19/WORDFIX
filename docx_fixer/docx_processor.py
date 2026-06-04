@@ -156,15 +156,156 @@ def find_previous_paragraph_text_for_table(root, tbl) -> str:
     return "(empty)"
 
 
-def is_table_under_chapter_three(tbl) -> bool:
-    paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
-    for p in reversed(paragraphs):
-        text = paragraph_text(p).strip()
-        manual = detect_manual_numbering_prefix(text)
-        if manual is None:
+_TRADITIONAL_LEGAL_CHAPTER_NUMBERS = {
+    1: "壹",
+    2: "貳",
+    3: "參",
+    4: "肆",
+    5: "伍",
+    6: "陸",
+    7: "柒",
+    8: "捌",
+    9: "玖",
+    10: "拾",
+}
+
+_TRADITIONAL_COUNTING_CHAPTER_NUMBERS = {
+    1: "一",
+    2: "二",
+    3: "三",
+    4: "四",
+    5: "五",
+    6: "六",
+    7: "七",
+    8: "八",
+    9: "九",
+    10: "十",
+}
+
+
+def _effective_paragraph_numbering_identity(
+    p,
+    style_numbering_lookup,
+) -> tuple[str | None, int | None]:
+    num_id, ilvl = get_auto_number_identity(p)
+    if num_id is not None and ilvl is not None:
+        return num_id, ilvl
+
+    style_id = paragraph_style_id(p)
+    if style_id and style_numbering_lookup:
+        return style_numbering_lookup.get(style_id, (None, None))
+
+    return num_id, ilvl
+
+
+def _outline_level_from_identity(
+    num_id,
+    ilvl,
+    numbering_level_lookup,
+) -> int | None:
+    if num_id is None or ilvl is None:
+        return None
+
+    level = numbering_level_lookup.get((num_id, ilvl))
+    if level is not None:
+        return level
+    if 0 <= ilvl <= 8:
+        return ilvl
+    return None
+
+
+def _chapter_number_token_from_format(num_fmt: str | None, ordinal: int) -> str | None:
+    if ordinal <= 0:
+        return None
+
+    fmt = (num_fmt or "").strip()
+    if fmt in {"ideographLegalTraditional", "chineseLegalSimplified"}:
+        return _TRADITIONAL_LEGAL_CHAPTER_NUMBERS.get(ordinal)
+    if fmt in {"taiwaneseCountingThousand", "ideographTraditional", "chineseCounting"}:
+        return _TRADITIONAL_COUNTING_CHAPTER_NUMBERS.get(ordinal)
+    return None
+
+
+def _count_same_stream_first_level_headings_before_paragraph(
+    p,
+    *,
+    num_id,
+    ilvl,
+    numbering_level_lookup,
+    style_numbering_lookup,
+) -> int:
+    count = 0
+    paragraphs = p.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
+    for candidate in [*paragraphs, p]:
+        candidate_num_id, candidate_ilvl = _effective_paragraph_numbering_identity(
+            candidate,
+            style_numbering_lookup,
+        )
+        if (candidate_num_id, candidate_ilvl) != (num_id, ilvl):
             continue
+
+        candidate_level = _outline_level_from_identity(
+            candidate_num_id,
+            candidate_ilvl,
+            numbering_level_lookup,
+        )
+        if candidate_level == 0:
+            count += 1
+
+    return count
+
+
+def _first_level_heading_prefix_for_paragraph(
+    p,
+    *,
+    numbering_level_lookup,
+    numbering_format_lookup,
+    style_numbering_lookup,
+) -> str | None:
+    text = paragraph_text(p).strip()
+    manual = detect_manual_numbering_prefix(text)
+    if manual is not None:
         level, prefix = manual
         if level == 0:
+            return prefix
+        return None
+
+    num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
+    level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
+    if level != 0 or num_id is None or ilvl is None:
+        return None
+
+    level_format = numbering_format_lookup.get((num_id, ilvl), {})
+    ordinal = _count_same_stream_first_level_headings_before_paragraph(
+        p,
+        num_id=num_id,
+        ilvl=ilvl,
+        numbering_level_lookup=numbering_level_lookup,
+        style_numbering_lookup=style_numbering_lookup,
+    )
+    token = _chapter_number_token_from_format(level_format.get("numFmt"), ordinal)
+    lvl_text = level_format.get("lvlText")
+    if token is None or lvl_text is None or "%1" not in lvl_text:
+        return None
+
+    return lvl_text.replace("%1", token)
+
+
+def is_table_under_chapter_three(
+    tbl,
+    numbering_level_lookup,
+    numbering_format_lookup,
+    style_numbering_lookup,
+) -> bool:
+    paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
+    for p in reversed(paragraphs):
+        prefix = _first_level_heading_prefix_for_paragraph(
+            p,
+            numbering_level_lookup=numbering_level_lookup,
+            numbering_format_lookup=numbering_format_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+        )
+        if prefix is not None:
             return prefix == "參、"
     return False
 
@@ -223,22 +364,10 @@ def _paragraph_outline_level_for_table_anchor(
     numbering_level_lookup,
     style_numbering_lookup,
 ) -> int | None:
-    num_id = None
-    ilvl = None
-
-    if has_auto_numbering(p):
-        num_id, ilvl = get_auto_number_identity(p)
-    else:
-        style_id = paragraph_style_id(p)
-        if style_id and style_numbering_lookup:
-            num_id, ilvl = style_numbering_lookup.get(style_id, (None, None))
-
-    if num_id is not None and ilvl is not None:
-        level = numbering_level_lookup.get((num_id, ilvl))
-        if level is not None:
-            return level
-        if 0 <= ilvl <= 8:
-            return ilvl
+    num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
+    level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
+    if level is not None:
+        return level
 
     manual = detect_manual_numbering_prefix(paragraph_text(p).strip())
     if manual is not None:
@@ -1505,7 +1634,12 @@ def fix_docx_fast(
                         skip_special_layout_under_chapter_three = (
                             options.skip_special_table_layout_under_chapter_three
                             and item.filename == "word/document.xml"
-                            and is_table_under_chapter_three(tbl)
+                            and is_table_under_chapter_three(
+                                tbl,
+                                numbering_level_lookup,
+                                numbering_format_lookup,
+                                style_numbering_lookup,
+                            )
                         )
                         special_layout = (
                             options.fix_table_layout

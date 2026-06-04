@@ -33,12 +33,76 @@ def make_table(row_columns: list[int]):
     return tbl
 
 
-def make_paragraph(text: str):
+def make_paragraph(
+    text: str,
+    *,
+    style: str | None = None,
+    num_id: str | None = None,
+    ilvl: int | None = None,
+):
     p = etree.Element(qn("p"))
+    if style is not None or num_id is not None:
+        p_pr = etree.SubElement(p, qn("pPr"))
+        if style is not None:
+            p_style = etree.SubElement(p_pr, qn("pStyle"))
+            p_style.set(qn("val"), style)
+        if num_id is not None:
+            num_pr = etree.SubElement(p_pr, qn("numPr"))
+            if ilvl is not None:
+                ilvl_el = etree.SubElement(num_pr, qn("ilvl"))
+                ilvl_el.set(qn("val"), str(ilvl))
+            num_id_el = etree.SubElement(num_pr, qn("numId"))
+            num_id_el.set(qn("val"), num_id)
     r = etree.SubElement(p, qn("r"))
     t = etree.SubElement(r, qn("t"))
     t.text = text
     return p
+
+
+def make_legal_traditional_numbering_xml(*num_ids: str) -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    abstract_num = etree.SubElement(numbering, qn("abstractNum"))
+    abstract_num.set(qn("abstractNumId"), "10")
+    lvl = etree.SubElement(abstract_num, qn("lvl"))
+    lvl.set(qn("ilvl"), "0")
+    start = etree.SubElement(lvl, qn("start"))
+    start.set(qn("val"), "1")
+    num_fmt = etree.SubElement(lvl, qn("numFmt"))
+    num_fmt.set(qn("val"), "ideographLegalTraditional")
+    lvl_text = etree.SubElement(lvl, qn("lvlText"))
+    lvl_text.set(qn("val"), "%1、")
+
+    for num_id in num_ids:
+        num = etree.SubElement(numbering, qn("num"))
+        num.set(qn("numId"), num_id)
+        abstract_num_id = etree.SubElement(num, qn("abstractNumId"))
+        abstract_num_id.set(qn("val"), "10")
+
+    return etree.tostring(
+        numbering,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
+
+
+def make_style_numbering_xml(style_id: str, *, num_id: str, ilvl: int = 0) -> bytes:
+    styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
+    style = etree.SubElement(styles, qn("style"))
+    style.set(qn("type"), "paragraph")
+    style.set(qn("styleId"), style_id)
+    p_pr = etree.SubElement(style, qn("pPr"))
+    num_pr = etree.SubElement(p_pr, qn("numPr"))
+    ilvl_el = etree.SubElement(num_pr, qn("ilvl"))
+    ilvl_el.set(qn("val"), str(ilvl))
+    num_id_el = etree.SubElement(num_pr, qn("numId"))
+    num_id_el.set(qn("val"), num_id)
+    return etree.tostring(
+        styles,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
 
 
 def table_pr_element(tbl, name: str):
@@ -269,6 +333,155 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(table_setting(tables[1], "tblW", "w"), "5000")
             self.assertIsNone(table_setting(tables[1], "tblInd", "w"))
             self.assertEqual(table_setting(tables[2], "jc"), "right")
+
+    def test_processor_skips_special_layout_for_auto_numbered_chapter_three(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("\u5e8f\u8a00", num_id="1", ilvl=0))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("\u7b2c\u4e8c\u7ae0", num_id="1", ilvl=0))
+        body.append(make_paragraph("\u7b2c\u4e09\u7ae0", num_id="1", ilvl=0))
+        body.append(make_table([3, 3]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+                zout.writestr("word/numbering.xml", make_legal_traditional_numbering_xml("1"))
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=False,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_special_table_layout_under_chapter_three=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.tables, 2)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+            self.assertEqual(summary.normal_processed_tables, 1)
+            self.assertEqual(summary.special_autofit_right_tables, 0)
+            self.assertEqual(summary.table_log_records[1]["table_type"], "normal_table")
+            self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
+            self.assertEqual(
+                summary.table_log_records[1]["reason"],
+                "skipped special layout under chapter \u53c3",
+            )
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertEqual(table_setting(tables[1], "jc"), "center")
+            self.assertIsNone(table_setting(tables[1], "tblInd", "w"))
+
+    def test_processor_skips_special_layout_for_style_numbered_chapter_three(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("\u5e8f\u8a00", style="ChapterHeading"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("\u7b2c\u4e8c\u7ae0", style="ChapterHeading"))
+        body.append(make_paragraph("\u7b2c\u4e09\u7ae0", style="ChapterHeading"))
+        body.append(make_table([3, 3]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+                zout.writestr("word/numbering.xml", make_legal_traditional_numbering_xml("2"))
+                zout.writestr(
+                    "word/styles.xml",
+                    make_style_numbering_xml("ChapterHeading", num_id="2"),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=False,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_special_table_layout_under_chapter_three=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.tables, 2)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+            self.assertEqual(summary.normal_processed_tables, 1)
+            self.assertEqual(summary.special_autofit_right_tables, 0)
+            self.assertEqual(summary.table_log_records[1]["table_type"], "normal_table")
+            self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
+            self.assertEqual(
+                summary.table_log_records[1]["reason"],
+                "skipped special layout under chapter \u53c3",
+            )
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertEqual(table_setting(tables[1], "jc"), "center")
+            self.assertIsNone(table_setting(tables[1], "tblInd", "w"))
+
+    def test_processor_keeps_special_layout_for_auto_numbered_chapter_two(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("\u5e8f\u8a00", num_id="1", ilvl=0))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("\u7b2c\u4e8c\u7ae0", num_id="1", ilvl=0))
+        body.append(make_table([3, 3]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+                zout.writestr("word/numbering.xml", make_legal_traditional_numbering_xml("1"))
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=False,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_special_table_layout_under_chapter_three=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.tables, 2)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+            self.assertEqual(summary.special_autofit_right_tables, 1)
+            self.assertEqual(summary.normal_processed_tables, 0)
+            self.assertEqual(summary.table_log_records[1]["table_type"], "special_table")
+            self.assertEqual(summary.table_log_records[1]["special_layout_used"], True)
+            self.assertEqual(summary.table_log_records[1]["reason"], "column_count <= 4")
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertEqual(table_setting(tables[1], "jc"), "right")
 
     def test_header_first_table_is_not_skipped_by_document_first_table_rule(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
