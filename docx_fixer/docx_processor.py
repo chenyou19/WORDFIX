@@ -524,6 +524,88 @@ def _format_optional_cm(value: float | None) -> str:
     return f"{value:.2f}"
 
 
+def _format_optional_pt(value: float | None) -> str:
+    if value is None:
+        return "None"
+    return f"{value:g}"
+
+
+def _is_meaningful_word_font_size(value: object) -> bool:
+    try:
+        size = float(value)
+    except (TypeError, ValueError):
+        return False
+    return 0 < size < 200 and abs(size) not in {9999999.0, 999999.0}
+
+
+def _word_paragraph_font_sizes(paragraph) -> tuple[float | None, float | None]:
+    try:
+        text_range = paragraph.Range.Duplicate
+    except Exception:
+        text_range = None
+
+    if text_range is not None:
+        try:
+            if text_range.End > text_range.Start:
+                text_range.End = text_range.End - 1
+        except Exception:
+            pass
+
+    range_font_size = None
+    if text_range is not None:
+        try:
+            value = text_range.Font.Size
+            if _is_meaningful_word_font_size(value):
+                range_font_size = float(value)
+        except Exception:
+            pass
+
+    if range_font_size is not None:
+        return range_font_size, range_font_size
+
+    weighted_sizes: dict[float, int] = {}
+    order: list[float] = []
+    try:
+        chars = text_range.Characters if text_range is not None else paragraph.Range.Characters
+        count = int(chars.Count)
+    except Exception:
+        return None, None
+
+    for index in range(1, count + 1):
+        try:
+            char = chars(index)
+        except Exception:
+            try:
+                char = chars.Item(index)
+            except Exception:
+                continue
+        try:
+            size_value = char.Font.Size
+        except Exception:
+            try:
+                size_value = char.Range.Font.Size
+            except Exception:
+                continue
+        if not _is_meaningful_word_font_size(size_value):
+            continue
+        size = float(size_value)
+        try:
+            text = str(char.Text)
+            weight = len(text.strip()) or 1
+        except Exception:
+            weight = 1
+        if size not in weighted_sizes:
+            weighted_sizes[size] = 0
+            order.append(size)
+        weighted_sizes[size] += weight
+
+    if not weighted_sizes:
+        return None, None
+
+    dominant_size = max(order, key=lambda size: (weighted_sizes[size], -order.index(size)))
+    return range_font_size, dominant_size
+
+
 def _verify_and_fix_body_indents_with_word_com_in_process(
     output_docx: Path,
     body_indent_records: list[dict[str, object]],
@@ -558,6 +640,7 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
             expected_left_points = float(record.get("expected_left_points") or 0.0)
             expected_firstline_cm = float(record.get("expected_firstline_cm") or 0.0)
             expected_firstline_points = float(record.get("expected_firstline_points") or 0.0)
+            apply_only_if_word_font_size_is_14 = bool(record.get("apply_only_if_word_font_size_is_14"))
 
             if match_index is None:
                 logs.append(
@@ -576,6 +659,42 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
             before_first_line_cm = _points_to_cm(before_first_line_pt)
             before_char_left = _safe_com_attr(pf, "CharacterUnitLeftIndent")
             before_char_first = _safe_com_attr(pf, "CharacterUnitFirstLineIndent")
+            word_range_font_size, word_dominant_font_size = (
+                _word_paragraph_font_sizes(paragraph)
+                if apply_only_if_word_font_size_is_14
+                else (None, None)
+            )
+            word_font_check_pass = (
+                not apply_only_if_word_font_size_is_14
+                or (
+                    word_dominant_font_size is not None
+                    and abs(word_dominant_font_size - 14.0) <= 0.01
+                )
+            )
+
+            if not word_font_check_pass:
+                logs.append(
+                    "WORD_COM_INDENT_VERIFY: "
+                    f"paragraph_index={record.get('paragraph_index')}; "
+                    f"matched_paragraph_index={match_index}; "
+                    f"text_preview={preview!r}; "
+                    f"kind={kind}; "
+                    f"level={record.get('level')}; "
+                    f"xml_font_size={record.get('xml_font_size')}; "
+                    f"xml_font_size_source={record.get('xml_font_size_source')}; "
+                    f"word_range_font_size={_format_optional_pt(word_range_font_size)}; "
+                    f"word_dominant_font_size={_format_optional_pt(word_dominant_font_size)}; "
+                    f"word_font_check_pass=False; "
+                    f"decision=skipped_word_font_not_14; "
+                    f"status=skipped_word_font_not_14"
+                )
+                logs.append(
+                    "WORD_COM_BODY_INDENT_FIX: "
+                    f"paragraph_index={record.get('paragraph_index')}; "
+                    f"matched_paragraph_index={match_index}; "
+                    f"status=skipped_word_font_not_14"
+                )
+                continue
 
             try:
                 pf.CharacterUnitLeftIndent = 0
@@ -615,6 +734,12 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
                 f"expected_heading_left_cm={record.get('expected_heading_left_cm')}; "
                 f"expected_body_left_cm={record.get('expected_body_left_cm')}; "
                 f"expected_first_line_twips={record.get('expected_first_line_twips')}; "
+                f"xml_font_size={record.get('xml_font_size')}; "
+                f"xml_font_size_source={record.get('xml_font_size_source')}; "
+                f"word_range_font_size={_format_optional_pt(word_range_font_size)}; "
+                f"word_dominant_font_size={_format_optional_pt(word_dominant_font_size)}; "
+                f"word_font_check_pass={word_font_check_pass}; "
+                f"decision=apply_body_indent; "
                 f"xml_written_left_cm={record.get('xml_written_left_cm')}; "
                 f"xml_written_hanging_cm={record.get('xml_written_hanging_cm')}; "
                 f"word_opened_left_cm={_format_optional_cm(before_left_cm)}; "
@@ -794,6 +919,73 @@ function Get-RecordDouble($record, [string]$name, [double]$defaultValue) {{
     }}
 }}
 
+function Test-MeaningfulFontSize($value) {{
+    try {{
+        if ($null -eq $value) {{ return $false }}
+        $size = [double]$value
+        if ($size -le 0 -or $size -ge 200) {{ return $false }}
+        if ([math]::Abs($size) -eq 9999999 -or [math]::Abs($size) -eq 999999) {{ return $false }}
+        return $true
+    }} catch {{
+        return $false
+    }}
+}}
+
+function Get-ParagraphFontSizes($paragraph) {{
+    $rangeSize = $null
+    $dominantSize = $null
+    try {{
+        $textRange = $paragraph.Range.Duplicate
+        try {{
+            if ($textRange.End -gt $textRange.Start) {{ $textRange.End = $textRange.End - 1 }}
+        }} catch {{}}
+        try {{
+            $candidate = $textRange.Font.Size
+            if (Test-MeaningfulFontSize $candidate) {{
+                $rangeSize = [double]$candidate
+                $dominantSize = $rangeSize
+                return @($rangeSize, $dominantSize)
+            }}
+        }} catch {{}}
+
+        $weights = @{{}}
+        $order = New-Object System.Collections.Generic.List[double]
+        $chars = $textRange.Characters
+        for ($ci = 1; $ci -le $chars.Count; $ci++) {{
+            try {{
+                $ch = $chars.Item($ci)
+                $candidate = $ch.Font.Size
+                if (-not (Test-MeaningfulFontSize $candidate)) {{
+                    try {{ $candidate = $ch.Range.Font.Size }} catch {{}}
+                }}
+                if (-not (Test-MeaningfulFontSize $candidate)) {{ continue }}
+                $size = [double]$candidate
+                $key = ('{{0:G}}' -f $size)
+                if (-not $weights.ContainsKey($key)) {{
+                    $weights[$key] = 0
+                    $order.Add($size) | Out-Null
+                }}
+                $weight = 1
+                try {{
+                    $text = [string]$ch.Text
+                    if (-not [string]::IsNullOrWhiteSpace($text)) {{ $weight = $text.Trim().Length }}
+                }} catch {{}}
+                $weights[$key] = [int]$weights[$key] + $weight
+            }} catch {{}}
+        }}
+        $bestWeight = -1
+        foreach ($size in $order) {{
+            $key = ('{{0:G}}' -f $size)
+            $weight = [int]$weights[$key]
+            if ($weight -gt $bestWeight) {{
+                $bestWeight = $weight
+                $dominantSize = $size
+            }}
+        }}
+    }} catch {{}}
+    return @($rangeSize, $dominantSize)
+}}
+
 try {{
     Set-Content -LiteralPath $ResultPath -Encoding UTF8 -Value ''
     Add-Log 'WORD_COM_PS_STARTED'
@@ -848,6 +1040,8 @@ try {{
             $expectedLeftPoints = Get-RecordDouble $record 'expected_left_points' 0
             $expectedFirstLineCm = Get-RecordDouble $record 'expected_firstline_cm' 0
             $expectedFirstLinePoints = Get-RecordDouble $record 'expected_firstline_points' 0
+            $applyOnlyIfWordFontSizeIs14 = $false
+            try {{ $applyOnlyIfWordFontSizeIs14 = [bool]$record.apply_only_if_word_font_size_is_14 }} catch {{}}
             Add-Log(("WORD_COM_RECORD_BEGIN i={{0}} paragraph_index={{1}} expected_left_cm={{2}} text={{3}}" -f $processed, $record.paragraph_index, $record.expected_left_cm, $preview))
 
             $matchIndex = $null
@@ -881,6 +1075,21 @@ try {{
             $actualFirstLinePt = $null
             try {{ $beforeLeftPt = [double]$pf.LeftIndent }} catch {{}}
             try {{ $beforeFirstLinePt = [double]$pf.FirstLineIndent }} catch {{}}
+            $wordRangeFontSize = $null
+            $wordDominantFontSize = $null
+            $wordFontCheckPass = $true
+            if ($applyOnlyIfWordFontSizeIs14) {{
+                $fontSizes = Get-ParagraphFontSizes $paragraph
+                if ($fontSizes.Count -ge 1) {{ $wordRangeFontSize = $fontSizes[0] }}
+                if ($fontSizes.Count -ge 2) {{ $wordDominantFontSize = $fontSizes[1] }}
+                $wordFontCheckPass = ($null -ne $wordDominantFontSize -and [math]::Abs([double]$wordDominantFontSize - 14.0) -le 0.01)
+            }}
+
+            if (-not $wordFontCheckPass) {{
+                Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; xml_font_size={{5}}; xml_font_size_source={{6}}; word_range_font_size={{7}}; word_dominant_font_size={{8}}; word_font_check_pass=False; decision=skipped_word_font_not_14; status=skipped_word_font_not_14" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.xml_font_size, $record.xml_font_size_source, $wordRangeFontSize, $wordDominantFontSize))
+                Add-Log(("WORD_COM_BODY_INDENT_FIX: i={{0}} paragraph_index={{1}} matched_paragraph_index={{2}} status=skipped_word_font_not_14" -f $processed, $record.paragraph_index, $matchIndex))
+                continue
+            }}
 
             try {{ $pf.CharacterUnitLeftIndent = 0 }} catch {{
                 Add-Log(("WORD_COM_RECORD_CHAR_LEFT_CLEAR_FAILED i={{0}} reason={{1}}" -f $processed, $_.Exception.Message))
@@ -907,7 +1116,7 @@ try {{
                 $mismatch += 1
             }}
 
-            Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; expected_number_start_cm={{5}}; expected_hanging_cm={{6}}; expected_heading_left_cm={{7}}; expected_body_left_cm={{8}}; expected_first_line_twips={{9}}; xml_written_left_cm={{10}}; xml_written_hanging_cm={{11}}; word_opened_left_cm={{12}}; word_opened_firstline_cm={{13}}; final_left_cm={{14}}; final_firstline_cm={{15}}; second_fix=yes; status={{16}}" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.expected_number_start_cm, $record.expected_hanging_cm, $record.expected_heading_left_cm, $record.expected_body_left_cm, $record.expected_first_line_twips, $record.xml_written_left_cm, $record.xml_written_hanging_cm, (Format-OptionalCm $beforeLeftCm), (Format-OptionalCm $beforeFirstLineCm), (Format-OptionalCm $afterLeftCm), (Format-OptionalCm $afterFirstLineCm), $status))
+            Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; expected_number_start_cm={{5}}; expected_hanging_cm={{6}}; expected_heading_left_cm={{7}}; expected_body_left_cm={{8}}; expected_first_line_twips={{9}}; xml_font_size={{10}}; xml_font_size_source={{11}}; word_range_font_size={{12}}; word_dominant_font_size={{13}}; word_font_check_pass={{14}}; decision=apply_body_indent; xml_written_left_cm={{15}}; xml_written_hanging_cm={{16}}; word_opened_left_cm={{17}}; word_opened_firstline_cm={{18}}; final_left_cm={{19}}; final_firstline_cm={{20}}; second_fix=yes; status={{21}}" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.expected_number_start_cm, $record.expected_hanging_cm, $record.expected_heading_left_cm, $record.expected_body_left_cm, $record.expected_first_line_twips, $record.xml_font_size, $record.xml_font_size_source, $wordRangeFontSize, $wordDominantFontSize, $wordFontCheckPass, $record.xml_written_left_cm, $record.xml_written_hanging_cm, (Format-OptionalCm $beforeLeftCm), (Format-OptionalCm $beforeFirstLineCm), (Format-OptionalCm $afterLeftCm), (Format-OptionalCm $afterFirstLineCm), $status))
             Add-Log(("WORD_COM_BODY_INDENT_FIX: i={{0}} paragraph_index={{1}} expected_left_cm={{2}} before_left_cm={{3}} after_left_cm={{4}} status={{5}}" -f $processed, $record.paragraph_index, $record.expected_left_cm, (Format-OptionalCm $beforeLeftCm), (Format-OptionalCm $afterLeftCm), $status))
         }} catch {{
             $errors += 1
@@ -1207,7 +1416,7 @@ def fix_docx_fast(
 
                     changed_paragraphs = fix_outline_paragraphs(
                         root,
-                        include_tables=options.include_tables_in_paragraph,
+                        include_tables=False,
                         stop=stop,
                         numbering_level_lookup=numbering_level_lookup,
                         numbering_format_lookup=numbering_format_lookup,
@@ -1219,6 +1428,8 @@ def fix_docx_fast(
                         fix_numbered_paragraphs=options.fix_paragraph,
                         indent_preface_paragraphs=options.indent_preface_paragraphs,
                         outline_preface_paragraphs=options.outline_preface_paragraphs,
+                        enable_level2_body_first_line_indent=options.enable_level2_body_first_line_indent,
+                        word_com_check_body_font_when_xml_not_14=options.word_com_check_body_font_when_xml_not_14,
                     )
                     summary.paragraphs += changed_paragraphs
 

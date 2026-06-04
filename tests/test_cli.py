@@ -20,6 +20,22 @@ class CliOptionTests(unittest.TestCase):
         self.assertTrue(args.indent_preface)
         self.assertTrue(args.outline_preface)
 
+    def test_new_body_indent_arguments_are_supported(self):
+        args = parse_args([
+            "input.docx",
+            "output.docx",
+            "--level2-body-first-line-indent",
+            "--word-com-check-body-font",
+        ])
+
+        self.assertTrue(args.level2_body_first_line_indent)
+        self.assertTrue(args.word_com_check_body_font)
+
+    def test_paragraph_in_tables_argument_is_no_longer_supported(self):
+        with redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                parse_args(["input.docx", "output.docx", "--paragraph-in-tables"])
+
     def test_readme_no_longer_mentions_removed_preface_argument(self):
         readme = Path("README.md").read_text(encoding="utf-8")
 

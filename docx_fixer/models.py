@@ -7,11 +7,12 @@ class ProcessOptions:
     fix_table_layout: bool
     fix_color: bool
     fix_paragraph: bool
-    include_tables_in_paragraph: bool
     remove_all_outline_levels: bool = False
     indent_preface_paragraphs: bool = False
     outline_preface_paragraphs: bool = False
     normalize_with_word_com: bool = True
+    enable_level2_body_first_line_indent: bool = False
+    word_com_check_body_font_when_xml_not_14: bool = False
 
 
 @dataclass

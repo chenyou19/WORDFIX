@@ -64,7 +64,8 @@ python main.py input.docx output.docx --table --color --paragraph
 - `--remove-all-outline`：去除文件中所有既有 Word 大綱階層。
 - `--indent-preface`：啟用第一次 `壹、序言` 前的編號段落縮排，預設關閉。
 - `--outline-preface`：啟用第一次 `壹、序言` 前的編號段落 Word 大綱階層，預設關閉。
-- `--paragraph-in-tables`：段落大綱階層處理包含表格內段落。
+- `--level2-body-first-line-indent`：階層 2 標題下方普通內文首行縮排兩個 14pt 中文字。
+- `--word-com-check-body-font`：XML 判斷內文字號不是 14pt 時，交由 Word COM 再確認是否套用內文縮排。
 - `--quiet`：命令列模式不輸出進度。
 
 若 CLI 沒有指定 `--table`、`--color`、`--paragraph`、`--remove-all-outline`、`--indent-preface`、`--outline-preface` 任一項，會維持 GUI 既有預設行為：表格、顏色與正式段落處理啟用，但不會預設啟用「去除所有大綱階層」、「縮排壹、序言前」或「壹、序言前加入大綱階層」。

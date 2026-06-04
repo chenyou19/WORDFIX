@@ -38,6 +38,15 @@ MANUAL_NUMBERING_SUFFIX_SPACES = {" ", "\t", "\u3000"}
 LEVEL_TWO_BODY_FIRST_LINE_TWIPS = "560"
 
 
+def body_first_line_twips_for_heading(
+    heading_level: int,
+    enable_level2_body_first_line_indent: bool,
+) -> str | None:
+    if enable_level2_body_first_line_indent and heading_level == 1:
+        return LEVEL_TWO_BODY_FIRST_LINE_TWIPS
+    return None
+
+
 def starts_with_note_marker(text: str) -> bool:
     return (text or "").lstrip().startswith(NOTE_MARKER_PREFIXES)
 
@@ -1020,6 +1029,62 @@ def append_body_indent_record(
     )
 
 
+def append_body_font_check_record(
+    summary,
+    *,
+    paragraph_index: int,
+    text: str,
+    heading_level: int,
+    expected_left_twips: str,
+    expected_first_line_twips: str | None,
+    paragraph_style_id_value: str | None,
+    heading_uses_outline: bool,
+    xml_font_size: float | None,
+    xml_font_size_source: str,
+    dominant_font_size: float | None,
+    dominant_font_size_source: str,
+) -> None:
+    if summary is None:
+        return
+
+    spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
+    expected_hanging_twips = spec["hanging"] if spec is not None else "0"
+    expected_heading_left_twips = spec["left"] if spec is not None else expected_left_twips
+    expected_number_start_twips = (
+        spec.get("number_start", str(int(expected_heading_left_twips) - int(expected_hanging_twips)))
+        if spec is not None
+        else "0"
+    )
+    summary.body_indent_records.append(
+        {
+            "paragraph_index": paragraph_index,
+            "text_preview": summarize_paragraph_text(text, 80),
+            "kind": "body_font_check",
+            "heading_level": heading_level,
+            "level": heading_level,
+            "expected_number_start_cm": twips_to_cm(expected_number_start_twips),
+            "expected_hanging_cm": 0.0,
+            "expected_heading_left_cm": twips_to_cm(expected_heading_left_twips),
+            "expected_body_left_cm": twips_to_cm(expected_left_twips),
+            "expected_left_twips": expected_left_twips,
+            "expected_left_cm": twips_to_cm(expected_left_twips),
+            "expected_left_points": int(expected_left_twips) / 20,
+            "expected_first_line_twips": expected_first_line_twips,
+            "expected_firstline_cm": twips_to_cm(expected_first_line_twips) if expected_first_line_twips else 0.0,
+            "expected_firstline_points": int(expected_first_line_twips) / 20 if expected_first_line_twips else 0.0,
+            "xml_written_left_cm": None,
+            "xml_written_hanging_cm": None,
+            "paragraph_style_id": paragraph_style_id_value,
+            "xml_font_size": xml_font_size,
+            "xml_font_size_source": xml_font_size_source,
+            "dominant_font_size": dominant_font_size,
+            "dominant_font_size_source": dominant_font_size_source,
+            "require_word_font_size_pt": 14.0,
+            "apply_only_if_word_font_size_is_14": True,
+        }
+    )
+
+
 def append_heading_indent_record(
     summary,
     *,
@@ -1073,6 +1138,7 @@ def append_body_indent_debug_log(
     heading_level: int,
     heading_uses_outline: bool,
     style_font_size_lookup=None,
+    enable_level2_body_first_line_indent: bool = False,
 ) -> None:
     if summary is None:
         return
@@ -1082,7 +1148,10 @@ def append_body_indent_debug_log(
         return
 
     paragraph_format = paragraph_indent_debug_format(p)
-    expected_first_line_twips = LEVEL_TWO_BODY_FIRST_LINE_TWIPS if heading_level == 1 else None
+    expected_first_line_twips = body_first_line_twips_for_heading(
+        heading_level,
+        enable_level2_body_first_line_indent,
+    )
     first_font_size_pt, first_font_size_source, paragraph_style, run_style = effective_text_run_font_size_pt(
         p,
         style_font_size_lookup,
@@ -1100,6 +1169,7 @@ def append_body_indent_debug_log(
         f"[{part_name} #{paragraph_index}] "
         f"text={preview!r}; heading_level={heading_level}; "
         f"heading_uses_outline={heading_uses_outline}; "
+        f"enable_level2_body_first_line_indent={enable_level2_body_first_line_indent}; "
         f"spec_left_cm={twips_to_cm(spec['left']):.2f}; "
         f"spec_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
         f"spec_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
@@ -1211,6 +1281,7 @@ def apply_body_indent_from_heading(
     heading_level: int,
     heading_uses_outline: bool,
     style_font_size_lookup=None,
+    enable_level2_body_first_line_indent: bool = False,
 ) -> bool:
     """讓標題下方的普通內文左縮排對齊該標題的文字起點。"""
     if not is_body_indent_font_size_allowed(p, style_font_size_lookup):
@@ -1221,7 +1292,10 @@ def apply_body_indent_from_heading(
         return False
 
     pPr = get_or_add(p, "pPr", first=True)
-    body_first_line_twips = LEVEL_TWO_BODY_FIRST_LINE_TWIPS if heading_level == 1 else None
+    body_first_line_twips = body_first_line_twips_for_heading(
+        heading_level,
+        enable_level2_body_first_line_indent,
+    )
     apply_indent_spec_to_pPr(
         pPr,
         spec,
@@ -1396,6 +1470,8 @@ def fix_outline_paragraphs(
     fix_numbered_paragraphs: bool = True,
     indent_preface_paragraphs: bool = False,
     outline_preface_paragraphs: bool = False,
+    enable_level2_body_first_line_indent: bool = False,
+    word_com_check_body_font_when_xml_not_14: bool = False,
 ) -> int:
     paragraphs = root.xpath(".//w:p", namespaces=NS)
     if summary is not None:
@@ -1489,7 +1565,41 @@ def fix_outline_paragraphs(
                         p,
                         style_font_size_lookup,
                     )
+                    spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
+                    expected_first_line_twips = body_first_line_twips_for_heading(
+                        heading_level,
+                        enable_level2_body_first_line_indent,
+                    )
                     if not is_body_indent_font_size_allowed(p, style_font_size_lookup):
+                        if word_com_check_body_font_when_xml_not_14 and spec is not None:
+                            append_body_font_check_record(
+                                summary,
+                                paragraph_index=paragraph_index,
+                                text=text,
+                                heading_level=heading_level,
+                                expected_left_twips=spec.get("body_left", spec["left"]),
+                                expected_first_line_twips=expected_first_line_twips,
+                                paragraph_style_id_value=paragraph_style_id(p),
+                                heading_uses_outline=heading_uses_outline,
+                                xml_font_size=dominant_body_font_size_pt,
+                                xml_font_size_source=dominant_body_font_size_source,
+                                dominant_font_size=dominant_body_font_size_pt,
+                                dominant_font_size_source=dominant_body_font_size_source,
+                            )
+                            append_paragraph_change_log(
+                                change_logs,
+                                part_name,
+                                paragraph_index,
+                                text,
+                                before_outline,
+                                before_outline,
+                                f"XML font is not 14pt; queued for Word COM font check: "
+                                f"dominant_font_size={format_font_size_for_log(dominant_body_font_size_pt)} "
+                                f"source={dominant_body_font_size_source}; "
+                                f"enable_level2_body_first_line_indent={enable_level2_body_first_line_indent}; "
+                                f"expected_first_line_twips={expected_first_line_twips or 'None'}",
+                            )
+                            continue
                         append_paragraph_change_log(
                             change_logs,
                             part_name,
@@ -1516,11 +1626,10 @@ def fix_outline_paragraphs(
                         heading_level,
                         heading_uses_outline,
                         style_font_size_lookup,
+                        enable_level2_body_first_line_indent=enable_level2_body_first_line_indent,
                     ):
                         changed_count += 1
-                        spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
                         if spec is not None:
-                            expected_first_line_twips = LEVEL_TWO_BODY_FIRST_LINE_TWIPS if heading_level == 1 else None
                             append_body_indent_record(
                                 summary,
                                 paragraph_index=paragraph_index,
@@ -1540,6 +1649,7 @@ def fix_outline_paragraphs(
                             heading_level=heading_level,
                             heading_uses_outline=heading_uses_outline,
                             style_font_size_lookup=style_font_size_lookup,
+                            enable_level2_body_first_line_indent=enable_level2_body_first_line_indent,
                         )
                         append_paragraph_change_log(
                             change_logs,
@@ -1549,7 +1659,8 @@ def fix_outline_paragraphs(
                             before_outline,
                             before_outline,
                             f"Body indent applied: left={spec.get('body_left', spec['left'])}; "
-                            f"{'firstLine=560 twips' if heading_level == 1 else 'firstLine cleared'}",
+                            f"{'firstLine=560 twips' if expected_first_line_twips else 'firstLine cleared'}; "
+                            f"enable_level2_body_first_line_indent={enable_level2_body_first_line_indent}",
                         )
                         continue
 

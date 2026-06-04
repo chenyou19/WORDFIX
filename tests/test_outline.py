@@ -587,7 +587,7 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[1]["left"])
         self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
-        self.assertEqual(paragraph_first_line_indent(body), "560")
+        self.assertIsNone(paragraph_first_line_indent(body))
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
 
@@ -657,7 +657,13 @@ class OutlineFixTests(unittest.TestCase):
         root = make_root(marker, heading, body)
         summary = ProcessSummary()
 
-        fix_outline_paragraphs(root, include_tables=True, summary=summary, change_logs=summary.paragraph_logs)
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            change_logs=summary.paragraph_logs,
+            enable_level2_body_first_line_indent=True,
+        )
 
         expected_left = TEMPLATE_OUTLINE_INDENTS[1]["body_left"]
         body_ind = body.find("./w:pPr/w:ind", NS)
@@ -929,6 +935,32 @@ class OutlineFixTests(unittest.TestCase):
         skip_log = "\n".join(summary.paragraph_logs)
         self.assertIn("first_font_size=14 pt", skip_log)
         self.assertIn("dominant_font_size=12 pt", skip_log)
+
+    def test_body_indent_queues_word_com_font_check_when_xml_font_is_not_14_pt(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\u4e00\u3001\u7b2c\u4e8c\u968e\u6a19\u984c")
+        body = make_paragraph("\u9019\u662f XML 12 pt 但 Word 可能顯示 14 pt 的內文", font_size_pt=12)
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            change_logs=summary.paragraph_logs,
+            enable_level2_body_first_line_indent=True,
+            word_com_check_body_font_when_xml_not_14=True,
+        )
+
+        self.assertIsNone(paragraph_left_indent(body))
+        record = summary.body_indent_records[-1]
+        self.assertEqual(record["kind"], "body_font_check")
+        self.assertEqual(record["expected_left_twips"], TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
+        self.assertEqual(record["expected_first_line_twips"], "560")
+        self.assertEqual(record["xml_font_size"], 12.0)
+        self.assertEqual(record["apply_only_if_word_font_size_is_14"], True)
+        log = "\n".join(summary.paragraph_logs)
+        self.assertIn("XML font is not 14pt; queued for Word COM font check", log)
 
     def test_body_indent_pure_14_pt_paragraph_behavior_is_unchanged(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")

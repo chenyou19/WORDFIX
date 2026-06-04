@@ -431,7 +431,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=True,
                     fix_color=False,
                     fix_paragraph=False,
-                    include_tables_in_paragraph=False,
                     normalize_with_word_com=False,
                 ),
             )
@@ -460,17 +459,17 @@ class DocxProcessorTests(unittest.TestCase):
 
     def test_find_word_paragraph_index_for_record_prefers_direct_index_then_falls_back_to_preview(self):
         paragraph_texts = [
-            "壹、序言\r",
-            "（一）第三階標題\r",
-            "階層3內文\r",
+            "憯嫘?閮\r",
+            "嚗?嚗洵銝?璅?\r",
+            "?惜3?扳?\r",
         ]
         direct_record = {
             "paragraph_index": 3,
-            "text_preview": "階層3內文",
+            "text_preview": "?惜3?扳?",
         }
         fallback_record = {
             "paragraph_index": 2,
-            "text_preview": "階層3內文",
+            "text_preview": "?惜3?扳?",
         }
 
         self.assertEqual(find_word_paragraph_index_for_record(paragraph_texts, direct_record), 3)
@@ -677,6 +676,114 @@ class DocxProcessorTests(unittest.TestCase):
         self.assertEqual(fake_document.paragraph.Format.FirstLineIndent, 28.0)
         self.assertEqual(fake_document.paragraph.Format.CharacterUnitFirstLineIndent, 0)
         self.assertIn("expected_first_line_twips=560", "\n".join(logs))
+
+    def test_word_com_body_font_check_skips_when_word_font_is_not_14_pt(self):
+        class FakeFont:
+            Size = 12.0
+
+        class FakeRange:
+            Text = "body text\r"
+            Start = 0
+            End = 10
+            Font = FakeFont()
+
+            @property
+            def Duplicate(self):
+                return self
+
+        class FakeFormat:
+            LeftIndent = 0.0
+            FirstLineIndent = 0.0
+            CharacterUnitLeftIndent = 2
+            CharacterUnitFirstLineIndent = 3
+
+        class FakeParagraph:
+            def __init__(self):
+                self.Range = FakeRange()
+                self.Format = FakeFormat()
+
+        class FakeParagraphs:
+            Count = 1
+
+            def __init__(self, paragraph):
+                self.paragraph = paragraph
+
+            def __call__(self, index):
+                if index != 1:
+                    raise IndexError(index)
+                return self.paragraph
+
+        class FakeDocument:
+            def __init__(self):
+                self.paragraph = FakeParagraph()
+                self.Paragraphs = FakeParagraphs(self.paragraph)
+                self.saved = False
+                self.closed = False
+
+            def Save(self):
+                self.saved = True
+
+            def Close(self, SaveChanges=False):
+                self.closed = True
+
+        class FakeDocuments:
+            def __init__(self, document):
+                self.document = document
+
+            def Open(self, *args, **kwargs):
+                return self.document
+
+        class FakeWord:
+            def __init__(self, document):
+                self.Visible = False
+                self.Documents = FakeDocuments(document)
+                self.quit = False
+
+            def Quit(self):
+                self.quit = True
+
+        fake_document = FakeDocument()
+        fake_word = FakeWord(fake_document)
+        win32com_module = types.ModuleType("win32com")
+        win32com_module.__path__ = []
+        client_module = types.ModuleType("win32com.client")
+        client_module.__path__ = []
+        client_module.DispatchEx = Mock(return_value=fake_word)
+        win32com_module.client = client_module
+
+        fake_modules = {
+            "win32com": win32com_module,
+            "win32com.client": client_module,
+        }
+        records = [
+            {
+                "paragraph_index": 1,
+                "text_preview": "body text",
+                "kind": "body_font_check",
+                "level": 1,
+                "expected_left_cm": 1.83,
+                "expected_left_points": 51.874015761,
+                "expected_firstline_cm": 0.987777777,
+                "expected_firstline_points": 28.0,
+                "expected_first_line_twips": "560",
+                "xml_font_size": 12.0,
+                "xml_font_size_source": "dominant_runs",
+                "apply_only_if_word_font_size_is_14": True,
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            with patch.dict(sys.modules, fake_modules):
+                logs = _verify_and_fix_body_indents_with_word_com_in_process(output_docx, records)
+
+        self.assertTrue(fake_document.saved)
+        self.assertTrue(fake_word.quit)
+        self.assertEqual(fake_document.paragraph.Format.LeftIndent, 0.0)
+        self.assertEqual(fake_document.paragraph.Format.FirstLineIndent, 0.0)
+        joined = "\n".join(logs)
+        self.assertIn("word_dominant_font_size=12", joined)
+        self.assertIn("decision=skipped_word_font_not_14", joined)
 
     def test_word_com_body_indent_uses_powershell_wrapper_with_logs(self):
         records = [
@@ -895,7 +1002,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=True,
-                    include_tables_in_paragraph=False,
                 ),
             )
 
@@ -927,8 +1033,8 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=True,
-                    include_tables_in_paragraph=False,
                     normalize_with_word_com=False,
+                    enable_level2_body_first_line_indent=True,
                 ),
             )
 
@@ -964,7 +1070,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=True,
-                    include_tables_in_paragraph=False,
                 ),
             )
 
@@ -996,7 +1101,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=True,
-                    include_tables_in_paragraph=False,
                     normalize_with_word_com=False,
                 ),
             )
@@ -1062,7 +1166,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=False,
-                    include_tables_in_paragraph=False,
                 ),
             )
 
@@ -1087,7 +1190,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=True,
-                    include_tables_in_paragraph=False,
                 ),
             )
 
@@ -1115,7 +1217,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=False,
-                    include_tables_in_paragraph=False,
                 ),
             )
 
@@ -1141,7 +1242,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=True,
-                    include_tables_in_paragraph=False,
                 ),
             )
 
@@ -1178,7 +1278,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=False,
-                    include_tables_in_paragraph=False,
                 ),
             )
 
@@ -1203,7 +1302,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=False,
-                    include_tables_in_paragraph=False,
                     remove_all_outline_levels=True,
                 ),
             )
@@ -1228,7 +1326,6 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_table_layout=False,
                     fix_color=False,
                     fix_paragraph=True,
-                    include_tables_in_paragraph=False,
                     remove_all_outline_levels=True,
                 ),
             )
