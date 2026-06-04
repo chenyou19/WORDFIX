@@ -780,12 +780,11 @@ class DocxProcessorTests(unittest.TestCase):
             numbering_root = read_part_root(output_docx, "word/numbering.xml")
             numbering_lvl = numbering_root.find(".//w:lvl", NS)
             numbering_ind = numbering_lvl.find("./w:pPr/w:ind", NS)
-            numbering_tab = numbering_lvl.find("./w:pPr/w:tabs/w:tab", NS)
             self.assertEqual(numbering_ind.get(qn("left")), spec["left"])
             self.assertEqual(numbering_ind.get(qn("hanging")), spec["hanging"])
             self.assertIsNone(numbering_ind.get(qn("start")))
-            self.assertEqual(numbering_lvl.find("./w:suff", NS).get(qn("val")), "tab")
-            self.assertEqual(numbering_tab.get(qn("pos")), spec["left"])
+            self.assertEqual(numbering_lvl.find("./w:suff", NS).get(qn("val")), "space")
+            self.assertIsNone(numbering_lvl.find("./w:pPr/w:tabs", NS))
 
             styles_root = read_part_root(output_docx, "word/styles.xml")
             numbered_style = styles_root.xpath("./w:style[@w:styleId='NumberedL4']", namespaces=NS)[0]
@@ -793,6 +792,7 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(numbered_ind.get(qn("left")), spec["left"])
             self.assertEqual(numbered_ind.get(qn("hanging")), spec["hanging"])
             self.assertIsNone(numbered_ind.get(qn("start")))
+            self.assertIsNone(numbered_style.find("./w:pPr/w:tabs", NS))
             plain_style = styles_root.xpath("./w:style[@w:styleId='BodyText']", namespaces=NS)[0]
             self.assertIsNone(plain_style.find("./w:pPr/w:ind", NS))
             self.assertIsNone(plain_style.find("./w:pPr/w:tabs", NS))
@@ -802,6 +802,8 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIn("NUMBERING_XML_LEVEL_INDENT", logs)
             self.assertIn("STYLES_XML_NUMBERED_STYLE_INDENT", logs)
             self.assertIn("expected_number_start_cm=3.20", logs)
+            self.assertIn("suff=space", logs)
+            self.assertIn("tab_pos_cm=None", logs)
             records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.94, places=2)
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_hanging_cm"], 0.74, places=2)

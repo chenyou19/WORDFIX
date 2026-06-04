@@ -6,10 +6,15 @@ from .constants import NS, OUTLINE_LEVEL_FONT_SIZE_PT, TEMPLATE_OUTLINE_INDENTS
 from .xml_utils import get_or_add, qn
 
 BULLET_OUTLINE_LEVEL = -1
+SPACE_SUFFIX_LEVELS = {3, 5, 7}
 PAREN_PAIRS = {
     "(": ")",
     "（": "）",
 }
+
+
+def numbering_suffix_for_level(level: int) -> str:
+    return "space" if level in SPACE_SUFFIX_LEVELS else "nothing"
 
 
 def has_auto_numbering(p) -> bool:
@@ -256,9 +261,9 @@ def build_style_numbering_lookup(styles_xml: bytes | None) -> dict[str, tuple[st
 def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str] | None = None) -> None:
     """Normalize a numbering level to the configured outline geometry.
 
-    Word uses the list suffix tab and the level tab stop when calculating
-    the effective text start. Keep suff=tab, but always rewrite the tab stop
-    to spec["left"] so reopening the file cannot shift the indent.
+    GUI levels 4, 6, and 8 (internal 3, 5, 7) use a space suffix. All other
+    levels use no suffix. We do not use a tab suffix or tab stops, so Word
+    cannot reopen the file and push the effective indent via a list tab.
     """
     from .indent_settings import twips_to_cm
     from .outline import apply_indent_spec_to_pPr
@@ -282,13 +287,19 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
     if suff is None:
         suff = etree.Element(qn("suff"))
         lvl.append(suff)
-    suff.set(qn("val"), "tab")
+    suffix = numbering_suffix_for_level(level)
+    suff.set(qn("val"), suffix)
 
     pPr = get_or_add(lvl, "pPr")
-    written = apply_indent_spec_to_pPr(pPr, spec, "heading_numbered")
+    written = apply_indent_spec_to_pPr(pPr, spec, "heading_numbered", use_tab_stop=False)
 
     if change_logs is not None:
         number_start = int(spec["left"]) - int(spec["hanging"])
+        tab_pos_cm = (
+            f"{twips_to_cm(written['tab_pos']):.2f}"
+            if written.get("tab_pos") is not None
+            else "None"
+        )
         change_logs.append(
             "NUMBERING_XML_LEVEL_INDENT: "
             f"level={level}; "
@@ -297,7 +308,7 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
             f"expected_heading_left_cm={twips_to_cm(spec['left']):.2f}; "
             f"xml_written_left_cm={twips_to_cm(written.get('left') or spec['left']):.2f}; "
             f"xml_written_hanging_cm={twips_to_cm(written.get('hanging') or spec['hanging']):.2f}; "
-            f"suff=tab; tab_pos_cm={twips_to_cm(written.get('tab_pos') or spec['left']):.2f}"
+            f"suff={suffix}; tab_pos_cm={tab_pos_cm}"
         )
 
 def _calculated_number_start(left: str | None, hanging: str | None) -> str | None:
@@ -524,9 +535,15 @@ def apply_styles_outline_format_to_root(
                 continue
             if pPr is None:
                 pPr = get_or_add(style, "pPr")
-            written = apply_indent_spec_to_pPr(pPr, spec, "heading_numbered")
+            suffix = numbering_suffix_for_level(level)
+            written = apply_indent_spec_to_pPr(pPr, spec, "heading_numbered", use_tab_stop=False)
             changed = True
             if change_logs is not None:
+                tab_pos_cm = (
+                    f"{twips_to_cm(written['tab_pos']):.2f}"
+                    if written.get("tab_pos") is not None
+                    else "None"
+                )
                 change_logs.append(
                     "STYLES_XML_NUMBERED_STYLE_INDENT: "
                     f"styleId={style_id}; kind=auto(style); level={level}; "
@@ -535,7 +552,7 @@ def apply_styles_outline_format_to_root(
                     f"expected_heading_left_cm={twips_to_cm(spec['left']):.2f}; "
                     f"xml_written_left_cm={twips_to_cm(written.get('left') or spec['left']):.2f}; "
                     f"xml_written_hanging_cm={twips_to_cm(written.get('hanging') or spec['hanging']):.2f}; "
-                    f"suff=tab; tab_pos_cm={twips_to_cm(written.get('tab_pos') or spec['left']):.2f}"
+                    f"suff={suffix}; tab_pos_cm={tab_pos_cm}"
                 )
             continue
 

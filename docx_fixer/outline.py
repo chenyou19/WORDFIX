@@ -297,12 +297,19 @@ def remove_paragraph_tabs(pPr) -> None:
         pPr.remove(tabs)
 
 
-def apply_indent_spec_to_pPr(pPr, spec: dict[str, str], mode: str) -> dict[str, str | None]:
+def apply_indent_spec_to_pPr(
+    pPr,
+    spec: dict[str, str],
+    mode: str,
+    *,
+    use_tab_stop: bool = False,
+) -> dict[str, str | None]:
     """
     Apply a template indent spec in one place so heading and body rules cannot drift.
 
     heading_numbered writes the numbered paragraph/list-template geometry:
     text left = number_start + hanging, first line hangs back by hanging.
+    It removes tab stops unless use_tab_stop=True.
 
     body_plain writes only the body text left indent. It removes hanging,
     firstLine, tabs, bidi start/end, right/end, and character-unit indents.
@@ -313,7 +320,10 @@ def apply_indent_spec_to_pPr(pPr, spec: dict[str, str], mode: str) -> dict[str, 
     if mode == "heading_numbered":
         ind.set(qn("left"), spec["left"])
         ind.set(qn("hanging"), spec["hanging"])
-        normalize_tabs_to_text_position(pPr, spec["left"])
+        if use_tab_stop:
+            normalize_tabs_to_text_position(pPr, spec["left"])
+        else:
+            remove_paragraph_tabs(pPr)
     elif mode == "body_plain":
         body_left = spec.get("body_left", spec["left"])
         ind.set(qn("left"), body_left)
@@ -1056,12 +1066,11 @@ def apply_outline_format(
     use_preface_indent: bool = False,
     font_level: int | None = None,
 ) -> None:
-    """依選項分別套用文件編號縮排與 Word 大綱階層。"""
+    """Apply outline level, font size, and configured heading indent."""
     pPr = get_or_add(p, "pPr", first=True)
     apply_outline_level_font_size(p, level if font_level is None else font_level)
 
     if set_outline:
-        # level 0~8 對應 Word UI 的「大綱階層 1~9」。
         apply_paragraph_outline_level(pPr, level)
 
     if not set_indent:
@@ -1071,11 +1080,7 @@ def apply_outline_format(
     if spec is None:
         return
 
-    apply_indent_spec_to_pPr(pPr, spec, "heading_numbered")
-
-    # 修正「編號後面被舊 tab stop 推出奇怪留白」的問題。
-    normalize_tabs_to_text_position(pPr, spec["left"])
-
+    apply_indent_spec_to_pPr(pPr, spec, "heading_numbered", use_tab_stop=False)
 
 def apply_outline_indent(p, level: int, set_outline: bool = True) -> None:
     """依範本.docx的階層縮排標準套用段落縮排，可選擇是否同步設定 Word 大綱階層。"""
