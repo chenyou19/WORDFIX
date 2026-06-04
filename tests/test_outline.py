@@ -43,6 +43,7 @@ def make_paragraph(
     ilvl: int | None = None,
     font_size_pt: float | None = None,
     run_style: str | None = None,
+    runs: list[dict[str, object]] | None = None,
 ):
     p = etree.Element(qn("p"))
     pPr = etree.SubElement(p, qn("pPr"))
@@ -63,18 +64,28 @@ def make_paragraph(
         num_id_el = etree.SubElement(num_pr, qn("numId"))
         num_id_el.set(qn("val"), num_id)
 
-    r = etree.SubElement(p, qn("r"))
-    if font_size_pt is not None or run_style is not None:
-        rPr = etree.SubElement(r, qn("rPr"))
-        if run_style is not None:
-            r_style = etree.SubElement(rPr, qn("rStyle"))
-            r_style.set(qn("val"), run_style)
-        if font_size_pt is not None:
-            for tag in ("sz", "szCs"):
-                size = etree.SubElement(rPr, qn(tag))
-                size.set(qn("val"), str(round(font_size_pt * 2)))
-    t = etree.SubElement(r, qn("t"))
-    t.text = text
+    run_specs = runs or [
+        {
+            "text": text,
+            "font_size_pt": font_size_pt,
+            "run_style": run_style,
+        }
+    ]
+    for run_spec in run_specs:
+        r = etree.SubElement(p, qn("r"))
+        run_font_size_pt = run_spec.get("font_size_pt")
+        run_style_value = run_spec.get("run_style")
+        if run_font_size_pt is not None or run_style_value is not None:
+            rPr = etree.SubElement(r, qn("rPr"))
+            if run_style_value is not None:
+                r_style = etree.SubElement(rPr, qn("rStyle"))
+                r_style.set(qn("val"), str(run_style_value))
+            if run_font_size_pt is not None:
+                for tag in ("sz", "szCs"):
+                    size = etree.SubElement(rPr, qn(tag))
+                    size.set(qn("val"), str(round(float(run_font_size_pt) * 2)))
+        t = etree.SubElement(r, qn("t"))
+        t.text = str(run_spec.get("text", ""))
     return p
 
 
@@ -242,11 +253,11 @@ class OutlineFixTests(unittest.TestCase):
             0: (1.11, -0.04, 1.15, 0),
             1: (1.82, 0.70, 1.12, 1.83),
             2: (2.95, 1.47, 1.48, 2.96),
-            3: (3.94, 3.20, 0.74, 3.94),
-            4: (4.91, 3.68, 1.23, 4.91),
-            5: (5.41, 4.67, 0.74, 5.41),
+            3: (3.46, 2.96, 0.50, 3.70),
+            4: (4.68, 3.45, 1.23, 4.91),
+            5: (5.42, 4.92, 0.50, 5.41),
             6: (6.40, 5.16, 1.24, 6.41),
-            7: (7.39, 6.65, 0.74, 7.11),
+            7: (6.89, 6.39, 0.50, 6.85),
             8: (8.96, 7.72, 1.24, 8.96),
         }
 
@@ -640,14 +651,14 @@ class OutlineFixTests(unittest.TestCase):
         body_ind = body.find("./w:pPr/w:ind", NS)
         expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
         self.assertEqual(body_ind.get(qn("left")), expected_left)
-        self.assertAlmostEqual(twips_to_cm(expected_left), 3.94, places=2)
+        self.assertAlmostEqual(twips_to_cm(expected_left), 3.70, places=2)
         self.assertIsNone(body_ind.get(qn("hanging")))
         self.assertIsNone(body_ind.get(qn("firstLine")))
         assert_no_char_indent_attrs(self, body_ind)
         self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=3", debug)
-        self.assertIn("spec_body_left_cm=3.94", debug)
+        self.assertIn("spec_body_left_cm=3.70", debug)
         self.assertIn(f"written_left_twips={expected_left}", debug)
         self.assertIn("tab_pos=None", debug)
 
@@ -825,6 +836,75 @@ class OutlineFixTests(unittest.TestCase):
         self.assertFalse(summary.body_indent_debug_logs)
         self.assertTrue(any("source=direct_run" in line for line in summary.paragraph_logs))
 
+    def test_body_indent_uses_dominant_font_size_when_first_run_differs(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph(
+            "",
+            runs=[
+                {"text": "\u958b\u982d", "font_size_pt": 12},
+                {"text": "\u5f8c\u9762\u5927\u90e8\u5206\u5167\u6587\u90fd\u662f\u5341\u56db\u9ede", "font_size_pt": 14},
+            ],
+        )
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            style_font_size_lookup=None,
+        )
+
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("first_font_size=12 pt", debug)
+        self.assertIn("dominant_font_size=14 pt", debug)
+        self.assertIn("dominant_font_size_source=dominant_runs", debug)
+
+    def test_body_indent_skips_when_dominant_font_size_is_not_14_pt(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph(
+            "",
+            runs=[
+                {"text": "\u958b\u982d", "font_size_pt": 14},
+                {"text": "\u5f8c\u9762\u6bd4\u8f03\u9577\u7684\u6bb5\u843d\u5167\u6587\u5176\u5be6\u662f\u5341\u4e8c\u9ede", "font_size_pt": 12},
+            ],
+        )
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            change_logs=summary.paragraph_logs,
+        )
+
+        self.assertIsNone(paragraph_left_indent(body))
+        skip_log = "\n".join(summary.paragraph_logs)
+        self.assertIn("first_font_size=14 pt", skip_log)
+        self.assertIn("dominant_font_size=12 pt", skip_log)
+
+    def test_body_indent_pure_14_pt_paragraph_behavior_is_unchanged(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph("\u7d14 14 pt \u5167\u6587", font_size_pt=14)
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+        )
+
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("first_font_size=14 pt", debug)
+        self.assertIn("dominant_font_size=14 pt", debug)
+
     def test_unknown_body_font_size_is_skipped_and_logged(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
@@ -857,7 +937,7 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(ind.get(qn("left")), "123")
         self.assertEqual(ind.get(qn("hanging")), "45")
         self.assertEqual(ind.get(qn("leftChars")), "99")
-        self.assertTrue(any("字體大小不是 14 pt" in line for line in summary.paragraph_logs))
+        self.assertTrue(any("Body indent skipped:" in line for line in summary.paragraph_logs))
 
     def test_body_indent_applies_only_to_14_pt_and_clears_char_indent_attrs(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")

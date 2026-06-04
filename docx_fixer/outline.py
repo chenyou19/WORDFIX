@@ -596,31 +596,48 @@ def style_lookup_doc_default_font_size_pt(style_font_size_lookup) -> float | Non
     return value if isinstance(value, float) else None
 
 
+def visible_run_text(run) -> str:
+    text = "".join(run.xpath(".//w:t/text()", namespaces=NS))
+    return text if text.strip() else ""
+
+
+def effective_run_font_size_pt(
+    run,
+    paragraph_style: str | None,
+    style_font_size_lookup=None,
+) -> tuple[float | None, str, str | None]:
+    run_style = run_style_id(run)
+    size = direct_run_font_size_pt(run)
+    if size is not None:
+        return size, "direct_run", run_style
+
+    size = style_lookup_font_size_pt(style_font_size_lookup, "character", run_style)
+    if size is not None:
+        return size, f"character_style:{run_style}", run_style
+
+    size = style_lookup_font_size_pt(style_font_size_lookup, "paragraph", paragraph_style)
+    if size is not None:
+        return size, f"paragraph_style:{paragraph_style}", run_style
+
+    size = style_lookup_doc_default_font_size_pt(style_font_size_lookup)
+    if size is not None:
+        return size, "docDefaults", run_style
+
+    return None, "unknown", run_style
+
+
 def effective_text_run_font_size_pt(p, style_font_size_lookup=None) -> tuple[float | None, str, str | None, str | None]:
     paragraph_style = paragraph_style_id(p)
     for run in p.findall("./w:r", NS):
-        text = "".join(run.xpath(".//w:t/text()", namespaces=NS))
-        if not text or not text.strip():
+        if not visible_run_text(run):
             continue
 
-        run_style = run_style_id(run)
-        size = direct_run_font_size_pt(run)
-        if size is not None:
-            return size, "direct_run", paragraph_style, run_style
-
-        size = style_lookup_font_size_pt(style_font_size_lookup, "character", run_style)
-        if size is not None:
-            return size, f"character_style:{run_style}", paragraph_style, run_style
-
-        size = style_lookup_font_size_pt(style_font_size_lookup, "paragraph", paragraph_style)
-        if size is not None:
-            return size, f"paragraph_style:{paragraph_style}", paragraph_style, run_style
-
-        size = style_lookup_doc_default_font_size_pt(style_font_size_lookup)
-        if size is not None:
-            return size, "docDefaults", paragraph_style, run_style
-
-        return None, "unknown", paragraph_style, run_style
+        size, source, run_style = effective_run_font_size_pt(
+            run,
+            paragraph_style,
+            style_font_size_lookup,
+        )
+        return size, source, paragraph_style, run_style
 
     return None, "unknown", paragraph_style, None
 
@@ -630,8 +647,41 @@ def primary_text_run_font_size_pt(p, style_font_size_lookup=None) -> float | Non
     return size_pt
 
 
+def effective_dominant_text_font_size_pt(
+    p,
+    style_font_size_lookup=None,
+) -> tuple[float | None, str, str | None, str | None]:
+    paragraph_style = paragraph_style_id(p)
+    weighted_sizes: dict[float, int] = {}
+    first_seen_order: list[float] = []
+
+    for run in p.findall("./w:r", NS):
+        text = visible_run_text(run)
+        if not text:
+            continue
+
+        size, _, _ = effective_run_font_size_pt(run, paragraph_style, style_font_size_lookup)
+        if size is None:
+            continue
+
+        weight = len(text)
+        if size not in weighted_sizes:
+            weighted_sizes[size] = 0
+            first_seen_order.append(size)
+        weighted_sizes[size] += weight
+
+    if not weighted_sizes:
+        return None, "unknown", paragraph_style, None
+
+    dominant_size = max(
+        first_seen_order,
+        key=lambda size: (weighted_sizes[size], -first_seen_order.index(size)),
+    )
+    return dominant_size, "dominant_runs", paragraph_style, None
+
+
 def is_body_indent_font_size_allowed(p, style_font_size_lookup=None) -> bool:
-    font_size_pt = primary_text_run_font_size_pt(p, style_font_size_lookup)
+    font_size_pt, _, _, _ = effective_dominant_text_font_size_pt(p, style_font_size_lookup)
     return font_size_pt is not None and abs(font_size_pt - 14.0) < 0.01
 
 
@@ -1017,7 +1067,11 @@ def append_body_indent_debug_log(
         return
 
     paragraph_format = paragraph_indent_debug_format(p)
-    font_size_pt, font_size_source, paragraph_style, run_style = effective_text_run_font_size_pt(
+    first_font_size_pt, first_font_size_source, paragraph_style, run_style = effective_text_run_font_size_pt(
+        p,
+        style_font_size_lookup,
+    )
+    dominant_font_size_pt, dominant_font_size_source, _, _ = effective_dominant_text_font_size_pt(
         p,
         style_font_size_lookup,
     )
@@ -1035,8 +1089,12 @@ def append_body_indent_debug_log(
         f"spec_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
         f"spec_body_left_cm={twips_to_cm(body_left_twips):.2f}; "
         f"spec_body_left_twips={body_left_twips}; "
-        f"font_size_pt={format_font_size_for_log(font_size_pt)}; "
-        f"font_size_source={font_size_source}; "
+        f"font_size_pt={format_font_size_for_log(first_font_size_pt)}; "
+        f"font_size_source={first_font_size_source}; "
+        f"first_font_size={format_font_size_for_log(first_font_size_pt)}; "
+        f"first_font_size_source={first_font_size_source}; "
+        f"dominant_font_size={format_font_size_for_log(dominant_font_size_pt)}; "
+        f"dominant_font_size_source={dominant_font_size_source}; "
         f"paragraph_style_id={paragraph_style}; "
         f"run_style_id={run_style}; "
         f"written_left_twips={paragraph_format.get('left')}; "
@@ -1399,7 +1457,11 @@ def fix_outline_paragraphs(
             if level is None:
                 if current_heading_indent is not None:
                     heading_level, heading_uses_outline = current_heading_indent
-                    body_font_size_pt, body_font_size_source, _, _ = effective_text_run_font_size_pt(
+                    first_body_font_size_pt, first_body_font_size_source, _, _ = effective_text_run_font_size_pt(
+                        p,
+                        style_font_size_lookup,
+                    )
+                    dominant_body_font_size_pt, dominant_body_font_size_source, _, _ = effective_dominant_text_font_size_pt(
                         p,
                         style_font_size_lookup,
                     )
@@ -1411,7 +1473,7 @@ def fix_outline_paragraphs(
                             text,
                             before_outline,
                             before_outline,
-                            f"跳過內文縮排：字體大小不是 14 pt（實際：{format_font_size_for_log(body_font_size_pt)}）",
+                            f"????????????? 14 pt????{format_font_size_for_log(dominant_body_font_size_pt)}?"
                         )
                         append_paragraph_change_log(
                             change_logs,
@@ -1420,7 +1482,9 @@ def fix_outline_paragraphs(
                             text,
                             before_outline,
                             before_outline,
-                            f"Body indent skipped: font_size={format_font_size_for_log(body_font_size_pt)} source={body_font_size_source}",
+                            f"Body indent skipped: first_font_size={format_font_size_for_log(first_body_font_size_pt)} "
+                            f"source={first_body_font_size_source}; dominant_font_size={format_font_size_for_log(dominant_body_font_size_pt)} "
+                            f"source={dominant_body_font_size_source}",
                         )
                         continue
                     if apply_body_indent_from_heading(

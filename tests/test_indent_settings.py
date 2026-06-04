@@ -9,6 +9,7 @@ from pathlib import Path
 from docx_fixer.constants import PREFACE_OUTLINE_INDENTS, TEMPLATE_OUTLINE_INDENTS
 from docx_fixer.indent_settings import (
     apply_indent_settings,
+    built_in_indent_settings,
     current_indent_settings,
     load_saved_indent_settings,
     save_indent_settings,
@@ -49,11 +50,11 @@ class IndentSettingsTests(unittest.TestCase):
             (-0.04, 1.15, 0),
             (0.70, 1.12, 1.83),
             (1.47, 1.48, 2.96),
-            (3.20, 0.74, 3.94),
-            (3.68, 1.23, 4.91),
-            (4.67, 0.74, 5.41),
+            (2.96, 0.50, 3.70),
+            (3.45, 1.23, 4.91),
+            (4.92, 0.50, 5.41),
             (5.16, 1.24, 6.41),
-            (6.65, 0.74, 7.11),
+            (6.39, 0.50, 6.85),
             (7.72, 1.24, 8.96),
         ]
 
@@ -68,9 +69,35 @@ class IndentSettingsTests(unittest.TestCase):
         level_8 = settings["body"][7]
 
         heading_left = float(level_8["number_start_cm"]) + float(level_8["hanging_cm"])
-        self.assertAlmostEqual(heading_left, 7.39, places=2)
-        self.assertAlmostEqual(float(level_8["body_left_cm"]), 7.11, places=2)
+        self.assertAlmostEqual(heading_left, 6.89, places=2)
+        self.assertAlmostEqual(float(level_8["body_left_cm"]), 6.85, places=2)
         self.assertNotAlmostEqual(float(level_8["body_left_cm"]), heading_left, places=2)
+
+    def test_heading_left_is_computed_from_number_start_and_hanging(self):
+        expected = {
+            3: 2.96 + 0.50,
+            5: 4.92 + 0.50,
+            7: 6.39 + 0.50,
+        }
+
+        for level, heading_left_cm in expected.items():
+            with self.subTest(level=level):
+                spec = TEMPLATE_OUTLINE_INDENTS[level]
+                number_start_cm, hanging_cm, _ = spec_to_cm_values(spec)
+                self.assertAlmostEqual(number_start_cm + hanging_cm, heading_left_cm, delta=0.01)
+
+    def test_built_in_settings_ignore_loaded_or_applied_overrides(self):
+        settings = current_indent_settings()
+        settings["body"][3]["number_start_cm"] = 9.00
+        settings["body"][3]["hanging_cm"] = 1.00
+        settings["body"][3]["body_left_cm"] = 9.00
+        apply_indent_settings(settings)
+
+        builtin_level_four = built_in_indent_settings()["body"][3]
+
+        self.assertAlmostEqual(float(builtin_level_four["number_start_cm"]), 2.96, places=2)
+        self.assertAlmostEqual(float(builtin_level_four["hanging_cm"]), 0.50, places=2)
+        self.assertAlmostEqual(float(builtin_level_four["body_left_cm"]), 3.70, places=2)
 
     def test_save_and_load_settings_round_trips_preface_values(self):
         settings = current_indent_settings()

@@ -66,7 +66,10 @@ def format_body_indent_debug_log_lines(summary: ProcessSummary) -> list[str]:
 
 
 def format_indent_settings_log_lines() -> list[str]:
-    lines = ["Indent settings snapshot:"]
+    lines = [
+        "Indent settings snapshot:",
+        "Note: local indent_defaults.json overrides constants.py built-in indent defaults. Delete it or use the GUI restore button to apply the latest built-ins.",
+    ]
     settings = current_indent_settings()
     for row in settings["body"]:
         level = int(row["level"])

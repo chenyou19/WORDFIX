@@ -769,8 +769,8 @@ class DocxProcessorTests(unittest.TestCase):
             body_ind = paragraphs[2].find("./w:pPr/w:ind", NS)
             self.assertEqual(heading_ind.get(qn("left")), spec["left"])
             self.assertEqual(heading_ind.get(qn("hanging")), spec["hanging"])
-            self.assertAlmostEqual(int(heading_ind.get(qn("left"))) / 20 / 28.3464567, 3.94, places=2)
-            self.assertAlmostEqual(int(heading_ind.get(qn("hanging"))) / 20 / 28.3464567, 0.74, places=2)
+            self.assertAlmostEqual(int(heading_ind.get(qn("left"))) / 20 / 28.3464567, 3.46, places=2)
+            self.assertAlmostEqual(int(heading_ind.get(qn("hanging"))) / 20 / 28.3464567, 0.50, places=2)
             self.assertEqual(body_ind.get(qn("left")), spec["body_left"])
             self.assertIsNone(body_ind.get(qn("hanging")))
             self.assertIsNone(body_ind.get(qn("firstLine")))
@@ -801,13 +801,13 @@ class DocxProcessorTests(unittest.TestCase):
             logs = "\n".join(summary.numbering_xml_logs)
             self.assertIn("NUMBERING_XML_LEVEL_INDENT", logs)
             self.assertIn("STYLES_XML_NUMBERED_STYLE_INDENT", logs)
-            self.assertIn("expected_number_start_cm=3.20", logs)
+            self.assertIn("expected_number_start_cm=2.96", logs)
             self.assertIn("suff=nothing", logs)
             self.assertIn("tab_pos_cm=None", logs)
             records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
-            self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.94, places=2)
-            self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_hanging_cm"], 0.74, places=2)
-            self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.94, places=2)
+            self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.46, places=2)
+            self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_hanging_cm"], 0.50, places=2)
+            self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.70, places=2)
             self.assertEqual(records_by_kind["body"]["expected_firstline_cm"], 0.0)
 
     def test_document_xml_character_indent_attrs_are_removed_but_twips_remain(self):

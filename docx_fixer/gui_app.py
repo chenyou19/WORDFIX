@@ -15,6 +15,7 @@ from .docx_processor import fix_docx_fast
 from .exceptions import ProcessStopped
 from .indent_settings import (
     apply_indent_settings,
+    built_in_indent_settings,
     current_indent_settings,
     format_cm,
     get_indent_settings_path,
@@ -239,6 +240,7 @@ class DocxFixerApp:
 
         ttk.Button(button_frame, text="套用目前設定", command=self.apply_indent_entries).pack(side="left")
         ttk.Button(button_frame, text="保存成預設樣式", command=self.save_indent_defaults).pack(side="left", padx=8)
+        ttk.Button(button_frame, text="還原新版內建預設", command=self.restore_builtin_indent_defaults).pack(side="left", padx=8)
 
         path_label = ttk.Label(
             button_frame,
@@ -325,6 +327,19 @@ class DocxFixerApp:
         self.status_var.set("已保存縮排預設樣式。")
         messagebox.showinfo("已保存", f"已保存成預設樣式：\n{path}")
 
+    def restore_builtin_indent_defaults(self) -> None:
+        settings = built_in_indent_settings()
+        for section, rows in settings.items():
+            by_level = {int(row["level"]): row for row in rows}
+            for level, _label, number_start_var, hanging_var, body_left_var in self.indent_vars[section]:
+                row = by_level[level]
+                number_start_var.set(format_cm(float(row["number_start_cm"])))
+                hanging_var.set(format_cm(float(row["hanging_cm"])))
+                body_left_var.set(format_cm(float(row["body_left_cm"])))
+
+        apply_indent_settings(settings)
+        self.status_var.set("已還原新版內建縮排預設；按「保存成預設樣式」可覆蓋本機 indent_defaults.json。")
+
     def browse_input(self) -> None:
         path = filedialog.askopenfilename(
             title="選擇 Word DOCX 檔案",
@@ -369,6 +384,16 @@ class DocxFixerApp:
     def set_running_state(self, running: bool) -> None:
         self.start_button.configure(state="disabled" if running else "normal")
         self.stop_button.configure(state="normal" if running else "disabled")
+
+    def start_progress_animation(self) -> None:
+        self.progress_bar.configure(mode="indeterminate")
+        self.progress_bar.start(10)
+
+    def stop_progress_animation(self, final_value: float | None = None) -> None:
+        self.progress_bar.stop()
+        self.progress_bar.configure(mode="determinate")
+        if final_value is not None:
+            self.progress_var.set(final_value)
 
     def resolve_output_path(self, input_path: Path) -> Path:
         output_text = self.output_var.get().strip()
@@ -470,6 +495,7 @@ class DocxFixerApp:
         self.stop_controller.clear()
         self.progress_var.set(0)
         self.status_var.set("開始處理...")
+        self.start_progress_animation()
         self.append_log(f"來源：{input_path}")
         self.append_log(f"輸出：{output_path}")
         self.append_log("開始修改。")
@@ -566,7 +592,6 @@ class DocxFixerApp:
 
                 if kind == "progress":
                     _, percent, message = item
-                    self.progress_var.set(percent)
                     self.status_var.set(message)
 
                 elif kind == "warning":
@@ -577,7 +602,7 @@ class DocxFixerApp:
                 elif kind == "done":
                     _, output_path, summary, log_path = item
                     self.current_temp_output = None
-                    self.progress_var.set(100)
+                    self.stop_progress_animation(100)
                     self.status_var.set("完成！")
                     self.append_log("完成！")
                     self.append_log(f"已處理表格數：{summary.tables}")
@@ -615,6 +640,7 @@ class DocxFixerApp:
 
                 elif kind == "stopped":
                     self.current_temp_output = None
+                    self.stop_progress_animation()
                     self.status_var.set("已停止，所有可控程序已中止，暫存檔已清理。")
                     self.append_log("已停止修改，已嘗試關閉 Word/PowerShell 程序並解除檔案鎖定。")
                     self.set_running_state(False)
@@ -622,6 +648,7 @@ class DocxFixerApp:
                 elif kind == "error":
                     _, err, tb = item
                     self.current_temp_output = None
+                    self.stop_progress_animation()
                     self.status_var.set("發生錯誤。")
                     self.append_log("發生錯誤：" + err)
                     self.append_log(tb)

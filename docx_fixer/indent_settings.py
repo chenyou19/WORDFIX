@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 
 from .constants import (
+    BUILTIN_PREFACE_OUTLINE_INDENTS,
+    BUILTIN_TEMPLATE_OUTLINE_INDENTS,
     POINTS_PER_CM,
     PREFACE_OUTLINE_INDENTS,
     TEMPLATE_OUTLINE_INDENTS,
@@ -70,13 +72,13 @@ def built_in_indent_settings() -> dict[str, list[dict[str, float | int | str]]]:
     return {
         "body": [
             make_settings_row(level, BODY_LEVEL_LABELS[level], spec)
-            for level, spec in TEMPLATE_OUTLINE_INDENTS.items()
+            for level, spec in BUILTIN_TEMPLATE_OUTLINE_INDENTS.items()
         ],
         "preface": [
             make_settings_row(
                 level,
                 PREFACE_LEVEL_LABELS[level],
-                PREFACE_OUTLINE_INDENTS.get(level, TEMPLATE_OUTLINE_INDENTS[level]),
+                BUILTIN_PREFACE_OUTLINE_INDENTS.get(level, BUILTIN_TEMPLATE_OUTLINE_INDENTS[level]),
             )
             for level in range(len(PREFACE_LEVEL_LABELS))
         ],
