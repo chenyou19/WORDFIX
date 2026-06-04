@@ -176,6 +176,31 @@ def make_document_with_styled_level_four_body() -> bytes:
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_document_with_styled_level_two_body() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+
+    for text, style in [
+        ("\u58f9\u3001\u5e8f\u8a00", None),
+        ("\u4e00\u3001\u7b2c\u4e8c\u968e\u6a19\u984c", None),
+        ("\u4f7f\u7528 DefaultText 14 pt \u7684\u7b2c\u4e8c\u968e\u5167\u6587", "DefaultText"),
+    ]:
+        p = etree.SubElement(body, qn("p"))
+        pPr = etree.SubElement(p, qn("pPr"))
+        if style is not None:
+            p_style = etree.SubElement(pPr, qn("pStyle"))
+            p_style.set(qn("val"), style)
+            tabs = etree.SubElement(pPr, qn("tabs"))
+            tab = etree.SubElement(tabs, qn("tab"))
+            tab.set(qn("val"), "left")
+            tab.set(qn("pos"), "1480")
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def make_unrecognized_numbering_with_character_indent() -> bytes:
     numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
     abstract = etree.SubElement(numbering, qn("abstractNum"))
@@ -476,6 +501,99 @@ class DocxProcessorTests(unittest.TestCase):
         self.assertIn("WORD_COM_BODY_INDENT_FIX:", joined)
         self.assertNotIn("WORD_COM_BODY_INDENT_FIX_SKIPPED", joined)
 
+    def test_word_com_body_indent_applies_level_two_first_line_indent(self):
+        class FakeRange:
+            Text = "body text\r"
+
+        class FakeFormat:
+            LeftIndent = 0.0
+            FirstLineIndent = 0.0
+            CharacterUnitLeftIndent = 2
+            CharacterUnitFirstLineIndent = 3
+
+        class FakeParagraph:
+            def __init__(self):
+                self.Range = FakeRange()
+                self.Format = FakeFormat()
+
+        class FakeParagraphs:
+            Count = 1
+
+            def __init__(self, paragraph):
+                self.paragraph = paragraph
+
+            def __call__(self, index):
+                if index != 1:
+                    raise IndexError(index)
+                return self.paragraph
+
+        class FakeDocument:
+            def __init__(self):
+                self.paragraph = FakeParagraph()
+                self.Paragraphs = FakeParagraphs(self.paragraph)
+                self.saved = False
+                self.closed = False
+
+            def Save(self):
+                self.saved = True
+
+            def Close(self, SaveChanges=False):
+                self.closed = True
+
+        class FakeDocuments:
+            def __init__(self, document):
+                self.document = document
+
+            def Open(self, *args, **kwargs):
+                return self.document
+
+        class FakeWord:
+            def __init__(self, document):
+                self.Visible = False
+                self.Documents = FakeDocuments(document)
+                self.quit = False
+
+            def Quit(self):
+                self.quit = True
+
+        fake_document = FakeDocument()
+        fake_word = FakeWord(fake_document)
+        win32com_module = types.ModuleType("win32com")
+        win32com_module.__path__ = []
+        client_module = types.ModuleType("win32com.client")
+        client_module.__path__ = []
+        client_module.DispatchEx = Mock(return_value=fake_word)
+        win32com_module.client = client_module
+
+        fake_modules = {
+            "win32com": win32com_module,
+            "win32com.client": client_module,
+        }
+        records = [
+            {
+                "paragraph_index": 1,
+                "text_preview": "body text",
+                "kind": "body",
+                "level": 1,
+                "expected_left_cm": 1.83,
+                "expected_left_points": 51.874015761,
+                "expected_firstline_cm": 0.987777777,
+                "expected_firstline_points": 28.0,
+                "expected_first_line_twips": "560",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            with patch.dict(sys.modules, fake_modules):
+                logs = _verify_and_fix_body_indents_with_word_com_in_process(output_docx, records)
+
+        self.assertTrue(fake_document.saved)
+        self.assertTrue(fake_word.quit)
+        self.assertEqual(fake_document.paragraph.Format.FirstLineIndent, 28.0)
+        self.assertEqual(fake_document.paragraph.Format.CharacterUnitFirstLineIndent, 0)
+        self.assertIn("expected_first_line_twips=560", "\n".join(logs))
+
     def test_word_com_body_indent_uses_powershell_wrapper_with_logs(self):
         records = [
             {
@@ -707,6 +825,43 @@ class DocxProcessorTests(unittest.TestCase):
             debug = "\n".join(summary.body_indent_debug_logs)
             self.assertIn("font_size_source=paragraph_style:DefaultText", debug)
             self.assertTrue(any(int(record["paragraph_index"]) == 3 for record in summary.body_indent_records))
+
+    def test_level_two_body_indent_sets_first_line_twips_and_record(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_document_with_styled_level_two_body(),
+                styles_xml=make_styles_with_default_text_font(14),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    include_tables_in_paragraph=False,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            root = read_document_root(output_docx)
+            body_paragraph = root.xpath(".//w:p", namespaces=NS)[2]
+            ind = body_paragraph.find("./w:pPr/w:ind", NS)
+            self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
+            self.assertEqual(ind.get(qn("firstLine")), "560")
+            self.assertIsNone(ind.get(qn("hanging")))
+            self.assertIsNone(ind.get(qn("start")))
+            self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
+            debug = "\n".join(summary.body_indent_debug_logs)
+            self.assertIn("spec_firstLine_twips=560", debug)
+            self.assertIn("written_firstLine=560", debug)
+            records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
+            self.assertEqual(records_by_kind["body"]["expected_first_line_twips"], "560")
+            self.assertEqual(records_by_kind["body"]["expected_firstline_points"], 28.0)
 
     def test_body_indent_direct_format_overrides_styles_xml_start_indent(self):
         with tempfile.TemporaryDirectory() as temp_dir:

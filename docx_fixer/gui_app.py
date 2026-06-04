@@ -55,10 +55,10 @@ class DocxFixerApp:
         except Exception as exc:
             self.indent_settings_load_error = str(exc)
 
-        self.fix_table_var = tk.BooleanVar(value=True)
-        self.fix_color_var = tk.BooleanVar(value=True)
+        self.fix_table_var = tk.BooleanVar(value=False)
+        self.fix_color_var = tk.BooleanVar(value=False)
         self.fix_paragraph_var = tk.BooleanVar(value=True)
-        self.remove_all_outline_var = tk.BooleanVar(value=False)
+        self.remove_all_outline_var = tk.BooleanVar(value=True)
         self.indent_preface_var = tk.BooleanVar(value=False)
         self.outline_preface_var = tk.BooleanVar(value=False)
         self.paragraph_in_tables_var = tk.BooleanVar(value=False)

@@ -35,6 +35,7 @@ PROCESSING_START_VISIBLE_PREFIX = "壹、序言"
 DEFAULT_NUMBER_FONT = "Microsoft JhengHei"
 DEFAULT_NUMBER_FONT_SIZE_PT = 12.0
 MANUAL_NUMBERING_SUFFIX_SPACES = {" ", "\t", "\u3000"}
+LEVEL_TWO_BODY_FIRST_LINE_TWIPS = "560"
 
 
 def starts_with_note_marker(text: str) -> bool:
@@ -340,6 +341,7 @@ def apply_indent_spec_to_pPr(
     mode: str,
     *,
     use_tab_stop: bool = False,
+    body_first_line_twips: str | None = None,
 ) -> dict[str, str | None]:
     """
     Apply a template indent spec in one place so heading and body rules cannot drift.
@@ -364,6 +366,8 @@ def apply_indent_spec_to_pPr(
     elif mode == "body_plain":
         body_left = spec.get("body_left", spec["left"])
         ind.set(qn("left"), body_left)
+        if body_first_line_twips is not None:
+            ind.set(qn("firstLine"), body_first_line_twips)
         remove_paragraph_tabs(pPr)
     else:
         raise ValueError(f"Unknown indent mode: {mode}")
@@ -929,7 +933,11 @@ def append_numbering_debug_log(
     )
 
 
-def body_indent_validation_errors(p, expected_left: str) -> list[str]:
+def body_indent_validation_errors(
+    p,
+    expected_left: str,
+    expected_first_line: str | None = None,
+) -> list[str]:
     errors: list[str] = []
     pPr = p.find("./w:pPr", NS)
     ind = pPr.find("w:ind", NS) if pPr is not None else None
@@ -940,12 +948,17 @@ def body_indent_validation_errors(p, expected_left: str) -> list[str]:
 
     if ind.get(qn("left")) != expected_left:
         errors.append(f"left={ind.get(qn('left'))}")
+    actual_first_line = ind.get(qn("firstLine"))
+    if expected_first_line is None:
+        if actual_first_line is not None:
+            errors.append(f"firstLine={actual_first_line}")
+    elif actual_first_line != expected_first_line:
+        errors.append(f"firstLine={actual_first_line}")
     for attr in (
         "start",
         "right",
         "end",
         "hanging",
-        "firstLine",
         "leftChars",
         "startChars",
         "rightChars",
@@ -968,6 +981,7 @@ def append_body_indent_record(
     text: str,
     heading_level: int,
     expected_left_twips: str,
+    expected_first_line_twips: str | None,
     paragraph_style_id_value: str | None,
     heading_uses_outline: bool = True,
 ) -> None:
@@ -996,8 +1010,9 @@ def append_body_indent_record(
             "expected_left_twips": expected_left_twips,
             "expected_left_cm": twips_to_cm(expected_left_twips),
             "expected_left_points": int(expected_left_twips) / 20,
-            "expected_firstline_cm": 0.0,
-            "expected_firstline_points": 0.0,
+            "expected_first_line_twips": expected_first_line_twips,
+            "expected_firstline_cm": twips_to_cm(expected_first_line_twips) if expected_first_line_twips else 0.0,
+            "expected_firstline_points": int(expected_first_line_twips) / 20 if expected_first_line_twips else 0.0,
             "xml_written_left_cm": twips_to_cm(expected_left_twips),
             "xml_written_hanging_cm": None,
             "paragraph_style_id": paragraph_style_id_value,
@@ -1067,6 +1082,7 @@ def append_body_indent_debug_log(
         return
 
     paragraph_format = paragraph_indent_debug_format(p)
+    expected_first_line_twips = LEVEL_TWO_BODY_FIRST_LINE_TWIPS if heading_level == 1 else None
     first_font_size_pt, first_font_size_source, paragraph_style, run_style = effective_text_run_font_size_pt(
         p,
         style_font_size_lookup,
@@ -1076,7 +1092,7 @@ def append_body_indent_debug_log(
         style_font_size_lookup,
     )
     body_left_twips = spec.get("body_left", spec["left"])
-    validation_errors = body_indent_validation_errors(p, body_left_twips)
+    validation_errors = body_indent_validation_errors(p, body_left_twips, expected_first_line_twips)
     preview = summarize_paragraph_text(text)
     pPr = p.find("./w:pPr", NS)
     ppr_xml = etree.tostring(pPr, encoding="unicode") if pPr is not None else ""
@@ -1089,6 +1105,8 @@ def append_body_indent_debug_log(
         f"spec_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
         f"spec_body_left_cm={twips_to_cm(body_left_twips):.2f}; "
         f"spec_body_left_twips={body_left_twips}; "
+        f"spec_firstLine_twips={expected_first_line_twips or 'None'}; "
+        f"spec_firstLine_cm={format_twips_cm(expected_first_line_twips)}; "
         f"font_size_pt={format_font_size_for_log(first_font_size_pt)}; "
         f"font_size_source={first_font_size_source}; "
         f"first_font_size={format_font_size_for_log(first_font_size_pt)}; "
@@ -1203,7 +1221,13 @@ def apply_body_indent_from_heading(
         return False
 
     pPr = get_or_add(p, "pPr", first=True)
-    apply_indent_spec_to_pPr(pPr, spec, "body_plain")
+    body_first_line_twips = LEVEL_TWO_BODY_FIRST_LINE_TWIPS if heading_level == 1 else None
+    apply_indent_spec_to_pPr(
+        pPr,
+        spec,
+        "body_plain",
+        body_first_line_twips=body_first_line_twips,
+    )
     return True
 
 
@@ -1496,12 +1520,14 @@ def fix_outline_paragraphs(
                         changed_count += 1
                         spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
                         if spec is not None:
+                            expected_first_line_twips = LEVEL_TWO_BODY_FIRST_LINE_TWIPS if heading_level == 1 else None
                             append_body_indent_record(
                                 summary,
                                 paragraph_index=paragraph_index,
                                 text=text,
                                 heading_level=heading_level,
                                 expected_left_twips=spec.get("body_left", spec["left"]),
+                                expected_first_line_twips=expected_first_line_twips,
                                 paragraph_style_id_value=paragraph_style_id(p),
                                 heading_uses_outline=heading_uses_outline,
                             )
@@ -1522,7 +1548,8 @@ def fix_outline_paragraphs(
                             text,
                             before_outline,
                             before_outline,
-                            "標題下方內文段落，左縮排對齊上一個標題的文字起點",
+                            f"Body indent applied: left={spec.get('body_left', spec['left'])}; "
+                            f"{'firstLine=560 twips' if heading_level == 1 else 'firstLine cleared'}",
                         )
                         continue
 

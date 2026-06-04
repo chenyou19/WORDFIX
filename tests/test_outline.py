@@ -119,6 +119,13 @@ def paragraph_start_indent(p):
     return ind.get(qn("start"))
 
 
+def paragraph_first_line_indent(p):
+    ind = p.find("./w:pPr/w:ind", NS)
+    if ind is None:
+        return None
+    return ind.get(qn("firstLine"))
+
+
 def expected_body_left(level: int, set_outline: bool = True):
     spec = TEMPLATE_OUTLINE_INDENTS[level] if set_outline else PREFACE_OUTLINE_INDENTS[level]
     return spec["body_left"]
@@ -580,6 +587,7 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[1]["left"])
         self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
+        self.assertEqual(paragraph_first_line_indent(body), "560")
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
 
@@ -594,6 +602,7 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[2]["left"])
         self.assertIsNone(paragraph_start_indent(heading))
         self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[2]["body_left"])
+        self.assertIsNone(paragraph_first_line_indent(body))
         self.assertIsNone(paragraph_start_indent(body))
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertIsNone(paragraph_outline(body))
@@ -636,6 +645,38 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIn("written_start_twips=None", debug)
         self.assertIn("validation=ok", debug)
 
+    def test_level_two_body_indent_uses_body_left_and_first_line_560_twips(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\u4e00\u3001\u7b2c\u4e8c\u968e\u6a19\u984c")
+        body = make_paragraph("\u9019\u662f\u7b2c\u4e8c\u968e\u6a19\u984c\u4e0b\u65b9 14 pt \u5167\u6587", font_size_pt=14)
+        ind = add_ind_with_char_attrs(body)
+        ind.set(qn("left"), "1480")
+        ind.set(qn("firstLine"), "111")
+        ind.set(qn("firstLineChars"), "100")
+        add_tab_stop(body, pos="1480")
+        root = make_root(marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary, change_logs=summary.paragraph_logs)
+
+        expected_left = TEMPLATE_OUTLINE_INDENTS[1]["body_left"]
+        body_ind = body.find("./w:pPr/w:ind", NS)
+        self.assertEqual(body_ind.get(qn("left")), expected_left)
+        self.assertEqual(body_ind.get(qn("firstLine")), "560")
+        self.assertAlmostEqual(twips_to_cm(expected_left), 1.83, places=2)
+        self.assertIsNone(body_ind.get(qn("hanging")))
+        self.assertIsNone(body_ind.get(qn("start")))
+        self.assertIsNone(body_ind.get(qn("firstLineChars")))
+        assert_no_char_indent_attrs(self, body_ind)
+        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("heading_level=1", debug)
+        self.assertIn("spec_body_left_cm=1.83", debug)
+        self.assertIn("spec_firstLine_twips=560", debug)
+        self.assertIn("written_firstLine=560", debug)
+        self.assertIn("validation=ok", debug)
+        self.assertTrue(any("Body indent applied: left=" in line and "firstLine=560 twips" in line for line in summary.paragraph_logs))
+
     def test_level_four_body_indent_uses_body_left_and_removes_hanging_and_tabs(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
@@ -659,8 +700,10 @@ class OutlineFixTests(unittest.TestCase):
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=3", debug)
         self.assertIn("spec_body_left_cm=3.70", debug)
+        self.assertIn("spec_firstLine_twips=None", debug)
         self.assertIn(f"written_left_twips={expected_left}", debug)
         self.assertIn("tab_pos=None", debug)
+        self.assertTrue(any("Body indent applied: left=" in line and "firstLine cleared" in line for line in summary.paragraph_logs))
 
     def test_manual_numbering_prefix_suffix_spaces_are_removed(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")

@@ -395,6 +395,7 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
                 f"expected_hanging_cm={record.get('expected_hanging_cm')}; "
                 f"expected_heading_left_cm={record.get('expected_heading_left_cm')}; "
                 f"expected_body_left_cm={record.get('expected_body_left_cm')}; "
+                f"expected_first_line_twips={record.get('expected_first_line_twips')}; "
                 f"xml_written_left_cm={record.get('xml_written_left_cm')}; "
                 f"xml_written_hanging_cm={record.get('xml_written_hanging_cm')}; "
                 f"word_opened_left_cm={_format_optional_cm(before_left_cm)}; "
@@ -687,7 +688,7 @@ try {{
                 $mismatch += 1
             }}
 
-            Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; expected_number_start_cm={{5}}; expected_hanging_cm={{6}}; expected_heading_left_cm={{7}}; expected_body_left_cm={{8}}; xml_written_left_cm={{9}}; xml_written_hanging_cm={{10}}; word_opened_left_cm={{11}}; word_opened_firstline_cm={{12}}; final_left_cm={{13}}; final_firstline_cm={{14}}; second_fix=yes; status={{15}}" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.expected_number_start_cm, $record.expected_hanging_cm, $record.expected_heading_left_cm, $record.expected_body_left_cm, $record.xml_written_left_cm, $record.xml_written_hanging_cm, (Format-OptionalCm $beforeLeftCm), (Format-OptionalCm $beforeFirstLineCm), (Format-OptionalCm $afterLeftCm), (Format-OptionalCm $afterFirstLineCm), $status))
+            Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; expected_number_start_cm={{5}}; expected_hanging_cm={{6}}; expected_heading_left_cm={{7}}; expected_body_left_cm={{8}}; expected_first_line_twips={{9}}; xml_written_left_cm={{10}}; xml_written_hanging_cm={{11}}; word_opened_left_cm={{12}}; word_opened_firstline_cm={{13}}; final_left_cm={{14}}; final_firstline_cm={{15}}; second_fix=yes; status={{16}}" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.expected_number_start_cm, $record.expected_hanging_cm, $record.expected_heading_left_cm, $record.expected_body_left_cm, $record.expected_first_line_twips, $record.xml_written_left_cm, $record.xml_written_hanging_cm, (Format-OptionalCm $beforeLeftCm), (Format-OptionalCm $beforeFirstLineCm), (Format-OptionalCm $afterLeftCm), (Format-OptionalCm $afterFirstLineCm), $status))
             Add-Log(("WORD_COM_BODY_INDENT_FIX: i={{0}} paragraph_index={{1}} expected_left_cm={{2}} before_left_cm={{3}} after_left_cm={{4}} status={{5}}" -f $processed, $record.paragraph_index, $record.expected_left_cm, (Format-OptionalCm $beforeLeftCm), (Format-OptionalCm $afterLeftCm), $status))
         }} catch {{
             $errors += 1
