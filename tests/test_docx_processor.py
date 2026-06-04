@@ -783,7 +783,7 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(numbering_ind.get(qn("left")), spec["left"])
             self.assertEqual(numbering_ind.get(qn("hanging")), spec["hanging"])
             self.assertIsNone(numbering_ind.get(qn("start")))
-            self.assertEqual(numbering_lvl.find("./w:suff", NS).get(qn("val")), "space")
+            self.assertEqual(numbering_lvl.find("./w:suff", NS).get(qn("val")), "nothing")
             self.assertIsNone(numbering_lvl.find("./w:pPr/w:tabs", NS))
 
             styles_root = read_part_root(output_docx, "word/styles.xml")
@@ -802,7 +802,7 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIn("NUMBERING_XML_LEVEL_INDENT", logs)
             self.assertIn("STYLES_XML_NUMBERED_STYLE_INDENT", logs)
             self.assertIn("expected_number_start_cm=3.20", logs)
-            self.assertIn("suff=space", logs)
+            self.assertIn("suff=nothing", logs)
             self.assertIn("tab_pos_cm=None", logs)
             records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.94, places=2)
@@ -911,7 +911,8 @@ class DocxProcessorTests(unittest.TestCase):
             ind = lvl.find("./w:pPr/w:ind", NS)
             self.assertEqual(ind.get(qn("left")), "360")
             self.assertIsNone(ind.get(qn("hanging")))
-            self.assertIsNone(lvl.find("./w:suff", NS))
+            self.assertEqual(lvl.find("./w:suff", NS).get(qn("val")), "nothing")
+            self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
             assert_no_character_indent_attrs(self, root)
 
     def test_output_docx_has_no_character_indent_attrs_in_any_xml_part(self):

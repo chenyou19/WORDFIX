@@ -651,6 +651,23 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIn(f"written_left_twips={expected_left}", debug)
         self.assertIn("tab_pos=None", debug)
 
+    def test_manual_numbering_prefix_suffix_spaces_are_removed(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        samples = [
+            make_paragraph("1. \u6a19\u984c"),
+            make_paragraph("A.\t\u6a19\u984c"),
+            make_paragraph("a.\u3000\u6a19\u984c"),
+            make_paragraph("\uff08\u4e00\uff09 \u6a19\u984c"),
+        ]
+        root = make_root(marker, *samples)
+
+        fix_outline_paragraphs(root, include_tables=True)
+
+        self.assertEqual("".join(samples[0].xpath(".//w:t/text()", namespaces=NS)), "1.\u6a19\u984c")
+        self.assertEqual("".join(samples[1].xpath(".//w:t/text()", namespaces=NS)), "A.\u6a19\u984c")
+        self.assertEqual("".join(samples[2].xpath(".//w:t/text()", namespaces=NS)), "a.\u6a19\u984c")
+        self.assertEqual("".join(samples[3].xpath(".//w:t/text()", namespaces=NS)), "\uff08\u4e00\uff09\u6a19\u984c")
+
     def test_body_indent_uses_paragraph_style_font_size(self):
         styles = make_styles_font_xml(
             paragraph_styles={"DefaultText": (14, None)}
@@ -1046,7 +1063,7 @@ class OutlineFixTests(unittest.TestCase):
             expected_indent(3),
         )
         self.assertIsNone(decimal_lvl.find("./w:pPr/w:tabs", NS))
-        self.assertEqual(decimal_suff.get(qn("val")), "space")
+        self.assertEqual(decimal_suff.get(qn("val")), "nothing")
         self.assertEqual(decimal_lvl_jc.get(qn("val")), "left")
 
         bullet_lvl = root.xpath("./w:abstractNum/w:lvl[@w:ilvl='4']", namespaces=NS)[0]
@@ -1168,7 +1185,7 @@ class OutlineFixTests(unittest.TestCase):
             num_fmt = etree.SubElement(lvl, qn("numFmt"))
             num_fmt.set(qn("val"), "custom")
             lvl_text = etree.SubElement(lvl, qn("lvlText"))
-            lvl_text.set(qn("val"), f"%{level + 1}")
+            lvl_text.set(qn("val"), f"%{level + 1} \t")
             pPr = etree.SubElement(lvl, qn("pPr"))
             tabs = etree.SubElement(pPr, qn("tabs"))
             tab = etree.SubElement(tabs, qn("tab"))
@@ -1185,10 +1202,10 @@ class OutlineFixTests(unittest.TestCase):
             with self.subTest(level=level):
                 lvl = updated_root.xpath(f"./w:abstractNum/w:lvl[@w:ilvl='{level}']", namespaces=NS)[0]
                 ind = lvl.find("./w:pPr/w:ind", NS)
-                expected_suffix = "space" if level in {3, 5, 7} else "nothing"
                 expected_left, expected_hanging = expected_indent(level)
-                self.assertEqual(lvl.find("./w:suff", NS).get(qn("val")), expected_suffix)
+                self.assertEqual(lvl.find("./w:suff", NS).get(qn("val")), "nothing")
                 self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
+                self.assertFalse(lvl.find("./w:lvlText", NS).get(qn("val")).endswith((" ", "\t", "\u3000")))
                 self.assertEqual(ind.get(qn("left")), expected_left)
                 self.assertEqual(ind.get(qn("hanging")), expected_hanging)
                 self.assertLessEqual(

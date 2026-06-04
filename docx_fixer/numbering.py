@@ -6,7 +6,6 @@ from .constants import NS, OUTLINE_LEVEL_FONT_SIZE_PT, TEMPLATE_OUTLINE_INDENTS
 from .xml_utils import get_or_add, qn
 
 BULLET_OUTLINE_LEVEL = -1
-SPACE_SUFFIX_LEVELS = {3, 5, 7}
 PAREN_PAIRS = {
     "(": ")",
     "（": "）",
@@ -14,7 +13,37 @@ PAREN_PAIRS = {
 
 
 def numbering_suffix_for_level(level: int) -> str:
-    return "space" if level in SPACE_SUFFIX_LEVELS else "nothing"
+    return "nothing"
+
+
+def sanitize_numbering_level_suffix_tabs_and_text(lvl) -> bool:
+    changed = False
+
+    suff = lvl.find("w:suff", NS)
+    if suff is None:
+        suff = etree.Element(qn("suff"))
+        lvl.append(suff)
+        changed = True
+    if suff.get(qn("val")) != "nothing":
+        suff.set(qn("val"), "nothing")
+        changed = True
+
+    pPr = lvl.find("w:pPr", NS)
+    tabs = pPr.find("w:tabs", NS) if pPr is not None else None
+    if tabs is not None:
+        pPr.remove(tabs)
+        changed = True
+
+    lvl_text = lvl.find("w:lvlText", NS)
+    if lvl_text is not None:
+        value = lvl_text.get(qn("val"))
+        if value is not None:
+            stripped = value.rstrip(" \t\u3000")
+            if stripped != value:
+                lvl_text.set(qn("val"), stripped)
+                changed = True
+
+    return changed
 
 
 def has_auto_numbering(p) -> bool:
@@ -261,8 +290,7 @@ def build_style_numbering_lookup(styles_xml: bytes | None) -> dict[str, tuple[st
 def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str] | None = None) -> None:
     """Normalize a numbering level to the configured outline geometry.
 
-    GUI levels 4, 6, and 8 (internal 3, 5, 7) use a space suffix. All other
-    levels use no suffix. We do not use a tab suffix or tab stops, so Word
+    All heading levels use w:suff="nothing". Tab stops are removed so Word
     cannot reopen the file and push the effective indent via a list tab.
     """
     from .indent_settings import twips_to_cm
@@ -423,6 +451,7 @@ def apply_numbering_outline_format(
 
     # 一般 abstract numbering 定義。
     for lvl in root.xpath("./w:abstractNum/w:lvl", namespaces=NS):
+        changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
         num_fmt_el = lvl.find("w:numFmt", NS)
         lvl_text_el = lvl.find("w:lvlText", NS)
         num_fmt = num_fmt_el.get(qn("val")) if num_fmt_el is not None else None
@@ -446,6 +475,7 @@ def apply_numbering_outline_format(
 
     # 個別 num 的 override 定義。
     for lvl in root.xpath("./w:num/w:lvlOverride/w:lvl", namespaces=NS):
+        changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
         num_fmt_el = lvl.find("w:numFmt", NS)
         lvl_text_el = lvl.find("w:lvlText", NS)
         num_fmt = num_fmt_el.get(qn("val")) if num_fmt_el is not None else None

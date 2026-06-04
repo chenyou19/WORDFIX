@@ -34,6 +34,7 @@ PROCESSING_START_TITLE = "序言"
 PROCESSING_START_VISIBLE_PREFIX = "壹、序言"
 DEFAULT_NUMBER_FONT = "Microsoft JhengHei"
 DEFAULT_NUMBER_FONT_SIZE_PT = 12.0
+MANUAL_NUMBERING_SUFFIX_SPACES = {" ", "\t", "\u3000"}
 
 
 def starts_with_note_marker(text: str) -> bool:
@@ -226,6 +227,42 @@ def detect_manual_numbering_prefix(text: str) -> tuple[int, str] | None:
         return level, m.group(0)
 
     return None
+
+
+def remove_text_range_from_text_nodes(p, start: int, end: int) -> None:
+    current = 0
+    for text_el in p.xpath(".//w:t", namespaces=NS):
+        value = text_el.text or ""
+        next_current = current + len(value)
+        if start < next_current and end > current:
+            local_start = max(start - current, 0)
+            local_end = min(end - current, len(value))
+            text_el.text = value[:local_start] + value[local_end:]
+        current = next_current
+
+
+def trim_manual_numbering_suffix_spacing(p, text: str | None = None) -> tuple[bool, str]:
+    full_text = paragraph_text(p) if text is None else text
+    manual = detect_manual_numbering_prefix(full_text)
+    if manual is None:
+        return False, full_text
+
+    _, prefix = manual
+    stripped = full_text.lstrip()
+    prefix_start = len(full_text) - len(stripped)
+    if not full_text[prefix_start:].startswith(prefix):
+        return False, full_text
+
+    trim_start = prefix_start + len(prefix)
+    trim_end = trim_start
+    while trim_end < len(full_text) and full_text[trim_end] in MANUAL_NUMBERING_SUFFIX_SPACES:
+        trim_end += 1
+
+    if trim_end == trim_start:
+        return False, full_text
+
+    remove_text_range_from_text_nodes(p, trim_start, trim_end)
+    return True, full_text[:trim_start] + full_text[trim_end:]
 
 
 def detect_outline_level(text: str):
@@ -1428,6 +1465,19 @@ def fix_outline_paragraphs(
                 if main_outline_started and summary is not None:
                     summary.unknown_paragraphs += 1
                 continue
+
+            if paragraph_numbering_kind(text, p, style_numbering_lookup) == "manual":
+                trimmed, text = trim_manual_numbering_suffix_spacing(p, text)
+                if trimmed:
+                    append_paragraph_change_log(
+                        change_logs,
+                        part_name,
+                        paragraph_index,
+                        text,
+                        before_outline,
+                        before_outline,
+                        "Manual numbering suffix spacing removed",
+                    )
 
             if main_outline_started:
                 indent_level = level
