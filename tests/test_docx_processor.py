@@ -100,6 +100,19 @@ def make_ind(parent, **attrs):
     return ind
 
 
+def make_table(row_columns: list[int]) -> etree._Element:
+    tbl = etree.Element(qn("tbl"))
+    for columns in row_columns:
+        tr = etree.SubElement(tbl, qn("tr"))
+        for _ in range(columns):
+            tc = etree.SubElement(tr, qn("tc"))
+            p = etree.SubElement(tc, qn("p"))
+            r = etree.SubElement(p, qn("r"))
+            t = etree.SubElement(r, qn("t"))
+            t.text = "cell"
+    return tbl
+
+
 def make_document_with_character_indent(text: str = "\u666e\u901a\u6b63\u6587", font_size_pt: int | None = None) -> bytes:
     document = etree.Element(qn("document"), nsmap={"w": W_NS})
     body = etree.SubElement(document, qn("body"))
@@ -374,6 +387,77 @@ def assert_all_document_outlines_are_body(test_case: unittest.TestCase, path: Pa
 
 
 class DocxProcessorTests(unittest.TestCase):
+    def test_special_table_uses_previous_paragraph_text_start_and_page_right_boundary(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+
+        body.append(make_table([5, 5]))
+
+        p = etree.SubElement(body, qn("p"))
+        p_pr = etree.SubElement(p, qn("pPr"))
+        ind = etree.SubElement(p_pr, qn("ind"))
+        ind.set(qn("left"), "1440")
+        ind.set(qn("firstLine"), "360")
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = "Anchor paragraph"
+
+        body.append(make_table([4, 4]))
+
+        sect_pr = etree.SubElement(body, qn("sectPr"))
+        pg_sz = etree.SubElement(sect_pr, qn("pgSz"))
+        pg_sz.set(qn("w"), "11906")
+        pg_mar = etree.SubElement(sect_pr, qn("pgMar"))
+        pg_mar.set(qn("left"), "1800")
+        pg_mar.set(qn("right"), "1800")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                etree.tostring(
+                    document,
+                    xml_declaration=True,
+                    encoding="UTF-8",
+                    standalone=True,
+                ),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=True,
+                    fix_color=False,
+                    fix_paragraph=False,
+                    include_tables_in_paragraph=False,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            self.assertEqual(summary.special_autofit_right_tables, 1)
+            self.assertEqual(summary.normal_processed_tables, 0)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+
+            root = read_document_root(output_docx)
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertIsNone(tables[0].find("w:tblPr", NS))
+            special_tbl = tables[1]
+
+            self.assertEqual(special_tbl.find("./w:tblPr/w:jc", NS).get(qn("val")), "left")
+            self.assertEqual(special_tbl.find("./w:tblPr/w:tblLayout", NS).get(qn("type")), "fixed")
+            self.assertEqual(special_tbl.find("./w:tblPr/w:tblInd", NS).get(qn("type")), "dxa")
+            self.assertEqual(special_tbl.find("./w:tblPr/w:tblInd", NS).get(qn("w")), "1800")
+            self.assertEqual(special_tbl.find("./w:tblPr/w:tblW", NS).get(qn("type")), "dxa")
+            self.assertEqual(special_tbl.find("./w:tblPr/w:tblW", NS).get(qn("w")), "6506")
+
+            for run in special_tbl.xpath(".//w:r", namespaces=NS):
+                r_pr = run.find("w:rPr", NS)
+                self.assertIsNotNone(r_pr)
+                self.assertEqual(r_pr.find("w:sz", NS).get(qn("val")), "22")
+                self.assertEqual(r_pr.find("w:szCs", NS).get(qn("val")), "22")
+
     def test_find_word_paragraph_index_for_record_prefers_direct_index_then_falls_back_to_preview(self):
         paragraph_texts = [
             "壹、序言\r",

@@ -6,6 +6,7 @@ from .shading import fix_shading_to_gray, fix_shading_to_no_color, get_shading_a
 from .stop_controller import StopController
 from .xml_utils import get_or_add, qn
 
+
 def table_cell_count(tbl) -> int:
     return sum(len(tr.findall("w:tc", NS)) for tr in tbl.findall("w:tr", NS))
 
@@ -31,32 +32,7 @@ def table_column_count(tbl) -> int:
     return max(column_counts, default=0)
 
 
-def apply_table_format(tbl, stop: StopController | None = None) -> None:
-    tblPr = get_or_add(tbl, "tblPr", first=True)
-
-    # 表格置中
-    jc = get_or_add(tblPr, "jc")
-    jc.set(qn("val"), "center")
-
-    # 表格寬度 100%
-    tblW = get_or_add(tblPr, "tblW")
-    tblW.set(qn("type"), "pct")
-    tblW.set(qn("w"), "5000")
-
-    # 固定欄寬
-    tblLayout = get_or_add(tblPr, "tblLayout")
-    tblLayout.set(qn("type"), "fixed")
-
-    # 外框線雙黑線，內框線不動
-    tblBorders = get_or_add(tblPr, "tblBorders")
-    for border_name in ["top", "bottom", "left", "right"]:
-        border = get_or_add(tblBorders, border_name)
-        border.set(qn("val"), "double")
-        border.set(qn("sz"), "4")       # 0.5 pt
-        border.set(qn("space"), "0")
-        border.set(qn("color"), "000000")
-
-    # 列高：0.6 cm 約等於 340 twips
+def _apply_table_content_format(tbl, stop: StopController | None = None) -> None:
     for tr in tbl.xpath(".//w:tr", namespaces=NS):
         if stop:
             stop.check()
@@ -65,7 +41,6 @@ def apply_table_format(tbl, stop: StopController | None = None) -> None:
         trHeight.set(qn("val"), "340")
         trHeight.set(qn("hRule"), "atLeast")
 
-    # 儲存格垂直置中
     for tc in tbl.xpath(".//w:tc", namespaces=NS):
         if stop:
             stop.check()
@@ -73,7 +48,6 @@ def apply_table_format(tbl, stop: StopController | None = None) -> None:
         vAlign = get_or_add(tcPr, "vAlign")
         vAlign.set(qn("val"), "center")
 
-    # 表格內段落置中、段前段後 0、單行間距
     for p in tbl.xpath(".//w:p", namespaces=NS):
         if stop:
             stop.check()
@@ -87,6 +61,61 @@ def apply_table_format(tbl, stop: StopController | None = None) -> None:
         spacing.set(qn("after"), "0")
         spacing.set(qn("line"), "240")
         spacing.set(qn("lineRule"), "auto")
+
+    for run in tbl.xpath(".//w:r", namespaces=NS):
+        if stop:
+            stop.check()
+        rPr = get_or_add(run, "rPr", first=True)
+        sz = get_or_add(rPr, "sz")
+        sz.set(qn("val"), "22")
+        szCs = get_or_add(rPr, "szCs")
+        szCs.set(qn("val"), "22")
+
+
+def apply_table_format(tbl, stop: StopController | None = None) -> None:
+    tblPr = get_or_add(tbl, "tblPr", first=True)
+
+    jc = get_or_add(tblPr, "jc")
+    jc.set(qn("val"), "center")
+
+    tblW = get_or_add(tblPr, "tblW")
+    tblW.set(qn("type"), "pct")
+    tblW.set(qn("w"), "5000")
+
+    tblLayout = get_or_add(tblPr, "tblLayout")
+    tblLayout.set(qn("type"), "fixed")
+
+    _apply_table_content_format(tbl, stop=stop)
+
+
+def apply_special_table_format(
+    tbl,
+    *,
+    left_indent_twips: int,
+    width_twips: int,
+    stop: StopController | None = None,
+) -> None:
+    if stop:
+        stop.check()
+
+    tblPr = get_or_add(tbl, "tblPr", first=True)
+
+    jc = get_or_add(tblPr, "jc")
+    jc.set(qn("val"), "left")
+
+    tblW = get_or_add(tblPr, "tblW")
+    tblW.set(qn("type"), "dxa")
+    tblW.set(qn("w"), str(width_twips))
+
+    tblLayout = get_or_add(tblPr, "tblLayout")
+    tblLayout.set(qn("type"), "fixed")
+
+    tblInd = get_or_add(tblPr, "tblInd")
+    tblInd.set(qn("type"), "dxa")
+    tblInd.set(qn("w"), str(left_indent_twips))
+
+    _apply_table_content_format(tbl, stop=stop)
+
 
 def apply_autofit_contents_right_format(tbl, stop: StopController | None = None) -> None:
     if stop:
@@ -104,14 +133,10 @@ def apply_autofit_contents_right_format(tbl, stop: StopController | None = None)
     tblLayout = get_or_add(tblPr, "tblLayout")
     tblLayout.set(qn("type"), "autofit")
 
+    _apply_table_content_format(tbl, stop=stop)
+
 
 def apply_table_color(tbl, stop: StopController | None = None) -> tuple[int, int]:
-    """
-    顏色規則：
-    無色彩保持；BFBFBF／A6A6A6／808080 改成 D9D9D9；
-    F2F2F2 與 D9D9D9 保持；其他顏色改成無色彩。
-    回傳：(改成灰的數量, 改成無色彩的數量)
-    """
     changed_to_gray = 0
     cleared_colors = 0
 
@@ -142,13 +167,23 @@ def process_table(
     stop: StopController | None = None,
     *,
     special_layout: bool = False,
+    special_table_geometry: tuple[int, int] | None = None,
 ) -> tuple[int, int]:
     changed_to_gray = 0
     cleared_colors = 0
 
     if options.fix_table_layout:
         if special_layout:
-            apply_autofit_contents_right_format(tbl, stop=stop)
+            if special_table_geometry is not None:
+                left_indent_twips, width_twips = special_table_geometry
+                apply_special_table_format(
+                    tbl,
+                    left_indent_twips=left_indent_twips,
+                    width_twips=width_twips,
+                    stop=stop,
+                )
+            else:
+                apply_autofit_contents_right_format(tbl, stop=stop)
         else:
             apply_table_format(tbl, stop=stop)
 

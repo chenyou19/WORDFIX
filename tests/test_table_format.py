@@ -3,15 +3,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
 
 from docx_fixer.constants import NS, W_NS
 from docx_fixer.docx_processor import fix_docx_fast
-from docx_fixer.models import ProcessOptions
-from docx_fixer.models import ProcessSummary
+from docx_fixer.models import ProcessOptions, ProcessSummary
 from docx_fixer.table_cross_page import apply_cross_page_stats
 from docx_fixer.table_format import (
     apply_table_format,
@@ -35,11 +33,15 @@ def make_table(row_columns: list[int]):
     return tbl
 
 
-def table_setting(tbl, name: str) -> str | None:
-    element = tbl.find(f"w:tblPr/w:{name}", NS)
+def table_pr_element(tbl, name: str):
+    return tbl.find(f"w:tblPr/w:{name}", NS)
+
+
+def table_setting(tbl, name: str, attr: str = "val") -> str | None:
+    element = table_pr_element(tbl, name)
     if element is None:
         return None
-    return element.get(qn("val")) or element.get(qn("type"))
+    return element.get(qn(attr))
 
 
 class TableFormatTests(unittest.TestCase):
@@ -53,24 +55,46 @@ class TableFormatTests(unittest.TestCase):
         self.assertEqual(table_cell_count(tbl), 3)
         self.assertEqual(table_column_count(tbl), 4)
 
-    def test_special_layout_sets_autofit_and_right_alignment(self):
+    def test_special_layout_uses_fixed_geometry_when_available(self):
         tbl = make_table([2, 2, 2])
         process_table(
             tbl,
             ProcessOptions(True, False, False, False),
             special_layout=True,
+            special_table_geometry=(720, 4000),
         )
 
-        self.assertEqual(table_setting(tbl, "jc"), "right")
-        self.assertEqual(table_setting(tbl, "tblW"), "auto")
-        self.assertEqual(table_setting(tbl, "tblLayout"), "autofit")
+        self.assertEqual(table_setting(tbl, "jc"), "left")
+        self.assertEqual(table_setting(tbl, "tblW", "type"), "dxa")
+        self.assertEqual(table_setting(tbl, "tblW", "w"), "4000")
+        self.assertEqual(table_setting(tbl, "tblInd", "type"), "dxa")
+        self.assertEqual(table_setting(tbl, "tblInd", "w"), "720")
+        self.assertEqual(table_setting(tbl, "tblLayout", "type"), "fixed")
 
-    def test_table_format_does_not_change_font_size(self):
+    def test_apply_table_format_keeps_existing_borders_and_sets_run_size_to_11pt(self):
         tbl = make_table([2, 2, 2])
+        tbl_pr = etree.SubElement(tbl, qn("tblPr"))
+        tbl_borders = etree.SubElement(tbl_pr, qn("tblBorders"))
+        top = etree.SubElement(tbl_borders, qn("top"))
+        top.set(qn("val"), "single")
+        top.set(qn("color"), "FF0000")
+
         apply_table_format(tbl)
 
-        self.assertFalse(tbl.xpath(".//w:sz", namespaces=NS))
-        self.assertFalse(tbl.xpath(".//w:szCs", namespaces=NS))
+        self.assertEqual(table_setting(tbl, "jc"), "center")
+        self.assertEqual(table_setting(tbl, "tblW", "type"), "pct")
+        self.assertEqual(table_setting(tbl, "tblLayout", "type"), "fixed")
+        self.assertEqual(top.get(qn("val")), "single")
+        self.assertEqual(top.get(qn("color")), "FF0000")
+        self.assertIsNone(tbl.find("./w:tblPr/w:tblBorders/w:left", NS))
+        self.assertIsNone(tbl.find("./w:tblPr/w:tblBorders/w:right", NS))
+        self.assertIsNone(tbl.find("./w:tblPr/w:tblBorders/w:bottom", NS))
+
+        for run in tbl.xpath(".//w:r", namespaces=NS):
+            r_pr = run.find("w:rPr", NS)
+            self.assertIsNotNone(r_pr)
+            self.assertEqual(r_pr.find("w:sz", NS).get(qn("val")), "22")
+            self.assertEqual(r_pr.find("w:szCs", NS).get(qn("val")), "22")
 
     def test_cross_page_stats_are_applied_to_summary(self):
         summary = ProcessSummary()
@@ -107,13 +131,13 @@ class TableFormatTests(unittest.TestCase):
 
         self.assertEqual(summary.failed_cross_page_tables, 2)
 
-    def test_processor_skips_first_page_and_small_tables(self):
+    def test_processor_skips_only_first_document_table_and_still_skips_small_tables(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
-        body.append(make_table([3, 3]))
-        body.append(make_table([2, 2, 2]))
-        body.append(make_table([2, 2]))
+        body.append(make_table([5, 5]))
         body.append(make_table([4, 4]))
+        body.append(make_table([2, 2]))
+        body.append(make_table([5, 5]))
 
         with tempfile.TemporaryDirectory() as tmp:
             input_docx = Path(tmp) / "input.docx"
@@ -129,9 +153,8 @@ class TableFormatTests(unittest.TestCase):
                     ),
                 )
 
-            options = ProcessOptions(True, False, False, False)
-            with patch("docx_fixer.docx_processor.get_word_table_start_pages", return_value=[1, 2, 2, 2]):
-                summary = fix_docx_fast(input_docx, output_docx, options)
+            options = ProcessOptions(True, False, False, False, normalize_with_word_com=False)
+            summary = fix_docx_fast(input_docx, output_docx, options)
 
             self.assertEqual(summary.tables, 4)
             self.assertEqual(summary.skipped_first_page_tables, 1)
@@ -145,8 +168,52 @@ class TableFormatTests(unittest.TestCase):
 
             self.assertIsNone(tables[0].find("w:tblPr", NS))
             self.assertEqual(table_setting(tables[1], "jc"), "right")
+            self.assertEqual(table_setting(tables[1], "tblLayout", "type"), "autofit")
             self.assertIsNone(tables[2].find("w:tblPr", NS))
             self.assertEqual(table_setting(tables[3], "jc"), "center")
+
+    def test_header_first_table_is_not_skipped_by_document_first_table_rule(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_table([5, 5]))
+
+        header = etree.Element(qn("hdr"), nsmap={"w": W_NS})
+        header.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+                zout.writestr(
+                    "word/header1.xml",
+                    etree.tostring(
+                        header,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(True, False, False, False, normalize_with_word_com=False)
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.tables, 2)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+            self.assertEqual(summary.normal_processed_tables, 1)
+
+            with ZipFile(output_docx) as zin:
+                header_root = etree.fromstring(zin.read("word/header1.xml"))
+            header_tables = header_root.xpath(".//w:tbl", namespaces=NS)
+            self.assertEqual(table_setting(header_tables[0], "jc"), "center")
 
 
 if __name__ == "__main__":

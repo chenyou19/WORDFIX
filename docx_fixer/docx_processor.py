@@ -10,7 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
 
-from .constants import NS
+from .constants import NS, TEMPLATE_OUTLINE_INDENTS
 from .exceptions import ProcessStopped
 from .models import ProcessOptions, ProcessSummary
 from .numbering import (
@@ -19,10 +19,14 @@ from .numbering import (
     build_numbering_format_lookup,
     build_numbering_level_lookup,
     build_style_numbering_lookup,
+    has_auto_numbering,
+    paragraph_style_id,
 )
 from .outline import (
+    detect_manual_numbering_prefix,
     fix_outline_paragraphs,
     force_all_paragraphs_to_body_outline_level,
+    get_auto_number_identity,
     remove_all_outline_levels_from_any_root,
 )
 from .path_utils import is_same_file_path
@@ -30,7 +34,7 @@ from .process_runner import run_powershell_file, run_powershell_script
 from .stop_controller import StopController
 from .style_resolver import build_style_font_size_lookup
 from .table_format import process_table, table_cell_count, table_column_count
-from .xml_utils import qn, remove_character_indent_attrs_from_root
+from .xml_utils import paragraph_text, qn, remove_character_indent_attrs_from_root
 
 POINTS_PER_CM = 28.3464567
 WORD_COM_TIMEOUT_SECONDS = 120
@@ -131,6 +135,165 @@ def should_fix_paragraph_part(name: str) -> bool:
     導致置中頁碼被套用 left/hanging 縮排而偏掉。
     """
     return name == "word/document.xml"
+
+
+def _parse_twips_attr(element, attr_name: str) -> int | None:
+    if element is None:
+        return None
+    value = element.get(qn(attr_name))
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _paragraph_outline_level_for_table_anchor(
+    p,
+    numbering_level_lookup,
+    style_numbering_lookup,
+) -> int | None:
+    num_id = None
+    ilvl = None
+
+    if has_auto_numbering(p):
+        num_id, ilvl = get_auto_number_identity(p)
+    else:
+        style_id = paragraph_style_id(p)
+        if style_id and style_numbering_lookup:
+            num_id, ilvl = style_numbering_lookup.get(style_id, (None, None))
+
+    if num_id is not None and ilvl is not None:
+        level = numbering_level_lookup.get((num_id, ilvl))
+        if level is not None:
+            return level
+        if 0 <= ilvl <= 8:
+            return ilvl
+
+    manual = detect_manual_numbering_prefix(paragraph_text(p).strip())
+    if manual is not None:
+        return manual[0]
+
+    return None
+
+
+def _paragraph_text_start_twips(
+    p,
+    numbering_level_lookup,
+    style_numbering_lookup,
+) -> int | None:
+    outline_level = _paragraph_outline_level_for_table_anchor(
+        p,
+        numbering_level_lookup,
+        style_numbering_lookup,
+    )
+    if outline_level is not None:
+        spec = TEMPLATE_OUTLINE_INDENTS.get(outline_level)
+        if spec is not None:
+            try:
+                return int(spec.get("body_left", spec["left"]))
+            except (KeyError, TypeError, ValueError):
+                return None
+
+    ind = p.find("./w:pPr/w:ind", NS)
+    if ind is None:
+        return None
+
+    base = _parse_twips_attr(ind, "start")
+    if base is None:
+        base = _parse_twips_attr(ind, "left")
+    if base is None:
+        base = 0
+
+    first_line = _parse_twips_attr(ind, "firstLine")
+    hanging = _parse_twips_attr(ind, "hanging")
+
+    if first_line is not None and first_line > 0:
+        return base + first_line
+    if hanging is not None:
+        return base
+    if first_line is not None and first_line < 0:
+        return base
+    return base
+
+
+def _find_previous_effective_paragraph(tbl, style_numbering_lookup):
+    paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
+    for p in reversed(paragraphs):
+        text = paragraph_text(p).strip()
+        if text:
+            return p
+
+        if has_auto_numbering(p):
+            return p
+
+        style_id = paragraph_style_id(p)
+        if style_id and style_numbering_lookup and style_id in style_numbering_lookup:
+            return p
+
+    return None
+
+
+def _find_table_section_properties(tbl):
+    preceding_sect_pr = tbl.xpath("preceding::w:sectPr", namespaces=NS)
+    if preceding_sect_pr:
+        return preceding_sect_pr[-1]
+
+    body_sect_pr = tbl.xpath("ancestor::w:body/w:sectPr", namespaces=NS)
+    if body_sect_pr:
+        return body_sect_pr[0]
+
+    return None
+
+
+def _page_text_width_twips(sect_pr) -> int | None:
+    if sect_pr is None:
+        return None
+
+    pg_sz = sect_pr.find("w:pgSz", NS)
+    pg_mar = sect_pr.find("w:pgMar", NS)
+    if pg_sz is None or pg_mar is None:
+        return None
+
+    page_width = _parse_twips_attr(pg_sz, "w")
+    left_margin = _parse_twips_attr(pg_mar, "left")
+    right_margin = _parse_twips_attr(pg_mar, "right")
+    if page_width is None or left_margin is None or right_margin is None:
+        return None
+
+    available_width = page_width - left_margin - right_margin
+    if available_width <= 0:
+        return None
+    return available_width
+
+
+def _resolve_special_table_geometry(
+    tbl,
+    numbering_level_lookup,
+    style_numbering_lookup,
+) -> tuple[int, int] | None:
+    anchor_paragraph = _find_previous_effective_paragraph(tbl, style_numbering_lookup)
+    if anchor_paragraph is None:
+        return None
+
+    left_indent_twips = _paragraph_text_start_twips(
+        anchor_paragraph,
+        numbering_level_lookup,
+        style_numbering_lookup,
+    )
+    if left_indent_twips is None or left_indent_twips < 0:
+        return None
+
+    text_width_twips = _page_text_width_twips(_find_table_section_properties(tbl))
+    if text_width_twips is None:
+        return None
+
+    width_twips = text_width_twips - left_indent_twips
+    if width_twips <= 0:
+        return None
+
+    return left_indent_twips, width_twips
 
 
 def get_word_table_start_pages(input_docx: Path, stop: StopController | None = None) -> list[int | None]:
@@ -870,10 +1033,6 @@ def fix_docx_fast(
 
     parser = etree.XMLParser(remove_blank_text=False, recover=True)
     summary = ProcessSummary()
-    document_table_pages: list[int | None] = []
-    if options.fix_table_layout or options.fix_color:
-        document_table_pages = get_word_table_start_pages(input_docx, stop=stop)
-
     with ZipFile(input_docx, "r") as zin, ZipFile(output_docx, "w", ZIP_DEFLATED) as zout:
         numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in zin.namelist() else None
         styles_xml = zin.read("word/styles.xml") if "word/styles.xml" in zin.namelist() else None
@@ -970,8 +1129,6 @@ def fix_docx_fast(
             if should_process_part(item.filename):
                 if root is None:
                     root = etree.fromstring(data, parser)
-                if item.filename == "word/document.xml" and not document_table_pages:
-                    document_table_pages = get_rendered_table_start_pages(root)
 
                 if (
                     (
@@ -1010,22 +1167,12 @@ def fix_docx_fast(
                 if options.fix_table_layout or options.fix_color:
                     tables = root.xpath(".//w:tbl", namespaces=NS)
                     table_count = len(tables)
-                    if item.filename == "word/document.xml" and len(document_table_pages) != table_count:
-                        rendered_table_pages = get_rendered_table_start_pages(root)
-                        if len(rendered_table_pages) == table_count:
-                            document_table_pages = rendered_table_pages
 
                     for table_index, tbl in enumerate(tables, start=1):
                         if stop:
                             stop.check()
 
-                        table_page = None
-                        if item.filename == "word/document.xml" and table_index <= len(document_table_pages):
-                            table_page = document_table_pages[table_index - 1]
-                        elif item.filename == "word/document.xml":
-                            table_page = 1
-
-                        if table_page == 1:
+                        if item.filename == "word/document.xml" and table_index == 1:
                             summary.skipped_first_page_tables += 1
                             continue
 
@@ -1034,12 +1181,20 @@ def fix_docx_fast(
                             summary.skipped_small_tables += 1
                             continue
 
-                        special_layout = options.fix_table_layout and table_column_count(tbl) < 4
+                        special_layout = options.fix_table_layout and table_column_count(tbl) <= 4
+                        special_table_geometry = None
+                        if special_layout:
+                            special_table_geometry = _resolve_special_table_geometry(
+                                tbl,
+                                numbering_level_lookup,
+                                style_numbering_lookup,
+                            )
                         changed_to_gray, cleared_colors = process_table(
                             tbl,
                             options,
                             stop=stop,
                             special_layout=special_layout,
+                            special_table_geometry=special_table_geometry,
                         )
                         summary.changed_to_gray += changed_to_gray
                         summary.cleared_colors += cleared_colors
