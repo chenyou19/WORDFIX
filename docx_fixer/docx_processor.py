@@ -137,6 +137,60 @@ def should_fix_paragraph_part(name: str) -> bool:
     return name == "word/document.xml"
 
 
+def _normalize_table_log_text(text: str, limit: int = 100) -> str:
+    normalized = " ".join((text or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").split())
+    if not normalized:
+        return "未找到上方段落"
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3].rstrip() + "..."
+
+
+def find_previous_paragraph_text_for_table(root, tbl) -> str:
+    del root  # The table already belongs to the current XML part tree.
+    paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
+    for p in reversed(paragraphs):
+        text = _normalize_table_log_text(paragraph_text(p))
+        if text != "未找到上方段落":
+            return text
+    return "未找到上方段落"
+
+
+def build_table_log_record(
+    *,
+    part_name: str,
+    table_index: int,
+    global_table_index: int,
+    table_name: str,
+    cell_count: int,
+    column_count: int,
+    table_type: str,
+    action: str,
+    reason: str,
+    special_layout_used: bool,
+    layout_fixed: bool,
+    color_fixed: bool,
+    changed_to_gray: int,
+    cleared_colors: int,
+) -> dict[str, object]:
+    return {
+        "part_name": part_name,
+        "table_index": table_index,
+        "global_table_index": global_table_index,
+        "table_name": table_name,
+        "cell_count": cell_count,
+        "column_count": column_count,
+        "table_type": table_type,
+        "action": action,
+        "reason": reason,
+        "special_layout_used": special_layout_used,
+        "layout_fixed": layout_fixed,
+        "color_fixed": color_fixed,
+        "changed_to_gray": changed_to_gray,
+        "cleared_colors": cleared_colors,
+    }
+
+
 def _parse_twips_attr(element, attr_name: str) -> int | None:
     if element is None:
         return None
@@ -1033,6 +1087,8 @@ def fix_docx_fast(
 
     parser = etree.XMLParser(remove_blank_text=False, recover=True)
     summary = ProcessSummary()
+    global_table_index = 0
+
     with ZipFile(input_docx, "r") as zin, ZipFile(output_docx, "w", ZIP_DEFLATED) as zout:
         numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in zin.namelist() else None
         styles_xml = zin.read("word/styles.xml") if "word/styles.xml" in zin.namelist() else None
@@ -1172,16 +1228,56 @@ def fix_docx_fast(
                         if stop:
                             stop.check()
 
+                        global_table_index += 1
+                        cell_count = table_cell_count(tbl)
+                        column_count = table_column_count(tbl)
+                        table_name = find_previous_paragraph_text_for_table(root, tbl)
+
                         if item.filename == "word/document.xml" and table_index == 1:
                             summary.skipped_first_page_tables += 1
+                            summary.table_log_records.append(
+                                build_table_log_record(
+                                    part_name=item.filename,
+                                    table_index=table_index,
+                                    global_table_index=global_table_index,
+                                    table_name=table_name,
+                                    cell_count=cell_count,
+                                    column_count=column_count,
+                                    table_type="skipped_first_table",
+                                    action="skipped",
+                                    reason="first table in word/document.xml",
+                                    special_layout_used=False,
+                                    layout_fixed=False,
+                                    color_fixed=False,
+                                    changed_to_gray=0,
+                                    cleared_colors=0,
+                                )
+                            )
                             continue
 
-                        cell_count = table_cell_count(tbl)
                         if cell_count <= 4:
                             summary.skipped_small_tables += 1
+                            summary.table_log_records.append(
+                                build_table_log_record(
+                                    part_name=item.filename,
+                                    table_index=table_index,
+                                    global_table_index=global_table_index,
+                                    table_name=table_name,
+                                    cell_count=cell_count,
+                                    column_count=column_count,
+                                    table_type="skipped_small_table",
+                                    action="skipped",
+                                    reason="cell_count <= 4",
+                                    special_layout_used=False,
+                                    layout_fixed=False,
+                                    color_fixed=False,
+                                    changed_to_gray=0,
+                                    cleared_colors=0,
+                                )
+                            )
                             continue
 
-                        special_layout = options.fix_table_layout and table_column_count(tbl) <= 4
+                        special_layout = options.fix_table_layout and column_count <= 4
                         special_table_geometry = None
                         if special_layout:
                             special_table_geometry = _resolve_special_table_geometry(
@@ -1196,12 +1292,57 @@ def fix_docx_fast(
                             special_layout=special_layout,
                             special_table_geometry=special_table_geometry,
                         )
+                        layout_fixed = bool(options.fix_table_layout)
+                        color_fixed = bool(options.fix_color)
+                        if options.fix_table_layout:
+                            if special_layout:
+                                table_type = "special_table"
+                                action = (
+                                    "apply_special_table_format_and_color"
+                                    if options.fix_color
+                                    else "apply_special_table_format"
+                                )
+                                reason = "column_count <= 4"
+                            else:
+                                table_type = "normal_table"
+                                action = (
+                                    "apply_normal_table_format_and_color"
+                                    if options.fix_color
+                                    else "apply_normal_table_format"
+                                )
+                                reason = "column_count > 4"
+                        elif options.fix_color:
+                            table_type = "color_only_table"
+                            action = "apply_color_only"
+                            reason = "fix_table_layout disabled but fix_color enabled"
+                        else:
+                            table_type = "skipped"
+                            action = "skipped"
+                            reason = "no table actions enabled"
                         summary.changed_to_gray += changed_to_gray
                         summary.cleared_colors += cleared_colors
                         if special_layout:
                             summary.special_autofit_right_tables += 1
                         else:
                             summary.normal_processed_tables += 1
+                        summary.table_log_records.append(
+                            build_table_log_record(
+                                part_name=item.filename,
+                                table_index=table_index,
+                                global_table_index=global_table_index,
+                                table_name=table_name,
+                                cell_count=cell_count,
+                                column_count=column_count,
+                                table_type=table_type,
+                                action=action,
+                                reason=reason,
+                                special_layout_used=special_layout,
+                                layout_fixed=layout_fixed,
+                                color_fixed=color_fixed,
+                                changed_to_gray=changed_to_gray,
+                                cleared_colors=cleared_colors,
+                            )
+                        )
 
                         if progress_callback and table_count:
                             inner_fraction = table_index / table_count

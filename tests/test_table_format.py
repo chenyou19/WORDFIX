@@ -33,6 +33,14 @@ def make_table(row_columns: list[int]):
     return tbl
 
 
+def make_paragraph(text: str):
+    p = etree.Element(qn("p"))
+    r = etree.SubElement(p, qn("r"))
+    t = etree.SubElement(r, qn("t"))
+    t.text = text
+    return p
+
+
 def table_pr_element(tbl, name: str):
     return tbl.find(f"w:tblPr/w:{name}", NS)
 
@@ -134,9 +142,13 @@ class TableFormatTests(unittest.TestCase):
     def test_processor_skips_only_first_document_table_and_still_skips_small_tables(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("壹、估價條件"))
         body.append(make_table([5, 5]))
+        body.append(make_paragraph("一、比較標的資料"))
         body.append(make_table([4, 4]))
+        body.append(make_paragraph("二、小表格"))
         body.append(make_table([2, 2]))
+        body.append(make_paragraph("三、一般表格"))
         body.append(make_table([5, 5]))
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -161,6 +173,19 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.skipped_small_tables, 1)
             self.assertEqual(summary.special_autofit_right_tables, 1)
             self.assertEqual(summary.normal_processed_tables, 1)
+            self.assertEqual(len(summary.table_log_records), 4)
+            self.assertEqual(summary.table_log_records[0]["table_type"], "skipped_first_table")
+            self.assertEqual(summary.table_log_records[0]["table_name"], "壹、估價條件")
+            self.assertEqual(summary.table_log_records[1]["table_type"], "special_table")
+            self.assertEqual(summary.table_log_records[1]["table_name"], "一、比較標的資料")
+            self.assertEqual(summary.table_log_records[2]["table_type"], "skipped_small_table")
+            self.assertEqual(summary.table_log_records[2]["table_name"], "二、小表格")
+            self.assertEqual(summary.table_log_records[3]["table_type"], "normal_table")
+            self.assertEqual(summary.table_log_records[3]["table_name"], "三、一般表格")
+            self.assertEqual(
+                [record["global_table_index"] for record in summary.table_log_records],
+                [1, 2, 3, 4],
+            )
 
             with ZipFile(output_docx) as zin:
                 root = etree.fromstring(zin.read("word/document.xml"))
@@ -175,9 +200,11 @@ class TableFormatTests(unittest.TestCase):
     def test_header_first_table_is_not_skipped_by_document_first_table_rule(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("文件第一張表格"))
         body.append(make_table([5, 5]))
 
         header = etree.Element(qn("hdr"), nsmap={"w": W_NS})
+        header.append(make_paragraph("頁首表格"))
         header.append(make_table([5, 5]))
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -209,11 +236,87 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.tables, 2)
             self.assertEqual(summary.skipped_first_page_tables, 1)
             self.assertEqual(summary.normal_processed_tables, 1)
+            self.assertEqual(summary.table_log_records[0]["table_type"], "skipped_first_table")
+            self.assertEqual(summary.table_log_records[1]["part_name"], "word/header1.xml")
+            self.assertEqual(summary.table_log_records[1]["table_type"], "normal_table")
+            self.assertEqual(summary.table_log_records[1]["table_name"], "頁首表格")
 
             with ZipFile(output_docx) as zin:
                 header_root = etree.fromstring(zin.read("word/header1.xml"))
             header_tables = header_root.xpath(".//w:tbl", namespaces=NS)
             self.assertEqual(table_setting(header_tables[0], "jc"), "center")
+
+    def test_color_only_tables_are_logged_as_color_only(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("第二張表格"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(False, True, False, False, normalize_with_word_com=False),
+            )
+
+            self.assertEqual(len(summary.table_log_records), 2)
+            self.assertEqual(summary.table_log_records[0]["table_type"], "skipped_first_table")
+            self.assertEqual(summary.table_log_records[1]["table_type"], "color_only_table")
+            self.assertEqual(summary.table_log_records[1]["action"], "apply_color_only")
+            self.assertEqual(
+                summary.table_log_records[1]["reason"],
+                "fix_table_layout disabled but fix_color enabled",
+            )
+
+    def test_table_name_uses_nearest_non_empty_paragraph_before_table(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("   "))
+        body.append(make_table([5, 5]))
+        long_title = "表格名稱 " + ("很長的說明" * 30)
+        body.append(make_paragraph(long_title))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(False, True, False, False, normalize_with_word_com=False),
+            )
+
+            self.assertEqual(summary.table_log_records[1]["table_name"], "第一張表格")
+            self.assertTrue(str(summary.table_log_records[2]["table_name"]).startswith("表格名稱"))
+            self.assertTrue(str(summary.table_log_records[2]["table_name"]).endswith("..."))
 
 
 if __name__ == "__main__":

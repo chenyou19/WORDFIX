@@ -47,6 +47,7 @@ class ProcessSummary:
     numbering_debug_logs: list[str] = field(default_factory=list)
     body_indent_debug_logs: list[str] = field(default_factory=list)
     body_indent_records: list[dict[str, object]] = field(default_factory=list)
+    table_log_records: list[dict[str, object]] = field(default_factory=list)
     word_com_body_indent_logs: list[str] = field(default_factory=list)
     character_indent_attrs_removed: int = 0
 

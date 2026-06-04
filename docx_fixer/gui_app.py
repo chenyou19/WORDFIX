@@ -24,7 +24,7 @@ from .indent_settings import (
 )
 from .models import ProcessOptions
 from .path_utils import is_same_file_path
-from .process_log import write_process_log
+from .process_log import write_process_log, write_table_log_file
 from .stop_controller import StopController
 
 DEFAULT_WINDOW_GEOMETRY = "1080x760"
@@ -547,12 +547,17 @@ class DocxFixerApp:
                 ))
 
             log_path = None
+            table_log_path = None
             try:
                 log_path = write_process_log(final_output, summary)
             except Exception as exc:
                 self.ui_queue.put(("warning", f"處理紀錄檔寫入失敗：{exc}"))
+            try:
+                table_log_path = write_table_log_file(final_output, summary)
+            except Exception as exc:
+                self.ui_queue.put(("warning", f"表格紀錄檔寫入失敗：{exc}"))
 
-            self.ui_queue.put(("done", final_output, summary, log_path))
+            self.ui_queue.put(("done", final_output, summary, log_path, table_log_path))
 
         except ProcessStopped:
             try:
@@ -600,13 +605,13 @@ class DocxFixerApp:
                     self.append_log("提醒：" + message)
 
                 elif kind == "done":
-                    _, output_path, summary, log_path = item
+                    _, output_path, summary, log_path, table_log_path = item
                     self.current_temp_output = None
                     self.stop_progress_animation(100)
                     self.status_var.set("完成！")
                     self.append_log("完成！")
                     self.append_log(f"已處理表格數：{summary.tables}")
-                    self.append_log(f"跳過第 1 頁的表格數：{summary.skipped_first_page_tables}")
+                    self.append_log(f"跳過第一張表格數：{summary.skipped_first_page_tables}")
                     self.append_log(f"因格子數小於等於 4 而跳過的表格數：{summary.skipped_small_tables}")
                     self.append_log(f"偵測到跨頁的表格數：{summary.cross_page_tables}")
                     self.append_log(f"成功調整後不再跨頁的表格數：{summary.cross_page_resolved_tables}")
@@ -635,6 +640,8 @@ class DocxFixerApp:
                     self.append_log(f"輸出檔案：{output_path}")
                     if log_path is not None:
                         self.append_log(f"處理紀錄檔：{log_path}")
+                    if table_log_path is not None:
+                        self.append_log(f"表格紀錄檔：{table_log_path}")
                     self.set_running_state(False)
                     messagebox.showinfo("完成", f"修改完成！\n\n輸出檔案：\n{output_path}")
 

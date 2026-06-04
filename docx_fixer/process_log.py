@@ -11,10 +11,15 @@ def get_process_log_path(output_docx: str | Path) -> Path:
     return output_path.with_name(f"{output_path.stem}_log.txt")
 
 
+def get_table_log_path(output_docx: str | Path) -> Path:
+    output_path = Path(output_docx)
+    return output_path.with_name(f"{output_path.stem}_table_log.txt")
+
+
 def format_numbering_indent_log_lines(summary: ProcessSummary) -> list[str]:
-    lines = ["實際編號格式量測紀錄："]
+    lines = ["編號縮排量測紀錄："]
     if not summary.numbering_measurements:
-        lines.append("沒有量測到可見的手動編號格式。")
+        lines.append("沒有編號縮排量測資料。")
         return lines
 
     records = sorted(
@@ -34,11 +39,11 @@ def format_numbering_indent_log_lines(summary: ProcessSummary) -> list[str]:
 
         lines.append(
             f"第 {int(record['level']) + 1} 階 {record['prefix']}："
-            f"文字起點 {format_cm(float(record['text_start_cm']))} cm；"
-            f"編號起點 {format_cm(float(record['number_start_cm']))} cm；"
-            f"編號大小 {format_cm(float(record['number_size_cm']))} cm；"
-            f"字型 {record['font_name']} {format_cm(float(record['font_size_pt']))} pt；"
-            f"量測次數 {record['count']}"
+            f"文字起點 {format_cm(float(record['text_start_cm']))} cm，"
+            f"編號起點 {format_cm(float(record['number_start_cm']))} cm，"
+            f"編號寬度 {format_cm(float(record['number_size_cm']))} cm，"
+            f"字型 {record['font_name']} {format_cm(float(record['font_size_pt']))} pt，"
+            f"樣本數 {record['count']}"
         )
 
     return lines
@@ -95,41 +100,82 @@ def format_word_com_body_indent_log_lines(summary: ProcessSummary) -> list[str]:
     return lines
 
 
+def _bool_text(value: object) -> str:
+    return "true" if bool(value) else "false"
+
+
+def format_table_log_lines(summary: ProcessSummary) -> list[str]:
+    lines = ["表格處理紀錄："]
+    if not summary.table_log_records:
+        lines.append("沒有表格紀錄。")
+        return lines
+
+    for index, record in enumerate(summary.table_log_records, start=1):
+        lines.extend(
+            [
+                f"===== Table {index} =====",
+                f"part_name: {record['part_name']}",
+                f"table_index: {record['table_index']}",
+                f"global_table_index: {record['global_table_index']}",
+                f"table_name: {record['table_name']}",
+                f"cell_count: {record['cell_count']}",
+                f"column_count: {record['column_count']}",
+                f"table_type: {record['table_type']}",
+                f"action: {record['action']}",
+                f"reason: {record['reason']}",
+                f"special_layout_used: {_bool_text(record['special_layout_used'])}",
+                f"layout_fixed: {_bool_text(record['layout_fixed'])}",
+                f"color_fixed: {_bool_text(record['color_fixed'])}",
+                f"changed_to_gray: {record['changed_to_gray']}",
+                f"cleared_colors: {record['cleared_colors']}",
+                "",
+            ]
+        )
+
+    return lines[:-1] if lines and lines[-1] == "" else lines
+
+
+def write_table_log_file(output_docx: str | Path, summary: ProcessSummary) -> Path:
+    log_path = get_table_log_path(output_docx)
+    log_path.write_text("\n".join(format_table_log_lines(summary)) + "\n", encoding="utf-8")
+    return log_path
+
+
 def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
     log_path = get_process_log_path(output_docx)
     lines = [
         "Word DOCX 快速整理工具處理紀錄",
         f"輸出檔案：{Path(output_docx)}",
         "",
-        "表格處理摘要",
-        f"總表格數：{summary.tables}",
-        f"跳過第 1 頁的表格數：{summary.skipped_first_page_tables}",
+        "表格摘要：",
+        f"表格總數：{summary.tables}",
+        f"跳過第一張表格數：{summary.skipped_first_page_tables}",
         f"因格子數小於等於 4 而跳過的表格數：{summary.skipped_small_tables}",
-        f"偵測到跨頁的表格數：{summary.cross_page_tables}",
-        f"成功調整後不再跨頁的表格數：{summary.cross_page_resolved_tables}",
-        f"調整後仍跨頁的表格數：{summary.cross_page_still_split_tables}",
-        f"儲存格內距被調整的表格數：{summary.adjusted_cell_padding_tables}",
-        f"行距或段距被調整的表格數：{summary.adjusted_table_spacing_tables}",
-        f"列高改為自動高度的表格數：{summary.auto_height_tables}",
-        f"移到下一頁後成功不跨頁的表格數：{summary.moved_next_page_resolved_tables}",
-        f"不縮小字體下無法完全避免跨頁的表格數：{summary.cannot_avoid_cross_page_tables}",
-        f"處理失敗但已略過的表格數：{summary.failed_cross_page_tables}",
-        f"套用「內容大小＋靠右對齊」的表格數：{summary.special_autofit_right_tables}",
-        f"其他正常處理的表格數：{summary.normal_processed_tables}",
+        f"跨頁表格數：{summary.cross_page_tables}",
+        f"跨頁已解決的表格數：{summary.cross_page_resolved_tables}",
+        f"跨頁未解決的表格數：{summary.cross_page_still_split_tables}",
+        f"調整儲存格 padding 的表格數：{summary.adjusted_cell_padding_tables}",
+        f"調整表格段落間距的表格數：{summary.adjusted_table_spacing_tables}",
+        f"改成自動列高的表格數：{summary.auto_height_tables}",
+        f"移到下一頁後解決跨頁的表格數：{summary.moved_next_page_resolved_tables}",
+        f"無法避免跨頁的表格數：{summary.cannot_avoid_cross_page_tables}",
+        f"跨頁處理失敗的表格數：{summary.failed_cross_page_tables}",
+        f"套用特殊版面表格數：{summary.special_autofit_right_tables}",
+        f"一般表格處理數：{summary.normal_processed_tables}",
         "",
-        "編號段落處理摘要",
-        f"總段落數：{summary.total_paragraphs}",
+        "段落摘要：",
+        f"段落總數：{summary.total_paragraphs}",
         f"跳過目錄段落數：{summary.skipped_toc_paragraphs}",
         f"跳過表格段落數：{summary.skipped_table_paragraphs}",
-        f"移除全文件既有大綱階層的段落數：{summary.removed_all_outline_paragraphs}",
-        f"套用壹、序言前縮排的段落數：{summary.indented_preface_paragraphs}",
-        f"套用壹、序言前大綱階層的段落數：{summary.outlined_preface_paragraphs}",
+        f"移除大綱層級的段落數：{summary.removed_all_outline_paragraphs}",
+        f"套用前言縮排的段落數：{summary.indented_preface_paragraphs}",
+        f"套用前言大綱的段落數：{summary.outlined_preface_paragraphs}",
         f"移除字元縮排屬性數：{summary.character_indent_attrs_removed}",
         *[
-            f"成功套用第 {level} 階數量：{count}"
+            f"第 {level} 階段落數：{count}"
             for level, count in enumerate(summary.paragraph_level_counts, start=1)
         ],
-        f"無法判斷而跳過的段落數：{summary.unknown_paragraphs}",
+        f"未分類段落數：{summary.unknown_paragraphs}",
         "",
         *format_indent_settings_log_lines(),
         "",
@@ -141,13 +187,13 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         "",
         *format_word_com_body_indent_log_lines(summary),
         "",
-        "段落大綱階層修改紀錄：",
+        "段落變更紀錄：",
     ]
 
     if summary.paragraph_logs:
         lines.extend(summary.paragraph_logs)
     else:
-        lines.append("沒有段落大綱階層修改紀錄。")
+        lines.append("沒有段落變更紀錄。")
 
     log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return log_path

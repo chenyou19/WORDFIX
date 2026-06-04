@@ -8,15 +8,18 @@ from docx_fixer.models import ProcessSummary
 from docx_fixer.process_log import (
     format_indent_settings_log_lines,
     format_numbering_indent_log_lines,
+    format_table_log_lines,
+    get_table_log_path,
     write_process_log,
+    write_table_log_file,
 )
 
 
 class ProcessLogTests(unittest.TestCase):
     def test_numbering_indent_lines_include_text_start_number_start_and_size(self):
         summary = ProcessSummary()
-        summary.numbering_measurements["壹、序言後:1:一、"] = {
-            "section": "壹、序言後",
+        summary.numbering_measurements["body:1:一、"] = {
+            "section": "本文",
             "level": 1,
             "indent_level": 1,
             "prefix": "一、",
@@ -30,12 +33,12 @@ class ProcessLogTests(unittest.TestCase):
 
         lines = format_numbering_indent_log_lines(summary)
 
-        self.assertIn("實際編號格式量測紀錄：", lines)
-        self.assertIn("壹、序言後：", lines)
+        self.assertIn("編號縮排量測紀錄：", lines)
+        self.assertIn("本文：", lines)
         self.assertTrue(any("一、" in line and "文字起點" in line for line in lines))
         self.assertTrue(any("編號起點" in line for line in lines))
-        self.assertTrue(any("編號大小" in line for line in lines))
-        self.assertTrue(any("量測次數 2" in line for line in lines))
+        self.assertTrue(any("編號寬度" in line for line in lines))
+        self.assertTrue(any("樣本數 2" in line for line in lines))
 
     def test_process_log_writes_numbering_indent_section(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -44,9 +47,8 @@ class ProcessLogTests(unittest.TestCase):
 
             content = log_path.read_text(encoding="utf-8")
 
-        self.assertIn("實際編號格式量測紀錄：", content)
-        self.assertIn("沒有量測到可見的手動編號格式。", content)
-
+        self.assertIn("編號縮排量測紀錄：", content)
+        self.assertIn("沒有編號縮排量測資料。", content)
 
     def test_indent_settings_snapshot_includes_level_two_body_left(self):
         lines = format_indent_settings_log_lines()
@@ -65,6 +67,47 @@ class ProcessLogTests(unittest.TestCase):
 
         self.assertIn("Word COM body indent fix:", content)
         self.assertIn("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=no_records", content)
+
+    def test_table_log_path_uses_output_docx_stem(self):
+        output_docx = Path("D:/tmp/sample_fixed.docx")
+        self.assertEqual(get_table_log_path(output_docx).name, "sample_fixed_table_log.txt")
+
+    def test_table_log_file_writes_structured_table_records(self):
+        summary = ProcessSummary()
+        summary.table_log_records.append(
+            {
+                "part_name": "word/document.xml",
+                "table_index": 1,
+                "global_table_index": 1,
+                "table_name": "壹、估價條件",
+                "cell_count": 24,
+                "column_count": 4,
+                "table_type": "skipped_first_table",
+                "action": "skipped",
+                "reason": "first table in word/document.xml",
+                "special_layout_used": False,
+                "layout_fixed": False,
+                "color_fixed": False,
+                "changed_to_gray": 0,
+                "cleared_colors": 0,
+            }
+        )
+
+        lines = format_table_log_lines(summary)
+        self.assertIn("表格處理紀錄：", lines)
+        self.assertIn("===== Table 1 =====", lines)
+        self.assertIn("table_name: 壹、估價條件", lines)
+        self.assertIn("table_type: skipped_first_table", lines)
+        self.assertIn("special_layout_used: false", lines)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_docx = Path(tmp) / "sample_fixed.docx"
+            table_log_path = write_table_log_file(output_docx, summary)
+            content = table_log_path.read_text(encoding="utf-8")
+
+        self.assertEqual(table_log_path.name, "sample_fixed_table_log.txt")
+        self.assertIn("===== Table 1 =====", content)
+        self.assertIn("reason: first table in word/document.xml", content)
 
 
 if __name__ == "__main__":

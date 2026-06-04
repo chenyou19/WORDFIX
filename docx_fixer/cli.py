@@ -6,7 +6,7 @@ from .constants import DEFAULT_GRAY
 from .docx_processor import fix_docx_fast
 from .indent_settings import load_saved_indent_settings
 from .models import ProcessOptions
-from .process_log import write_process_log
+from .process_log import write_process_log, write_table_log_file
 from .stop_controller import StopController
 
 
@@ -84,7 +84,9 @@ def run_cli(args) -> int:
     print(f"未分類段落數：{summary.unknown_paragraphs}")
     print(f"輸出檔案：{args.output_docx}")
     log_path = write_process_log(args.output_docx, summary)
+    table_log_path = write_table_log_file(args.output_docx, summary)
     print(f"處理紀錄：{log_path}")
+    print(f"表格紀錄：{table_log_path}")
     return 0
 
 
