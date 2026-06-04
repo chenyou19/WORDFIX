@@ -605,5 +605,81 @@ class TableFormatTests(unittest.TestCase):
             self.assertTrue(str(summary.table_log_records[2]["table_name"]).endswith("..."))
 
 
+    def test_table_log_records_first_level_heading_for_manual_chapters(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("前言"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("壹、比較標的資料"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("貳、小表格"))
+        body.append(make_table([3, 2]))
+        body.append(make_paragraph("參、一般表格"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(True, False, False, False, normalize_with_word_com=False),
+            )
+
+            headings = [record["first_level_heading"] for record in summary.table_log_records]
+            self.assertEqual(headings, ["(none)", "壹、", "貳、", "參、"])
+
+    def test_table_log_records_first_level_heading_for_auto_chapter_three(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("序言", num_id="1", ilvl=0))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("第二章", num_id="1", ilvl=0))
+        body.append(make_paragraph("第三章", num_id="1", ilvl=0))
+        body.append(make_table([3, 3]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+                zout.writestr("word/numbering.xml", make_legal_traditional_numbering_xml("1"))
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    True,
+                    False,
+                    False,
+                    False,
+                    normalize_with_word_com=False,
+                    skip_special_table_layout_under_chapter_three=True,
+                ),
+            )
+
+            self.assertEqual(summary.table_log_records[0]["first_level_heading"], "壹、")
+            self.assertEqual(summary.table_log_records[1]["first_level_heading"], "參、")
+
+
 if __name__ == "__main__":
     unittest.main()

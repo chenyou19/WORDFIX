@@ -297,6 +297,21 @@ def is_table_under_chapter_three(
     numbering_format_lookup,
     style_numbering_lookup,
 ) -> bool:
+    heading = find_table_first_level_heading(
+        tbl,
+        numbering_level_lookup,
+        numbering_format_lookup,
+        style_numbering_lookup,
+    )
+    return heading == "參、"
+
+
+def find_table_first_level_heading(
+    tbl,
+    numbering_level_lookup,
+    numbering_format_lookup,
+    style_numbering_lookup,
+) -> str | None:
     paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
     for p in reversed(paragraphs):
         prefix = _first_level_heading_prefix_for_paragraph(
@@ -306,8 +321,8 @@ def is_table_under_chapter_three(
             style_numbering_lookup=style_numbering_lookup,
         )
         if prefix is not None:
-            return prefix == "參、"
-    return False
+            return prefix
+    return None
 
 
 def build_table_log_record(
@@ -316,6 +331,7 @@ def build_table_log_record(
     table_index: int,
     global_table_index: int,
     table_name: str,
+    first_level_heading: str,
     cell_count: int,
     column_count: int,
     table_type: str,
@@ -333,6 +349,7 @@ def build_table_log_record(
         "table_index": table_index,
         "global_table_index": global_table_index,
         "table_name": table_name,
+        "first_level_heading": first_level_heading,
         "cell_count": cell_count,
         "column_count": column_count,
         "table_type": table_type,
@@ -1586,6 +1603,17 @@ def fix_docx_fast(
                         cell_count = table_cell_count(tbl)
                         column_count = table_column_count(tbl)
                         table_name = find_previous_paragraph_text_for_table(root, tbl)
+                        first_level_heading = "(none)"
+                        if item.filename == "word/document.xml":
+                            first_level_heading = (
+                                find_table_first_level_heading(
+                                    tbl,
+                                    numbering_level_lookup,
+                                    numbering_format_lookup,
+                                    style_numbering_lookup,
+                                )
+                                or "(none)"
+                            )
 
                         if item.filename == "word/document.xml" and table_index == 1:
                             summary.skipped_first_page_tables += 1
@@ -1595,6 +1623,7 @@ def fix_docx_fast(
                                     table_index=table_index,
                                     global_table_index=global_table_index,
                                     table_name=table_name,
+                                    first_level_heading=first_level_heading,
                                     cell_count=cell_count,
                                     column_count=column_count,
                                     table_type="skipped_first_table",
@@ -1617,6 +1646,7 @@ def fix_docx_fast(
                                     table_index=table_index,
                                     global_table_index=global_table_index,
                                     table_name=table_name,
+                                    first_level_heading=first_level_heading,
                                     cell_count=cell_count,
                                     column_count=column_count,
                                     table_type="skipped_small_table",
@@ -1703,6 +1733,7 @@ def fix_docx_fast(
                                 table_index=table_index,
                                 global_table_index=global_table_index,
                                 table_name=table_name,
+                                first_level_heading=first_level_heading,
                                 cell_count=cell_count,
                                 column_count=column_count,
                                 table_type=table_type,

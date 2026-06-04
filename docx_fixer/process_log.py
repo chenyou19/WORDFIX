@@ -118,6 +118,7 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"table_index: {record['table_index']}",
                 f"global_table_index: {record['global_table_index']}",
                 f"table_name: {record['table_name']}",
+                f"first_level_heading: {record.get('first_level_heading', '(none)')}",
                 f"cell_count: {record['cell_count']}",
                 f"column_count: {record['column_count']}",
                 f"table_type: {record['table_type']}",

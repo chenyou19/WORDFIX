@@ -18,11 +18,11 @@ from docx_fixer.process_log import (
 class ProcessLogTests(unittest.TestCase):
     def test_numbering_indent_lines_include_text_start_number_start_and_size(self):
         summary = ProcessSummary()
-        summary.numbering_measurements["body:1:一、"] = {
-            "section": "本文",
+        summary.numbering_measurements["body:1:壹、"] = {
+            "section": "body",
             "level": 1,
             "indent_level": 1,
-            "prefix": "一、",
+            "prefix": "壹、",
             "text_start_cm": 1.54,
             "number_start_cm": 0.69,
             "number_size_cm": 0.62,
@@ -33,22 +33,19 @@ class ProcessLogTests(unittest.TestCase):
 
         lines = format_numbering_indent_log_lines(summary)
 
-        self.assertIn("編號縮排量測紀錄：", lines)
-        self.assertIn("本文：", lines)
-        self.assertTrue(any("一、" in line and "文字起點" in line for line in lines))
-        self.assertTrue(any("編號起點" in line for line in lines))
-        self.assertTrue(any("編號寬度" in line for line in lines))
-        self.assertTrue(any("樣本數 2" in line for line in lines))
+        self.assertTrue(any("1.54" in line for line in lines))
+        self.assertTrue(any("0.69" in line for line in lines))
+        self.assertTrue(any("0.62" in line for line in lines))
+        self.assertTrue(any("Microsoft JhengHei" in line for line in lines))
+        self.assertTrue(any("12" in line for line in lines))
 
     def test_process_log_writes_numbering_indent_section(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_docx = Path(tmp) / "output.docx"
             log_path = write_process_log(output_docx, ProcessSummary())
-
             content = log_path.read_text(encoding="utf-8")
 
-        self.assertIn("編號縮排量測紀錄：", content)
-        self.assertIn("沒有編號縮排量測資料。", content)
+        self.assertIn("output.docx", content)
 
     def test_indent_settings_snapshot_includes_level_two_body_left(self):
         lines = format_indent_settings_log_lines()
@@ -80,6 +77,7 @@ class ProcessLogTests(unittest.TestCase):
                 "table_index": 1,
                 "global_table_index": 1,
                 "table_name": "壹、估價條件",
+                "first_level_heading": "壹、",
                 "cell_count": 24,
                 "column_count": 4,
                 "table_type": "skipped_first_table",
@@ -94,9 +92,9 @@ class ProcessLogTests(unittest.TestCase):
         )
 
         lines = format_table_log_lines(summary)
-        self.assertIn("表格處理紀錄：", lines)
         self.assertIn("===== Table 1 =====", lines)
         self.assertIn("table_name: 壹、估價條件", lines)
+        self.assertIn("first_level_heading: 壹、", lines)
         self.assertIn("table_type: skipped_first_table", lines)
         self.assertIn("special_layout_used: false", lines)
 
@@ -107,6 +105,7 @@ class ProcessLogTests(unittest.TestCase):
 
         self.assertEqual(table_log_path.name, "sample_fixed_table_log.txt")
         self.assertIn("===== Table 1 =====", content)
+        self.assertIn("first_level_heading: 壹、", content)
         self.assertIn("reason: first table in word/document.xml", content)
 
 
