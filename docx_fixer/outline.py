@@ -1009,6 +1009,7 @@ def append_body_indent_record(
         {
             "paragraph_index": paragraph_index,
             "text_preview": summarize_paragraph_text(text, 80),
+            "text_match_prefix": text_match_prefix(text),
             "kind": "body",
             "heading_level": heading_level,
             "level": heading_level,
@@ -1059,6 +1060,7 @@ def append_body_font_check_record(
         {
             "paragraph_index": paragraph_index,
             "text_preview": summarize_paragraph_text(text, 80),
+            "text_match_prefix": text_match_prefix(text),
             "kind": "body_font_check",
             "heading_level": heading_level,
             "level": heading_level,
@@ -1109,6 +1111,7 @@ def append_heading_indent_record(
         {
             "paragraph_index": paragraph_index,
             "text_preview": summarize_paragraph_text(text, 80),
+            "text_match_prefix": text_match_prefix(text),
             "kind": kind,
             "heading_level": level,
             "level": level,
@@ -1210,6 +1213,10 @@ def summarize_paragraph_text(text: str, limit: int = 80) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[:limit - 3] + "..."
+
+
+def text_match_prefix(text: str, limit: int = 120) -> str:
+    return " ".join((text or "").split())[:limit]
 
 
 def append_paragraph_change_log(

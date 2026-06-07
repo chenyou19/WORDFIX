@@ -37,7 +37,7 @@ from .table_format import process_table, table_cell_count, table_column_count
 from .xml_utils import paragraph_text, qn, remove_character_indent_attrs_from_root
 
 POINTS_PER_CM = 28.3464567
-WORD_COM_TIMEOUT_SECONDS = 120
+WORD_COM_TIMEOUT_SECONDS = 600
 WORD_COM_TEMP_DIR_NAME = "wfix"
 
 
@@ -644,6 +644,8 @@ def normalize_word_paragraph_text(text: str) -> str:
 def paragraph_text_matches_preview(actual_text: str, preview: str) -> bool:
     normalized_actual = normalize_word_paragraph_text(actual_text)
     normalized_preview = normalize_word_paragraph_text(preview)
+    if normalized_preview.endswith("..."):
+        normalized_preview = normalized_preview[:-3].rstrip()
     if not normalized_preview:
         return False
     return normalized_actual.startswith(normalized_preview)
@@ -651,7 +653,7 @@ def paragraph_text_matches_preview(actual_text: str, preview: str) -> bool:
 
 def find_word_paragraph_index_for_record(paragraph_texts: list[str], record: dict[str, object]) -> int | None:
     target_index = int(record.get("paragraph_index") or 0)
-    preview = str(record.get("text_preview") or "")
+    preview = str(record.get("text_match_prefix") or record.get("text_preview") or "")
 
     if 1 <= target_index <= len(paragraph_texts):
         if paragraph_text_matches_preview(paragraph_texts[target_index - 1], preview):
@@ -991,6 +993,148 @@ def _collect_word_com_powershell_logs(stdout: str, result_path: Path) -> list[st
     return []
 
 
+def _parse_word_com_approved_records(script_logs: list[str]) -> list[dict[str, object]]:
+    approved_records: list[dict[str, object]] = []
+    prefix = "WORD_COM_APPROVED_RECORD_JSON "
+    for log in script_logs:
+        if not log.startswith(prefix):
+            continue
+        try:
+            payload = json.loads(log[len(prefix) :])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            approved_records.append(payload)
+    return approved_records
+
+
+def _get_or_add_paragraph_properties(p):
+    p_pr = p.find("w:pPr", NS)
+    if p_pr is None:
+        p_pr = etree.Element(qn("pPr"))
+        p.insert(0, p_pr)
+    return p_pr
+
+
+def _get_or_add_indent(p_pr):
+    ind = p_pr.find("w:ind", NS)
+    if ind is None:
+        ind = etree.Element(qn("ind"))
+        p_pr.append(ind)
+    return ind
+
+
+def _apply_body_indent_record_to_paragraph(p, record: dict[str, object]) -> str:
+    expected_left_twips = record.get("expected_left_twips")
+    if expected_left_twips is None or str(expected_left_twips).strip() == "":
+        return "skipped_missing_expected_left_twips"
+
+    match_prefix = str(record.get("text_match_prefix") or "")
+    if match_prefix and not paragraph_text_matches_preview(paragraph_text(p), match_prefix):
+        return "skipped_text_mismatch"
+
+    p_pr = _get_or_add_paragraph_properties(p)
+    tabs = p_pr.find("w:tabs", NS)
+    if tabs is not None:
+        p_pr.remove(tabs)
+
+    ind = _get_or_add_indent(p_pr)
+    for attr in (
+        "left",
+        "start",
+        "right",
+        "end",
+        "firstLine",
+        "hanging",
+        "leftChars",
+        "startChars",
+        "rightChars",
+        "endChars",
+        "firstLineChars",
+        "hangingChars",
+    ):
+        ind.attrib.pop(qn(attr), None)
+
+    ind.set(qn("left"), str(expected_left_twips))
+    expected_first_line_twips = record.get("expected_first_line_twips")
+    if expected_first_line_twips is not None and str(expected_first_line_twips).strip():
+        ind.set(qn("firstLine"), str(expected_first_line_twips))
+    return "applied"
+
+
+def apply_word_com_approved_body_indents_to_docx_xml(
+    output_docx: Path,
+    approved_records: list[dict[str, object]],
+) -> list[str]:
+    logs = [
+        f"WORD_COM_XML_APPLY_STARTED approved_records={len(approved_records)}",
+    ]
+    if not approved_records:
+        logs.append("WORD_COM_XML_APPLY_SKIPPED reason=no_approved_records")
+        return logs
+
+    applied = 0
+    skipped = 0
+    errors = 0
+    temp_docx = output_docx.with_suffix(output_docx.suffix + ".word_com_xml.tmp")
+
+    try:
+        with ZipFile(output_docx, "r") as zin, ZipFile(temp_docx, "w", ZIP_DEFLATED) as zout:
+            document_root = etree.fromstring(zin.read("word/document.xml"))
+            paragraphs = document_root.xpath(".//w:p", namespaces=NS)
+
+            for record in approved_records:
+                try:
+                    paragraph_index = int(record.get("paragraph_index") or 0)
+                    if paragraph_index < 1 or paragraph_index > len(paragraphs):
+                        status = "skipped_index_out_of_range"
+                        skipped += 1
+                    else:
+                        status = _apply_body_indent_record_to_paragraph(paragraphs[paragraph_index - 1], record)
+                        if status == "applied":
+                            applied += 1
+                        else:
+                            skipped += 1
+                    logs.append(
+                        f"WORD_COM_XML_APPLY_RECORD paragraph_index={record.get('paragraph_index')} status={status}"
+                    )
+                except Exception as exc:
+                    errors += 1
+                    logs.append(
+                        "WORD_COM_XML_APPLY_RECORD "
+                        f"paragraph_index={record.get('paragraph_index')} "
+                        f"status=error type={type(exc).__name__} message={exc}"
+                    )
+
+            document_xml = etree.tostring(
+                document_root,
+                xml_declaration=True,
+                encoding="UTF-8",
+                standalone=True,
+            )
+
+            for item in zin.infolist():
+                if item.filename == "word/document.xml":
+                    zout.writestr(item, document_xml)
+                else:
+                    zout.writestr(item, zin.read(item.filename))
+
+        shutil.move(_long_path_compatible_str(temp_docx), _long_path_compatible_str(output_docx))
+    except Exception as exc:
+        errors += 1
+        logs.append(f"WORD_COM_XML_APPLY_FAILED type={type(exc).__name__} message={exc}")
+    finally:
+        try:
+            temp_docx.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+    logs.append(f"WORD_COM_XML_APPLY_DONE applied={applied} skipped={skipped} errors={errors}")
+    return logs
+
+
 def _word_com_temp_root() -> Path:
     root = Path(tempfile.gettempdir()) / WORD_COM_TEMP_DIR_NAME
     root.mkdir(parents=True, exist_ok=True)
@@ -1028,6 +1172,11 @@ def _build_word_com_body_indent_powershell_script_file() -> str:
     [Parameter(Mandatory = $true)][string]$ResultPath
 )
 
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+[Console]::InputEncoding = $utf8NoBom
+
 $ErrorActionPreference = 'Stop'
 $pointPerCm = {POINTS_PER_CM}
 $word = $null
@@ -1036,11 +1185,12 @@ $processed = 0
 $ok = 0
 $mismatch = 0
 $notFound = 0
+$approved = 0
+$skippedNot14 = 0
 $errors = 0
 
 function Add-Log([string]$msg) {{
     Add-Content -LiteralPath $ResultPath -Encoding UTF8 -Value $msg
-    Write-Output $msg
 }}
 
 function Test-CodexStop {{
@@ -1058,6 +1208,10 @@ function Normalize-WordParagraphText([string]$text) {{
 function Paragraph-TextMatchesPreview([string]$actual, [string]$preview) {{
     $normalizedActual = Normalize-WordParagraphText $actual
     $normalizedPreview = Normalize-WordParagraphText $preview
+    if ([string]::IsNullOrWhiteSpace($normalizedPreview)) {{ return $false }}
+    if ($normalizedPreview.EndsWith('...')) {{
+        $normalizedPreview = $normalizedPreview.Substring(0, $normalizedPreview.Length - 3).TrimEnd()
+    }}
     if ([string]::IsNullOrWhiteSpace($normalizedPreview)) {{ return $false }}
     return $normalizedActual.StartsWith($normalizedPreview)
 }}
@@ -1146,9 +1300,27 @@ function Get-ParagraphFontSizes($paragraph) {{
     return @($rangeSize, $dominantSize)
 }}
 
+function Find-MatchingParagraphInWindow($doc, [int]$start, [int]$end, [string]$matchPrefix, [int]$recordIndex, [string]$source) {{
+    Add-Log(("WORD_COM_LOCAL_SCAN_BEGIN record={{0}} source={{1}} start={{2}} end={{3}}" -f $recordIndex, $source, $start, $end)) | Out-Null
+    for ($j = $start; $j -le $end; $j++) {{
+        if (Test-CodexStop) {{ throw 'STOPPED_BY_USER' }}
+
+        if (($j - $start) % 100 -eq 0) {{
+            Add-Log(("WORD_COM_LOCAL_SCAN_PROGRESS record={{0}} source={{1}} current={{2}} start={{3}} end={{4}}" -f $recordIndex, $source, $j, $start, $end)) | Out-Null
+        }}
+
+        $candidateText = [string]$doc.Paragraphs.Item($j).Range.Text
+        if (Paragraph-TextMatchesPreview $candidateText $matchPrefix) {{
+            return [int]$j
+        }}
+    }}
+    return $null
+}}
+
 try {{
     Set-Content -LiteralPath $ResultPath -Encoding UTF8 -Value ''
     Add-Log 'WORD_COM_PS_STARTED'
+    Add-Log 'WORD_COM_FONT_CHECK_ONLY_STARTED'
     Add-Log ('DOCX_PATH=' + $DocxPath)
     Add-Log ('RECORDS_PATH=' + $RecordsPath)
 
@@ -1178,13 +1350,11 @@ try {{
     $doc = $word.Documents.Open($DocxPath, $false, $false, $false)
     Add-Log 'WORD_COM_PS_DOC_OPENED'
     Add-Log 'WORD_COM_PS_BEFORE_LOOP'
-    Add-Log ('WORD_COM_PS_PARAGRAPHS_COUNT count=' + $doc.Paragraphs.Count)
-
-    $paragraphs = New-Object System.Collections.Generic.List[string]
-    for ($i = 1; $i -le $doc.Paragraphs.Count; $i++) {{
-        if (Test-CodexStop) {{ throw 'STOPPED_BY_USER' }}
-        $paragraphs.Add([string]$doc.Paragraphs.Item($i).Range.Text)
-    }}
+    $paragraphCount = $doc.Paragraphs.Count
+    Add-Log ('WORD_COM_PS_PARAGRAPHS_COUNT count=' + $paragraphCount)
+    Add-Log ('WORD_COM_PS_RECORD_LOOP_BEGIN count=' + $records.Count)
+    $paragraphIndexOffset = $null
+    $lastMatchedWordIndex = $null
 
     foreach ($record in $records) {{
         try {{
@@ -1194,6 +1364,10 @@ try {{
             $targetIndex = 0
             try {{ $targetIndex = [int]$record.paragraph_index }} catch {{}}
             $preview = [string]$record.text_preview
+            $matchPrefix = [string]$record.text_match_prefix
+            if ([string]::IsNullOrWhiteSpace($matchPrefix)) {{
+                $matchPrefix = $preview
+            }}
             $kind = [string]$record.kind
             if ([string]::IsNullOrWhiteSpace($kind)) {{ $kind = 'body' }}
             $expectedLeftCm = Get-RecordDouble $record 'expected_left_cm' 0
@@ -1203,18 +1377,82 @@ try {{
             $applyOnlyIfWordFontSizeIs14 = $false
             try {{ $applyOnlyIfWordFontSizeIs14 = [bool]$record.apply_only_if_word_font_size_is_14 }} catch {{}}
             Add-Log(("WORD_COM_RECORD_BEGIN i={{0}} paragraph_index={{1}} expected_left_cm={{2}} text={{3}}" -f $processed, $record.paragraph_index, $record.expected_left_cm, $preview))
+            Add-Log(("WORD_COM_RECORD_MATCH_PREFIX i={{0}} length={{1}} preview_has_ellipsis={{2}}" -f $processed, $matchPrefix.Length, $preview.EndsWith('...')))
 
             $matchIndex = $null
-            if ($targetIndex -ge 1 -and $targetIndex -le $paragraphs.Count) {{
-                if (Paragraph-TextMatchesPreview $paragraphs[$targetIndex - 1] $preview) {{
+            $matchSource = $null
+            if ($targetIndex -ge 1 -and $targetIndex -le $paragraphCount) {{
+                Add-Log(("WORD_COM_RECORD_TRY_DIRECT i={{0}} word_index={{1}}" -f $processed, $targetIndex))
+                $candidateText = [string]$doc.Paragraphs.Item($targetIndex).Range.Text
+                if (Paragraph-TextMatchesPreview $candidateText $matchPrefix) {{
                     $matchIndex = $targetIndex
+                    $matchSource = 'direct'
+                    Add-Log(("WORD_COM_RECORD_DIRECT_MATCHED i={{0}} word_index={{1}}" -f $processed, $matchIndex))
+                }}
+            }}
+
+            if ($null -eq $matchIndex -and $null -ne $paragraphIndexOffset) {{
+                $offsetIndex = $targetIndex + [int]$paragraphIndexOffset
+                if ($offsetIndex -ge 1 -and $offsetIndex -le $paragraphCount) {{
+                    Add-Log(("WORD_COM_RECORD_TRY_OFFSET i={{0}} word_index={{1}} offset={{2}}" -f $processed, $offsetIndex, $paragraphIndexOffset))
+                    $candidateText = [string]$doc.Paragraphs.Item($offsetIndex).Range.Text
+                    if (Paragraph-TextMatchesPreview $candidateText $matchPrefix) {{
+                        $matchIndex = $offsetIndex
+                        $matchSource = 'offset'
+                        Add-Log(("WORD_COM_RECORD_OFFSET_MATCHED i={{0}} word_index={{1}} offset={{2}}" -f $processed, $matchIndex, $paragraphIndexOffset))
+                    }}
                 }}
             }}
 
             if ($null -eq $matchIndex) {{
-                for ($j = 0; $j -lt $paragraphs.Count; $j++) {{
-                    if (Paragraph-TextMatchesPreview $paragraphs[$j] $preview) {{
-                        $matchIndex = $j + 1
+                if ($null -ne $paragraphIndexOffset) {{
+                    $offsetIndex = $targetIndex + [int]$paragraphIndexOffset
+                    $start = [Math]::Max(1, $offsetIndex - 250)
+                    $end = [Math]::Min($paragraphCount, $offsetIndex + 250)
+                    $localMatch = Find-MatchingParagraphInWindow $doc $start $end $matchPrefix $processed 'offset_window'
+                    if ($null -ne $localMatch) {{
+                        $matchIndex = [int]$localMatch
+                        $matchSource = 'local_offset_window'
+                        Add-Log(("WORD_COM_RECORD_LOCAL_MATCHED i={{0}} word_index={{1}} source=offset_window" -f $processed, $matchIndex))
+                    }}
+                }}
+            }}
+
+            if ($null -eq $matchIndex) {{
+                $start = [Math]::Max(1, $targetIndex - 250)
+                $end = [Math]::Min($paragraphCount, $targetIndex + 250)
+                $localMatch = Find-MatchingParagraphInWindow $doc $start $end $matchPrefix $processed 'target_window'
+                if ($null -ne $localMatch) {{
+                    $matchIndex = [int]$localMatch
+                    $matchSource = 'local_target_window'
+                    Add-Log(("WORD_COM_RECORD_LOCAL_MATCHED i={{0}} word_index={{1}} source=target_window" -f $processed, $matchIndex))
+                }}
+            }}
+
+            if ($null -eq $matchIndex -and $null -ne $lastMatchedWordIndex) {{
+                $start = [Math]::Max(1, [int]$lastMatchedWordIndex - 100)
+                $end = [Math]::Min($paragraphCount, [int]$lastMatchedWordIndex + 500)
+                $localMatch = Find-MatchingParagraphInWindow $doc $start $end $matchPrefix $processed 'last_match_window'
+                if ($null -ne $localMatch) {{
+                    $matchIndex = [int]$localMatch
+                    $matchSource = 'local_last_match_window'
+                    Add-Log(("WORD_COM_RECORD_LOCAL_MATCHED i={{0}} word_index={{1}} source=last_match_window" -f $processed, $matchIndex))
+                }}
+            }}
+
+            if ($null -eq $matchIndex) {{
+                Add-Log(("WORD_COM_FULL_FALLBACK_SCAN_BEGIN record={{0}} total={{1}}" -f $processed, $paragraphCount))
+                for ($j = 1; $j -le $paragraphCount; $j++) {{
+                    if (Test-CodexStop) {{ throw 'STOPPED_BY_USER' }}
+                    if ($j % 200 -eq 0) {{
+                        Add-Log(("WORD_COM_FALLBACK_SCAN_PROGRESS record={{0}} current={{1}} total={{2}}" -f $processed, $j, $paragraphCount))
+                    }}
+
+                    $candidateText = [string]$doc.Paragraphs.Item($j).Range.Text
+                    if (Paragraph-TextMatchesPreview $candidateText $matchPrefix) {{
+                        $matchIndex = $j
+                        $matchSource = 'fallback'
+                        Add-Log(("WORD_COM_RECORD_FALLBACK_MATCHED i={{0}} word_index={{1}}" -f $processed, $matchIndex))
                         break
                     }}
                 }}
@@ -1226,58 +1464,57 @@ try {{
                 continue
             }}
 
-            Add-Log(("WORD_COM_RECORD_MATCHED i={{0}} word_index={{1}}" -f $processed, $matchIndex))
+            if ($matchSource -ne 'direct' -and $matchSource -ne 'offset') {{
+                $newOffset = [int]$matchIndex - $targetIndex
+                if ($null -eq $paragraphIndexOffset) {{
+                    $paragraphIndexOffset = $newOffset
+                    Add-Log(("WORD_COM_PARAGRAPH_INDEX_OFFSET_LEARNED offset={{0}} from_record={{1}} xml_index={{2}} word_index={{3}}" -f $paragraphIndexOffset, $processed, $targetIndex, $matchIndex))
+                }} elseif ([int]$paragraphIndexOffset -ne [int]$newOffset) {{
+                    Add-Log(("WORD_COM_PARAGRAPH_INDEX_OFFSET_CHANGED old={{0}} new={{1}} record={{2}} xml_index={{3}} word_index={{4}}" -f $paragraphIndexOffset, $newOffset, $processed, $targetIndex, $matchIndex))
+                    $paragraphIndexOffset = $newOffset
+                }}
+            }}
+            $lastMatchedWordIndex = [int]$matchIndex
+            Add-Log(("WORD_COM_RECORD_MATCHED i={{0}} word_index={{1}} source={{2}}" -f $processed, $matchIndex, $matchSource))
+            Add-Log(("WORD_COM_RECORD_BEFORE_GET_PARAGRAPH i={{0}} word_index={{1}}" -f $processed, $matchIndex))
             $paragraph = $doc.Paragraphs.Item([int]$matchIndex)
-            $pf = $paragraph.Format
-            $beforeLeftPt = $null
-            $beforeFirstLinePt = $null
-            $actualLeftPt = $null
-            $actualFirstLinePt = $null
-            try {{ $beforeLeftPt = [double]$pf.LeftIndent }} catch {{}}
-            try {{ $beforeFirstLinePt = [double]$pf.FirstLineIndent }} catch {{}}
+            Add-Log(("WORD_COM_RECORD_AFTER_GET_PARAGRAPH i={{0}}" -f $processed))
             $wordRangeFontSize = $null
             $wordDominantFontSize = $null
             $wordFontCheckPass = $true
             if ($applyOnlyIfWordFontSizeIs14) {{
+                Add-Log(("WORD_COM_RECORD_BEFORE_FONT_CHECK i={{0}}" -f $processed))
                 $fontSizes = Get-ParagraphFontSizes $paragraph
                 if ($fontSizes.Count -ge 1) {{ $wordRangeFontSize = $fontSizes[0] }}
                 if ($fontSizes.Count -ge 2) {{ $wordDominantFontSize = $fontSizes[1] }}
+                Add-Log(("WORD_COM_RECORD_AFTER_FONT_CHECK i={{0}} range_font_size={{1}} dominant_font_size={{2}}" -f $processed, $wordRangeFontSize, $wordDominantFontSize))
                 $wordFontCheckPass = ($null -ne $wordDominantFontSize -and [math]::Abs([double]$wordDominantFontSize - 14.0) -le 0.01)
             }}
 
             if (-not $wordFontCheckPass) {{
+                $skippedNot14 += 1
                 Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; xml_font_size={{5}}; xml_font_size_source={{6}}; word_range_font_size={{7}}; word_dominant_font_size={{8}}; word_font_check_pass=False; decision=skipped_word_font_not_14; status=skipped_word_font_not_14" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.xml_font_size, $record.xml_font_size_source, $wordRangeFontSize, $wordDominantFontSize))
                 Add-Log(("WORD_COM_BODY_INDENT_FIX: i={{0}} paragraph_index={{1}} matched_paragraph_index={{2}} status=skipped_word_font_not_14" -f $processed, $record.paragraph_index, $matchIndex))
                 continue
             }}
 
-            try {{ $pf.CharacterUnitLeftIndent = 0 }} catch {{
-                Add-Log(("WORD_COM_RECORD_CHAR_LEFT_CLEAR_FAILED i={{0}} reason={{1}}" -f $processed, $_.Exception.Message))
+            $status = 'approved'
+            $approved += 1
+            $ok += 1
+
+            Add-Log(("WORD_COM_FONT_CHECK_APPROVED: record_index={{0}}; paragraph_index={{1}}; matched_paragraph_index={{2}}; word_dominant_font_size={{3}}" -f $processed, $record.paragraph_index, $matchIndex, $wordDominantFontSize))
+            $approvedRecord = [ordered]@{{
+                record_index = $processed
+                paragraph_index = $record.paragraph_index
+                matched_paragraph_index = $matchIndex
+                word_dominant_font_size = $wordDominantFontSize
+                expected_left_twips = $record.expected_left_twips
+                expected_first_line_twips = $record.expected_first_line_twips
+                text_match_prefix = $matchPrefix
             }}
-            try {{ $pf.CharacterUnitFirstLineIndent = 0 }} catch {{
-                Add-Log(("WORD_COM_RECORD_CHAR_FIRST_CLEAR_FAILED i={{0}} reason={{1}}" -f $processed, $_.Exception.Message))
-            }}
-
-            $pf.LeftIndent = $expectedLeftPoints
-            $pf.FirstLineIndent = $expectedFirstLinePoints
-
-            try {{ $actualLeftPt = [double]$pf.LeftIndent }} catch {{}}
-            try {{ $actualFirstLinePt = [double]$pf.FirstLineIndent }} catch {{}}
-            $beforeLeftCm = if ($null -eq $beforeLeftPt) {{ $null }} else {{ [double]$beforeLeftPt / $pointPerCm }}
-            $beforeFirstLineCm = if ($null -eq $beforeFirstLinePt) {{ $null }} else {{ [double]$beforeFirstLinePt / $pointPerCm }}
-            $afterLeftCm = if ($null -eq $actualLeftPt) {{ $null }} else {{ [double]$actualLeftPt / $pointPerCm }}
-            $afterFirstLineCm = if ($null -eq $actualFirstLinePt) {{ $null }} else {{ [double]$actualFirstLinePt / $pointPerCm }}
-
-            if ($null -ne $afterLeftCm -and [math]::Abs($afterLeftCm - $expectedLeftCm) -le 0.02 -and $null -ne $afterFirstLineCm -and [math]::Abs($afterFirstLineCm - $expectedFirstLineCm) -le 0.02) {{
-                $status = 'ok'
-                $ok += 1
-            }} else {{
-                $status = 'mismatch'
-                $mismatch += 1
-            }}
-
-            Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; expected_number_start_cm={{5}}; expected_hanging_cm={{6}}; expected_heading_left_cm={{7}}; expected_body_left_cm={{8}}; expected_first_line_twips={{9}}; xml_font_size={{10}}; xml_font_size_source={{11}}; word_range_font_size={{12}}; word_dominant_font_size={{13}}; word_font_check_pass={{14}}; decision=apply_body_indent; xml_written_left_cm={{15}}; xml_written_hanging_cm={{16}}; word_opened_left_cm={{17}}; word_opened_firstline_cm={{18}}; final_left_cm={{19}}; final_firstline_cm={{20}}; second_fix=yes; status={{21}}" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.expected_number_start_cm, $record.expected_hanging_cm, $record.expected_heading_left_cm, $record.expected_body_left_cm, $record.expected_first_line_twips, $record.xml_font_size, $record.xml_font_size_source, $wordRangeFontSize, $wordDominantFontSize, $wordFontCheckPass, $record.xml_written_left_cm, $record.xml_written_hanging_cm, (Format-OptionalCm $beforeLeftCm), (Format-OptionalCm $beforeFirstLineCm), (Format-OptionalCm $afterLeftCm), (Format-OptionalCm $afterFirstLineCm), $status))
-            Add-Log(("WORD_COM_BODY_INDENT_FIX: i={{0}} paragraph_index={{1}} expected_left_cm={{2}} before_left_cm={{3}} after_left_cm={{4}} status={{5}}" -f $processed, $record.paragraph_index, $record.expected_left_cm, (Format-OptionalCm $beforeLeftCm), (Format-OptionalCm $afterLeftCm), $status))
+            Add-Log(("WORD_COM_APPROVED_RECORD_JSON " + ($approvedRecord | ConvertTo-Json -Compress)))
+            Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; expected_number_start_cm={{5}}; expected_hanging_cm={{6}}; expected_heading_left_cm={{7}}; expected_body_left_cm={{8}}; expected_first_line_twips={{9}}; xml_font_size={{10}}; xml_font_size_source={{11}}; word_range_font_size={{12}}; word_dominant_font_size={{13}}; word_font_check_pass={{14}}; decision=approved_for_xml_body_indent; word_opened_left_cm=not_read; word_opened_firstline_cm=not_read; final_left_cm=not_read; final_firstline_cm=not_read; second_fix=python_xml; status={{15}}" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.expected_number_start_cm, $record.expected_hanging_cm, $record.expected_heading_left_cm, $record.expected_body_left_cm, $record.expected_first_line_twips, $record.xml_font_size, $record.xml_font_size_source, $wordRangeFontSize, $wordDominantFontSize, $wordFontCheckPass, $status))
+            Add-Log(("WORD_COM_BODY_INDENT_FIX: i={{0}} paragraph_index={{1}} expected_left_cm={{2}} before_left_cm=not_read after_left_cm=not_read status={{3}}" -f $processed, $record.paragraph_index, $record.expected_left_cm, $status))
         }} catch {{
             $errors += 1
             Add-Log(("WORD_COM_RECORD_EXCEPTION i={{0}} paragraph_index={{1}} type={{2}} message={{3}}" -f $processed, $record.paragraph_index, $_.Exception.GetType().FullName, $_.Exception.Message))
@@ -1286,10 +1523,8 @@ try {{
         }}
     }}
 
-    Add-Log 'WORD_COM_PS_BEFORE_SAVE'
-    $doc.Save()
-    Add-Log 'WORD_COM_PS_DOC_SAVED'
     Add-Log(("WORD_COM_BODY_INDENT_FIX_SUMMARY processed={{0}} ok={{1}} mismatch={{2}} not_found={{3}} errors={{4}}" -f $processed, $ok, $mismatch, $notFound, $errors))
+    Add-Log(("WORD_COM_FONT_CHECK_SUMMARY processed={{0}} approved={{1}} skipped_not_14={{2}} not_found={{3}} errors={{4}}" -f $processed, $approved, $skippedNot14, $notFound, $errors))
     Add-Log 'WORD_COM_PS_DONE'
     exit 0
 }} catch {{
@@ -1403,18 +1638,27 @@ def verify_and_fix_body_indents_with_word_com(
                 or log.startswith("WORD_COM_BODY_INDENT_FIX_SKIPPED")
                 for log in script_logs
             )
-            if completed.returncode == 1:
+            has_script_done = any(log.startswith("WORD_COM_PS_DONE") for log in script_logs)
+            if completed.returncode != 0 or not has_script_done:
                 logs.append("WORD_COM_BODY_INDENT_FIX_FAILED_AFTER_PARTIAL_LOGS")
                 has_script_failure = True
 
             if not has_script_failure and completed.returncode == 0:
-                try:
-                    shutil.copy2(_long_path_compatible_str(work_docx_path), _long_path_compatible_str(output_docx))
-                except Exception as exc:
-                    logs.append(f"WORD_COM_BODY_INDENT_FIX_SKIPPED reason=copy_back_failed:{type(exc).__name__}:{exc}")
-                    logs.append(f"exception_repr={exc!r}")
+                approved_records = _parse_word_com_approved_records(script_logs)
+                logs.append(f"WORD_COM_FONT_CHECK_APPROVED_COUNT={len(approved_records)}")
+                logs.extend(apply_word_com_approved_body_indents_to_docx_xml(output_docx, approved_records))
             elif not any(log.startswith("WORD_COM_BODY_INDENT_FIX_SKIPPED") for log in logs):
-                logs.append("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_script_failed")
+                has_script_exception = any(
+                    log.startswith("WORD_COM_PS_EXCEPTION") or log.startswith("WORD_COM_PS_ERROR")
+                    for log in script_logs
+                )
+                if not has_script_done and not has_script_exception and not completed.stderr.strip():
+                    last_partial_log = script_logs[-1] if script_logs else "None"
+                    logs.append("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_interrupted_or_timeout")
+                    logs.append(f"timeout_seconds={WORD_COM_TIMEOUT_SECONDS}")
+                    logs.append(f"last_partial_log={last_partial_log}")
+                else:
+                    logs.append("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_script_failed")
             return logs
 
         stderr = completed.stderr.strip()
@@ -1435,6 +1679,23 @@ def verify_and_fix_body_indents_with_word_com(
                 pass
             except Exception:
                 pass
+
+
+def _filter_word_com_body_indent_records(
+    body_indent_records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    filtered: list[dict[str, object]] = []
+    for record in body_indent_records:
+        if not bool(record.get("apply_only_if_word_font_size_is_14")):
+            continue
+        try:
+            xml_font_size = float(record.get("xml_font_size"))
+        except (TypeError, ValueError):
+            xml_font_size = None
+        if xml_font_size is not None and xml_font_size <= 11.0:
+            continue
+        filtered.append(record)
+    return filtered
 
 
 def fix_docx_fast(
@@ -1782,9 +2043,22 @@ def fix_docx_fast(
             zout.writestr(item, data)
 
     if options.normalize_with_word_com:
-        summary.word_com_body_indent_logs.extend(
-            verify_and_fix_body_indents_with_word_com(output_docx, summary.body_indent_records, stop=stop)
+        word_com_records = _filter_word_com_body_indent_records(summary.body_indent_records)
+        summary.word_com_body_indent_logs.append(
+            "WORD_COM_BODY_INDENT_RECORD_FILTER "
+            f"total_records={len(summary.body_indent_records)} "
+            f"word_com_records={len(word_com_records)} "
+            f"skipped_records={len(summary.body_indent_records) - len(word_com_records)} "
+            "criteria=apply_only_if_word_font_size_is_14_and_xml_font_size_gt_11"
         )
+        if word_com_records:
+            summary.word_com_body_indent_logs.extend(
+                verify_and_fix_body_indents_with_word_com(output_docx, word_com_records, stop=stop)
+            )
+        else:
+            summary.word_com_body_indent_logs.append(
+                "WORD_COM_BODY_INDENT_FIX_SKIPPED reason=no_font_check_records"
+            )
     else:
         summary.word_com_body_indent_logs.append("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=disabled")
 

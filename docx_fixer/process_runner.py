@@ -129,25 +129,13 @@ def run_powershell_file(
     timeout: float = 180,
     stop_grace_seconds: float = 8,
 ) -> subprocess.CompletedProcess:
-    wrapped_command = """
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-$OutputEncoding = $utf8NoBom
-[Console]::OutputEncoding = $utf8NoBom
-[Console]::InputEncoding = $utf8NoBom
-if ($args.Length -gt 1) {
-    & $args[0] @($args[1..($args.Length - 1)])
-} else {
-    & $args[0]
-}
-"""
     return _run_powershell_process(
         [
             "powershell",
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
-            "-Command",
-            wrapped_command,
+            "-File",
             str(script_path),
             *(arguments or []),
         ],

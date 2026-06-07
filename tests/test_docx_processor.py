@@ -13,7 +13,10 @@ from lxml import etree
 
 from docx_fixer.constants import NS, TEMPLATE_OUTLINE_INDENTS, W_NS
 from docx_fixer.docx_processor import (
+    WORD_COM_TIMEOUT_SECONDS,
+    _filter_word_com_body_indent_records,
     _verify_and_fix_body_indents_with_word_com_in_process,
+    apply_word_com_approved_body_indents_to_docx_xml,
     find_word_paragraph_index_for_record,
     fix_docx_fast,
     verify_and_fix_body_indents_with_word_com,
@@ -311,14 +314,17 @@ def make_styles_with_level_four_numbered_and_plain_old_indents() -> bytes:
     return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
-def make_document_with_style_level_four_heading_and_body() -> bytes:
+def make_document_with_style_level_four_heading_and_body(
+    body_font_size_pt: int = 14,
+    body_text: str = "\u7b2c\u56db\u968e\u6a19\u984c\u4e0b\u65b9\u666e\u901a\u5167\u6587",
+) -> bytes:
     document = etree.Element(qn("document"), nsmap={"w": W_NS})
     body = etree.SubElement(document, qn("body"))
 
     for text, style, font_size_pt in [
         ("\u58f9\u3001\u5e8f\u8a00", None, None),
         ("\u7b2c\u56db\u968e\u81ea\u52d5\u6a19\u984c", "NumberedL4", None),
-        ("\u7b2c\u56db\u968e\u6a19\u984c\u4e0b\u65b9\u666e\u901a\u5167\u6587", "BodyText", 14),
+        (body_text, "BodyText", body_font_size_pt),
     ]:
         p = etree.SubElement(body, qn("p"))
         pPr = etree.SubElement(p, qn("pPr"))
@@ -474,6 +480,23 @@ class DocxProcessorTests(unittest.TestCase):
 
         self.assertEqual(find_word_paragraph_index_for_record(paragraph_texts, direct_record), 3)
         self.assertEqual(find_word_paragraph_index_for_record(paragraph_texts, fallback_record), 3)
+
+    def test_find_word_paragraph_index_uses_match_prefix_and_strips_preview_ellipsis(self):
+        paragraph_texts = [
+            "A very long paragraph prefix that continues beyond the display preview and has no ellipsis\r",
+        ]
+        prefix_record = {
+            "paragraph_index": 1,
+            "text_preview": "wrong preview...",
+            "text_match_prefix": "A very long paragraph prefix that continues",
+        }
+        legacy_preview_record = {
+            "paragraph_index": 1,
+            "text_preview": "A very long paragraph prefix...",
+        }
+
+        self.assertEqual(find_word_paragraph_index_for_record(paragraph_texts, prefix_record), 1)
+        self.assertEqual(find_word_paragraph_index_for_record(paragraph_texts, legacy_preview_record), 1)
 
     def test_word_com_gen_py_cache_error_cleans_retries_and_falls_back_to_dynamic_dispatch(self):
         class FakeRange:
@@ -849,9 +872,88 @@ class DocxProcessorTests(unittest.TestCase):
         self.assertTrue(any("WORD_COM_PS_PARAGRAPHS_COUNT count=1" in line for line in logs))
         self.assertEqual(captured["records"], records)
         self.assertIn("param(", captured["script_text"])
+        self.assertTrue(captured["script_text"].lstrip().startswith("param("))
+        self.assertLess(
+            captured["script_text"].index("param("),
+            captured["script_text"].index("$utf8NoBom = New-Object System.Text.UTF8Encoding($false)"),
+        )
+        self.assertIn("$utf8NoBom = New-Object System.Text.UTF8Encoding($false)", captured["script_text"])
+        self.assertIn("[Console]::OutputEncoding = $utf8NoBom", captured["script_text"])
         self.assertIn("$RecordsPath", captured["script_text"])
         self.assertIn("Add-Log", captured["script_text"])
+        self.assertIn("Add-Content -LiteralPath $ResultPath -Encoding UTF8 -Value $msg", captured["script_text"])
+        self.assertNotIn("Write-Output $msg", captured["script_text"])
         self.assertIn("WORD_COM_RECORD_BEGIN", captured["script_text"])
+        self.assertIn("$matchPrefix = [string]$record.text_match_prefix", captured["script_text"])
+        self.assertIn("if ([string]::IsNullOrWhiteSpace($matchPrefix))", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_MATCH_PREFIX", captured["script_text"])
+        self.assertIn("$preview.EndsWith('...')", captured["script_text"])
+        self.assertIn("$normalizedPreview.EndsWith('...')", captured["script_text"])
+        self.assertIn("Paragraph-TextMatchesPreview $candidateText $matchPrefix", captured["script_text"])
+        self.assertNotIn("Paragraph-TextMatchesPreview $candidateText $preview", captured["script_text"])
+        self.assertIn("WORD_COM_PS_RECORD_LOOP_BEGIN", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_DIRECT_MATCHED", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_FALLBACK_MATCHED", captured["script_text"])
+        self.assertIn("WORD_COM_FALLBACK_SCAN_PROGRESS", captured["script_text"])
+        self.assertIn("$paragraphIndexOffset = $null", captured["script_text"])
+        self.assertIn("WORD_COM_PARAGRAPH_INDEX_OFFSET_LEARNED", captured["script_text"])
+        self.assertIn("WORD_COM_PARAGRAPH_INDEX_OFFSET_CHANGED", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_TRY_OFFSET", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_OFFSET_MATCHED", captured["script_text"])
+        self.assertIn("function Find-MatchingParagraphInWindow", captured["script_text"])
+        self.assertIn("WORD_COM_LOCAL_SCAN_BEGIN", captured["script_text"])
+        self.assertIn("WORD_COM_LOCAL_SCAN_PROGRESS", captured["script_text"])
+        self.assertIn("WORD_COM_LOCAL_SCAN_BEGIN record={0} source={1} start={2} end={3}\" -f $recordIndex, $source, $start, $end)) | Out-Null", captured["script_text"])
+        self.assertIn("WORD_COM_LOCAL_SCAN_PROGRESS record={0} source={1} current={2} start={3} end={4}\" -f $recordIndex, $source, $j, $start, $end)) | Out-Null", captured["script_text"])
+        self.assertIn("return [int]$j", captured["script_text"])
+        self.assertIn("return $null", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_LOCAL_MATCHED", captured["script_text"])
+        self.assertIn("$localMatch = Find-MatchingParagraphInWindow", captured["script_text"])
+        self.assertNotIn("[int]$localMatch = Find-MatchingParagraphInWindow", captured["script_text"])
+        self.assertIn("$lastMatchedWordIndex = $null", captured["script_text"])
+        self.assertIn("$lastMatchedWordIndex = [int]$matchIndex", captured["script_text"])
+        self.assertIn("source=offset_window", captured["script_text"])
+        self.assertIn("source=target_window", captured["script_text"])
+        self.assertIn("source=last_match_window", captured["script_text"])
+        self.assertIn("WORD_COM_FULL_FALLBACK_SCAN_BEGIN", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_MATCHED i={0} word_index={1} source={2}", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_BEFORE_GET_PARAGRAPH", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_AFTER_GET_PARAGRAPH", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_BEFORE_FONT_CHECK", captured["script_text"])
+        self.assertIn("WORD_COM_RECORD_AFTER_FONT_CHECK", captured["script_text"])
+        self.assertIn("WORD_COM_FONT_CHECK_ONLY_STARTED", captured["script_text"])
+        self.assertIn("WORD_COM_FONT_CHECK_APPROVED:", captured["script_text"])
+        self.assertIn("WORD_COM_APPROVED_RECORD_JSON", captured["script_text"])
+        self.assertIn("WORD_COM_FONT_CHECK_SUMMARY", captured["script_text"])
+        self.assertIn("decision=approved_for_xml_body_indent", captured["script_text"])
+        self.assertIn("decision=skipped_word_font_not_14", captured["script_text"])
+        self.assertIn("$status = 'approved'", captured["script_text"])
+        self.assertIn("word_opened_left_cm=not_read", captured["script_text"])
+        self.assertIn("final_left_cm=not_read", captured["script_text"])
+        self.assertNotIn("$paragraph.Format", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_BEFORE_GET_FORMAT", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_AFTER_GET_FORMAT", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_CHAR_UNIT_CLEAR_SKIPPED", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_BEFORE_SET_INDENTS", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_AFTER_SET_INDENTS", captured["script_text"])
+        self.assertNotIn("$pf.LeftIndent = $expectedLeftPoints", captured["script_text"])
+        self.assertNotIn("$pf.FirstLineIndent = $expectedFirstLinePoints", captured["script_text"])
+        self.assertNotIn("CharacterUnitLeftIndent = 0", captured["script_text"])
+        self.assertNotIn("CharacterUnitFirstLineIndent = 0", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_BEFORE_CLEAR_CHAR_INDENTS", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_AFTER_CLEAR_CHAR_INDENTS", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_CHAR_LEFT_CLEAR_FAILED", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_CHAR_FIRST_CLEAR_FAILED", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_BEFORE_READ_INDENTS", captured["script_text"])
+        self.assertNotIn("WORD_COM_RECORD_AFTER_READ_INDENTS", captured["script_text"])
+        self.assertNotIn("$beforeLeftPt = [double]$pf.LeftIndent", captured["script_text"])
+        self.assertNotIn("$beforeFirstLinePt = [double]$pf.FirstLineIndent", captured["script_text"])
+        self.assertNotIn("$actualLeftPt = [double]$pf.LeftIndent", captured["script_text"])
+        self.assertNotIn("$actualFirstLinePt = [double]$pf.FirstLineIndent", captured["script_text"])
+        self.assertNotIn("New-Object System.Collections.Generic.List[string]", captured["script_text"])
+        self.assertNotIn("$paragraphs", captured["script_text"])
+        self.assertEqual(WORD_COM_TIMEOUT_SECONDS, 600)
+        self.assertEqual(runner.call_args.kwargs["timeout"], WORD_COM_TIMEOUT_SECONDS)
         runner.assert_called_once()
 
     def test_word_com_body_indent_reads_result_file_when_stdout_is_empty(self):
@@ -936,6 +1038,182 @@ class DocxProcessorTests(unittest.TestCase):
         self.assertTrue(any("WORD_COM_PS_EXCEPTION System.Exception:boom" in line for line in logs))
         self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_FAILED_AFTER_PARTIAL_LOGS" in line for line in logs))
         self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_script_failed" in line for line in logs))
+
+    def test_word_com_body_indent_requires_done_marker_before_copy_back(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
+
+            def fake_run(script_path, *, arguments=None, **kwargs):
+                result_path = Path(arguments[5])
+                result_path.write_text(
+                    "\n".join(
+                        [
+                            "WORD_COM_PS_STARTED",
+                            "WORD_COM_PS_RECORDS_LOADED count=1",
+                            "WORD_COM_RECORD_BEGIN i=1 paragraph_index=1 expected_left_cm=1.0 text=body text",
+                            "WORD_COM_RECORD_MATCHED i=1 word_index=1",
+                            "WORD_COM_INDENT_VERIFY: paragraph_index=1; matched_paragraph_index=1; decision=apply_body_indent; status=ok",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                return types.SimpleNamespace(stdout="", stderr="partial failure", returncode=0)
+
+            with patch(
+                "docx_fixer.docx_processor.run_powershell_file",
+                side_effect=fake_run,
+            ):
+                logs = verify_and_fix_body_indents_with_word_com(
+                    output_docx,
+                    [{"paragraph_index": 1, "text_preview": "body text", "expected_left_cm": 1.0, "expected_left_points": 28.3464567}],
+                )
+
+        self.assertTrue(any("WORD_COM_RECORD_BEGIN" in line for line in logs))
+        self.assertTrue(any("WORD_COM_RECORD_MATCHED" in line for line in logs))
+        self.assertTrue(any("WORD_COM_INDENT_VERIFY:" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_FAILED_AFTER_PARTIAL_LOGS" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_script_failed" in line for line in logs))
+        self.assertFalse(any("WORD_COM_PS_DONE" in line for line in logs))
+
+    def test_word_com_body_indent_partial_logs_without_error_are_timeout_or_interrupted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
+
+            def fake_run(script_path, *, arguments=None, **kwargs):
+                result_path = Path(arguments[5])
+                result_path.write_text(
+                    "\n".join(
+                        [
+                            "WORD_COM_PS_STARTED",
+                            "WORD_COM_PS_RECORDS_LOADED count=1",
+                            "WORD_COM_PS_WORD_CREATED",
+                            "WORD_COM_PS_DOC_OPENED",
+                            "WORD_COM_PS_BEFORE_LOOP",
+                            "WORD_COM_PS_PARAGRAPHS_COUNT count=6204",
+                            "WORD_COM_PS_RECORD_LOOP_BEGIN count=336",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                return types.SimpleNamespace(stdout="", stderr="", returncode=1)
+
+            with patch(
+                "docx_fixer.docx_processor.run_powershell_file",
+                side_effect=fake_run,
+            ):
+                logs = verify_and_fix_body_indents_with_word_com(
+                    output_docx,
+                    [{"paragraph_index": 1, "text_preview": "body text", "expected_left_cm": 1.0, "expected_left_points": 28.3464567}],
+                )
+
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_FAILED_AFTER_PARTIAL_LOGS" in line for line in logs))
+        self.assertTrue(any("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_interrupted_or_timeout" in line for line in logs))
+        self.assertTrue(any("timeout_seconds=" in line for line in logs))
+        self.assertTrue(any("last_partial_log=WORD_COM_PS_RECORD_LOOP_BEGIN count=336" in line for line in logs))
+        self.assertFalse(any("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=powershell_script_failed" in line for line in logs))
+
+    def test_word_com_body_indent_record_filter_keeps_only_font_check_records(self):
+        records = [
+            {"kind": "auto", "apply_only_if_word_font_size_is_14": False},
+            {"kind": "manual"},
+            {"kind": "body", "apply_only_if_word_font_size_is_14": False},
+            {"kind": "body_font_check", "apply_only_if_word_font_size_is_14": True, "xml_font_size": 10},
+            {"kind": "body_font_check", "apply_only_if_word_font_size_is_14": True, "xml_font_size": 11},
+            {"kind": "body_font_check", "apply_only_if_word_font_size_is_14": True, "xml_font_size": 12},
+            {"kind": "body_font_check", "apply_only_if_word_font_size_is_14": True, "xml_font_size": None},
+        ]
+
+        filtered = _filter_word_com_body_indent_records(records)
+
+        self.assertEqual([record.get("xml_font_size") for record in filtered], [12, None])
+
+    def test_apply_word_com_approved_body_indents_updates_document_xml(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(output_docx, make_document_with_character_indent(text="Approved body paragraph"))
+
+            logs = apply_word_com_approved_body_indents_to_docx_xml(
+                output_docx,
+                [
+                    {
+                        "paragraph_index": 1,
+                        "expected_left_twips": "1440",
+                        "expected_first_line_twips": "560",
+                        "text_match_prefix": "Approved body paragraph",
+                    }
+                ],
+            )
+
+            root = read_document_root(output_docx)
+            ind = root.find(".//w:ind", NS)
+            self.assertEqual(ind.get(qn("left")), "1440")
+            self.assertEqual(ind.get(qn("firstLine")), "560")
+            self.assertIsNone(ind.get(qn("hanging")))
+            self.assertIsNone(ind.get(qn("start")))
+            assert_no_character_indent_attrs(self, root)
+            joined_logs = "\n".join(logs)
+            self.assertIn("WORD_COM_XML_APPLY_STARTED approved_records=1", joined_logs)
+            self.assertIn("WORD_COM_XML_APPLY_RECORD paragraph_index=1 status=applied", joined_logs)
+            self.assertIn("WORD_COM_XML_APPLY_DONE applied=1 skipped=0 errors=0", joined_logs)
+
+    def test_verify_word_com_approved_records_are_applied_by_python_xml(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(output_docx, make_document_with_character_indent(text="Approved by fake Word"))
+
+            def fake_run(script_path, *, arguments=None, **kwargs):
+                result_path = Path(arguments[5])
+                approved = {
+                    "record_index": 1,
+                    "paragraph_index": 1,
+                    "matched_paragraph_index": 1,
+                    "word_dominant_font_size": 14,
+                    "expected_left_twips": "1720",
+                    "expected_first_line_twips": None,
+                    "text_match_prefix": "Approved by fake Word",
+                }
+                result_path.write_text(
+                    "\n".join(
+                        [
+                            "WORD_COM_PS_STARTED",
+                            "WORD_COM_FONT_CHECK_ONLY_STARTED",
+                            "WORD_COM_PS_RECORDS_LOADED count=1",
+                            "WORD_COM_PS_DONE",
+                            "WORD_COM_FONT_CHECK_SUMMARY processed=1 approved=1 skipped_not_14=0 not_found=0 errors=0",
+                            "WORD_COM_APPROVED_RECORD_JSON " + json.dumps(approved),
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+            with patch("docx_fixer.docx_processor.run_powershell_file", side_effect=fake_run):
+                logs = verify_and_fix_body_indents_with_word_com(
+                    output_docx,
+                    [
+                        {
+                            "paragraph_index": 1,
+                            "text_preview": "Approved by fake Word",
+                            "text_match_prefix": "Approved by fake Word",
+                            "kind": "body_font_check",
+                            "expected_left_cm": 3.0,
+                            "expected_left_twips": "1720",
+                            "expected_left_points": 86.0,
+                            "apply_only_if_word_font_size_is_14": True,
+                        }
+                    ],
+                )
+
+            root = read_document_root(output_docx)
+            ind = root.find(".//w:ind", NS)
+            self.assertEqual(ind.get(qn("left")), "1720")
+            self.assertIsNone(ind.get(qn("firstLine")))
+            assert_no_character_indent_attrs(self, root)
+            joined_logs = "\n".join(logs)
+            self.assertIn("WORD_COM_FONT_CHECK_APPROVED_COUNT=1", joined_logs)
+            self.assertIn("WORD_COM_XML_APPLY_RECORD paragraph_index=1 status=applied", joined_logs)
 
     def test_word_com_body_indent_large_records_use_json_file_and_short_command(self):
         records = [
@@ -1152,6 +1430,136 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_hanging_cm"], 0.50, places=2)
             self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.70, places=2)
             self.assertEqual(records_by_kind["body"]["expected_firstline_cm"], 0.0)
+
+    def test_fix_docx_fast_passes_only_font_check_records_to_word_com(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            long_body_text = " ".join(f"bodysegment{index:02d}" for index in range(20))
+            make_docx(
+                input_docx,
+                make_document_with_style_level_four_heading_and_body(
+                    body_font_size_pt=12,
+                    body_text=long_body_text,
+                ),
+                styles_xml=make_styles_with_level_four_numbered_and_plain_old_indents(),
+                numbering_xml=make_level_four_numbering_with_old_indents(),
+            )
+            captured: dict[str, object] = {}
+
+            def fake_verify(docx_path, records, stop=None):
+                captured["docx_path"] = docx_path
+                captured["records"] = list(records)
+                return ["WORD_COM_FAKE_VERIFIED"]
+
+            with patch(
+                "docx_fixer.docx_processor.verify_and_fix_body_indents_with_word_com",
+                side_effect=fake_verify,
+            ) as verifier:
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(
+                        fix_table_layout=False,
+                        fix_color=False,
+                        fix_paragraph=True,
+                        normalize_with_word_com=True,
+                        word_com_check_body_font_when_xml_not_14=True,
+                    ),
+                )
+
+        verifier.assert_called_once()
+        records = captured["records"]
+        self.assertGreater(len(summary.body_indent_records), len(records))
+        self.assertEqual([record["kind"] for record in records], ["body_font_check"])
+        self.assertTrue(all(record.get("apply_only_if_word_font_size_is_14") is True for record in records))
+        self.assertTrue(records[0]["text_preview"].endswith("..."))
+        self.assertFalse(records[0]["text_match_prefix"].endswith("..."))
+        self.assertEqual(records[0]["text_match_prefix"], long_body_text[:120])
+        self.assertGreater(len(records[0]["text_match_prefix"]), len(records[0]["text_preview"]))
+        self.assertTrue(any(record["kind"] == "auto(style)" for record in summary.body_indent_records))
+        self.assertFalse(any(record["kind"] == "auto(style)" for record in records))
+        joined_logs = "\n".join(summary.word_com_body_indent_logs)
+        self.assertIn("WORD_COM_BODY_INDENT_RECORD_FILTER", joined_logs)
+        self.assertIn(f"total_records={len(summary.body_indent_records)}", joined_logs)
+        self.assertIn("word_com_records=1", joined_logs)
+        self.assertIn(f"skipped_records={len(summary.body_indent_records) - 1}", joined_logs)
+        self.assertIn("criteria=apply_only_if_word_font_size_is_14_and_xml_font_size_gt_11", joined_logs)
+        self.assertIn("WORD_COM_FAKE_VERIFIED", joined_logs)
+
+    def test_fix_docx_fast_skips_word_com_when_filter_has_no_font_check_records(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_document_with_style_level_four_heading_and_body(body_font_size_pt=14),
+                styles_xml=make_styles_with_level_four_numbered_and_plain_old_indents(),
+                numbering_xml=make_level_four_numbering_with_old_indents(),
+            )
+
+            with patch("docx_fixer.docx_processor.verify_and_fix_body_indents_with_word_com") as verifier:
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(
+                        fix_table_layout=False,
+                        fix_color=False,
+                        fix_paragraph=True,
+                        normalize_with_word_com=True,
+                        word_com_check_body_font_when_xml_not_14=True,
+                    ),
+                )
+
+        verifier.assert_not_called()
+        self.assertTrue(summary.body_indent_records)
+        self.assertFalse(
+            any(bool(record.get("apply_only_if_word_font_size_is_14")) for record in summary.body_indent_records)
+        )
+        joined_logs = "\n".join(summary.word_com_body_indent_logs)
+        self.assertIn("WORD_COM_BODY_INDENT_RECORD_FILTER", joined_logs)
+        self.assertIn("word_com_records=0", joined_logs)
+        self.assertIn(f"skipped_records={len(summary.body_indent_records)}", joined_logs)
+        self.assertIn("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=no_font_check_records", joined_logs)
+
+    def test_fix_docx_fast_skips_word_com_for_xml_font_size_at_or_below_11(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_document_with_style_level_four_heading_and_body(body_font_size_pt=10),
+                styles_xml=make_styles_with_level_four_numbered_and_plain_old_indents(),
+                numbering_xml=make_level_four_numbering_with_old_indents(),
+            )
+
+            with patch("docx_fixer.docx_processor.verify_and_fix_body_indents_with_word_com") as verifier:
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(
+                        fix_table_layout=False,
+                        fix_color=False,
+                        fix_paragraph=True,
+                        normalize_with_word_com=True,
+                        word_com_check_body_font_when_xml_not_14=True,
+                    ),
+                )
+
+        verifier.assert_not_called()
+        font_check_records = [
+            record
+            for record in summary.body_indent_records
+            if record.get("apply_only_if_word_font_size_is_14")
+        ]
+        self.assertEqual(len(font_check_records), 1)
+        self.assertEqual(font_check_records[0]["kind"], "body_font_check")
+        self.assertEqual(font_check_records[0]["xml_font_size"], 10.0)
+        joined_logs = "\n".join(summary.word_com_body_indent_logs)
+        self.assertIn("WORD_COM_BODY_INDENT_RECORD_FILTER", joined_logs)
+        self.assertIn("word_com_records=0", joined_logs)
+        self.assertIn(f"skipped_records={len(summary.body_indent_records)}", joined_logs)
+        self.assertIn("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=no_font_check_records", joined_logs)
 
     def test_document_xml_character_indent_attrs_are_removed_but_twips_remain(self):
         with tempfile.TemporaryDirectory() as temp_dir:
