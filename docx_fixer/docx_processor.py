@@ -329,6 +329,42 @@ def find_table_first_level_heading(
     return None
 
 
+def collect_chapter_three_paragraph_ids(
+    root,
+    *,
+    numbering_level_lookup,
+    numbering_format_lookup,
+    style_numbering_lookup,
+    toc_paragraph_ids=None,
+) -> set[int]:
+    """Collect paragraphs from chapter 參 until the next first-level heading."""
+    skip_ids: set[int] = set()
+    toc_ids = toc_paragraph_ids or set()
+    in_chapter_three = False
+
+    for p in root.xpath(".//w:p", namespaces=NS):
+        paragraph_id = id(p)
+        if paragraph_id in toc_ids:
+            continue
+
+        prefix = _first_level_heading_prefix_for_paragraph(
+            p,
+            numbering_level_lookup=numbering_level_lookup,
+            numbering_format_lookup=numbering_format_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+        )
+        if prefix is not None:
+            if prefix == "參、":
+                in_chapter_three = True
+            elif in_chapter_three:
+                in_chapter_three = False
+
+        if in_chapter_three:
+            skip_ids.add(paragraph_id)
+
+    return skip_ids
+
+
 def build_table_log_record(
     *,
     part_name: str,
@@ -1852,9 +1888,15 @@ def fix_docx_fast(
         style_font_size_lookup = build_style_font_size_lookup(styles_xml)
         document_root_for_toc = None
         document_toc_paragraph_ids: set[int] = set()
+        document_chapter_three_paragraph_ids: set[int] = set()
         toc_numbering_pairs: set[tuple[str, int]] = set()
         toc_num_ids: set[str] = set()
         toc_abstract_ids: set[str] = set()
+        chapter_three_numbering_pairs: set[tuple[str, int]] = set()
+        chapter_three_num_ids: set[str] = set()
+        chapter_three_abstract_ids: set[str] = set()
+        chapter_three_style_ids: set[str] = set()
+        original_numbering_format_lookup = build_numbering_format_lookup(numbering_xml)
         if "word/document.xml" in zin.namelist():
             try:
                 document_root_for_toc = etree.fromstring(zin.read("word/document.xml"), parser)
@@ -1872,16 +1914,50 @@ def fix_docx_fast(
                     numbering_xml,
                     paragraphs=document_paragraphs_for_toc,
                 )
+                if options.skip_all_under_chapter_three:
+                    document_chapter_three_paragraph_ids = collect_chapter_three_paragraph_ids(
+                        document_root_for_toc,
+                        numbering_level_lookup=numbering_level_lookup,
+                        numbering_format_lookup=original_numbering_format_lookup,
+                        style_numbering_lookup=style_numbering_lookup,
+                        toc_paragraph_ids=document_toc_paragraph_ids,
+                    )
+                    (
+                        chapter_three_numbering_pairs,
+                        chapter_three_num_ids,
+                        chapter_three_abstract_ids,
+                    ) = collect_toc_numbering_exclusions(
+                        document_root_for_toc,
+                        document_chapter_three_paragraph_ids,
+                        style_numbering_lookup,
+                        numbering_xml,
+                        paragraphs=document_paragraphs_for_toc,
+                    )
+                    chapter_three_style_ids = {
+                        style_id
+                        for p in document_paragraphs_for_toc
+                        if id(p) in document_chapter_three_paragraph_ids
+                        for style_id in [paragraph_style_id(p)]
+                        if style_id
+                    }
             except Exception:
                 document_root_for_toc = None
                 document_toc_paragraph_ids = set()
+                document_chapter_three_paragraph_ids = set()
+                chapter_three_style_ids = set()
+        excluded_numbering_pairs = set(toc_numbering_pairs)
+        excluded_numbering_pairs.update(chapter_three_numbering_pairs)
+        excluded_num_ids = set(toc_num_ids)
+        excluded_num_ids.update(chapter_three_num_ids)
+        excluded_abstract_ids = set(toc_abstract_ids)
+        excluded_abstract_ids.update(chapter_three_abstract_ids)
         formatted_numbering_xml = (
             apply_numbering_outline_format(
                 numbering_xml,
                 change_logs=summary.numbering_xml_logs,
-                excluded_numbering_pairs=toc_numbering_pairs,
-                excluded_num_ids=toc_num_ids,
-                excluded_abstract_ids=toc_abstract_ids,
+                excluded_numbering_pairs=excluded_numbering_pairs,
+                excluded_num_ids=excluded_num_ids,
+                excluded_abstract_ids=excluded_abstract_ids,
             )
             if options.fix_paragraph
             else numbering_xml
@@ -1905,6 +1981,11 @@ def fix_docx_fast(
             root = None
             if item.filename == "word/document.xml" and document_root_for_toc is not None:
                 root = document_root_for_toc
+            chapter_three_exclude_paragraph_ids = (
+                document_chapter_three_paragraph_ids
+                if item.filename == "word/document.xml" and document_chapter_three_paragraph_ids
+                else None
+            )
 
             if options.remove_all_outline_levels and should_remove_outline_part(item.filename):
                 if progress_callback:
@@ -1919,6 +2000,16 @@ def fix_docx_fast(
                         root,
                         stop=stop,
                         summary=summary,
+                        exclude_paragraph_ids=chapter_three_exclude_paragraph_ids,
+                    )
+                elif (
+                    item.filename == "word/numbering.xml"
+                    and options.skip_all_under_chapter_three
+                    and excluded_abstract_ids
+                ):
+                    summary.numbering_xml_logs.append(
+                        "WARNING: chapter 參 uses numbering definitions excluded from "
+                        "remove_all_outline_levels; numbering.xml outline removal skipped"
                     )
                 else:
                     remove_all_outline_levels_from_any_root(
@@ -1942,17 +2033,23 @@ def fix_docx_fast(
                     )
                 data = formatted_numbering_xml or data
                 if options.remove_all_outline_levels:
-                    root = etree.fromstring(data, parser)
-                    remove_all_outline_levels_from_any_root(
-                        root,
-                        stop=stop,
-                    )
-                    data = etree.tostring(
-                        root,
-                        xml_declaration=True,
-                        encoding="UTF-8",
-                        standalone=True,
-                    )
+                    if options.skip_all_under_chapter_three and excluded_abstract_ids:
+                        summary.numbering_xml_logs.append(
+                            "WARNING: chapter 參 uses numbering definitions excluded from "
+                            "remove_all_outline_levels; numbering.xml normalization may still affect shared definitions"
+                        )
+                    else:
+                        root = etree.fromstring(data, parser)
+                        remove_all_outline_levels_from_any_root(
+                            root,
+                            stop=stop,
+                        )
+                        data = etree.tostring(
+                            root,
+                            xml_declaration=True,
+                            encoding="UTF-8",
+                            standalone=True,
+                        )
 
             if item.filename == "word/styles.xml" and options.fix_paragraph:
                 if root is None:
@@ -1962,6 +2059,7 @@ def fix_docx_fast(
                     numbering_level_lookup=numbering_level_lookup,
                     style_numbering_lookup=style_numbering_lookup,
                     change_logs=summary.numbering_xml_logs,
+                    excluded_style_ids=chapter_three_style_ids,
                 )
                 data = etree.tostring(
                     root,
@@ -2007,6 +2105,7 @@ def fix_docx_fast(
                         outline_preface_paragraphs=options.outline_preface_paragraphs,
                         enable_level1_level2_body_first_line_indent=options.enable_level1_level2_body_first_line_indent,
                         word_com_check_body_font_when_xml_not_14=options.word_com_check_body_font_when_xml_not_14,
+                        skip_paragraph_ids=chapter_three_exclude_paragraph_ids,
                     )
                     summary.paragraphs += changed_paragraphs
 
@@ -2033,6 +2132,34 @@ def fix_docx_fast(
                                 )
                                 or "(none)"
                             )
+
+                        skip_all_under_chapter_three = (
+                            options.skip_all_under_chapter_three
+                            and item.filename == "word/document.xml"
+                            and first_level_heading == "參、"
+                        )
+                        if skip_all_under_chapter_three:
+                            summary.table_log_records.append(
+                                build_table_log_record(
+                                    part_name=item.filename,
+                                    table_index=table_index,
+                                    global_table_index=global_table_index,
+                                    table_name=table_name,
+                                    first_level_heading=first_level_heading,
+                                    cell_count=cell_count,
+                                    column_count=column_count,
+                                    table_type="skipped_chapter_three_table",
+                                    action="skipped",
+                                    reason="under chapter 參; all table layout and color fixes skipped",
+                                    special_layout_used=False,
+                                    layout_fixed=False,
+                                    color_fixed=False,
+                                    changed_to_gray=0,
+                                    cleared_colors=0,
+                                    shading_debug=[],
+                                )
+                            )
+                            continue
 
                         if item.filename == "word/document.xml" and table_index == 1:
                             summary.skipped_first_page_tables += 1
@@ -2080,20 +2207,9 @@ def fix_docx_fast(
                             )
                             continue
 
-                        skip_special_layout_under_chapter_three = (
-                            options.skip_special_table_layout_under_chapter_three
-                            and item.filename == "word/document.xml"
-                            and is_table_under_chapter_three(
-                                tbl,
-                                numbering_level_lookup,
-                                numbering_format_lookup,
-                                style_numbering_lookup,
-                            )
-                        )
                         special_layout = (
                             options.fix_table_layout
                             and column_count <= 4
-                            and not skip_special_layout_under_chapter_three
                         )
                         special_table_geometry = None
                         if special_layout:
@@ -2127,11 +2243,7 @@ def fix_docx_fast(
                                     if options.fix_color
                                     else "apply_normal_table_format"
                                 )
-                                reason = (
-                                    "skipped special layout under chapter 參"
-                                    if skip_special_layout_under_chapter_three and column_count <= 4
-                                    else "column_count > 4"
-                                )
+                                reason = "column_count > 4"
                         elif options.fix_color:
                             table_type = "color_only_table"
                             action = "apply_color_only"
@@ -2187,11 +2299,12 @@ def fix_docx_fast(
             if should_sanitize_indent_unit_part(item.filename):
                 if root is None:
                     root = etree.fromstring(data, parser)
-                exclude_paragraph_ids = (
-                    document_toc_paragraph_ids
-                    if item.filename == "word/document.xml" and document_toc_paragraph_ids
-                    else None
-                )
+                exclude_paragraph_ids = None
+                if item.filename == "word/document.xml":
+                    exclude_set: set[int] = set()
+                    exclude_set.update(document_toc_paragraph_ids)
+                    exclude_set.update(document_chapter_three_paragraph_ids)
+                    exclude_paragraph_ids = exclude_set or None
                 if item.filename == "word/styles.xml":
                     removed_char_indent_attrs = remove_character_indent_attrs_from_styles_root_excluding_toc(
                         root,

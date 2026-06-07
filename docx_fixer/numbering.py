@@ -685,16 +685,25 @@ def apply_styles_outline_format_to_root(
     numbering_level_lookup=None,
     style_numbering_lookup=None,
     change_logs: list[str] | None = None,
+    excluded_style_ids: set[str] | None = None,
 ) -> bool:
     from .indent_settings import twips_to_cm
     from .outline import apply_indent_spec_to_pPr
 
     style_numbering_lookup = style_numbering_lookup or {}
+    excluded_style_ids = excluded_style_ids or set()
     changed = False
 
     for style in root.xpath("./w:style[@w:type='paragraph']", namespaces=NS):
         style_id = style.get(qn("styleId")) or ""
         style_name = style_name_value(style)
+        if style_id in excluded_style_ids:
+            if change_logs is not None:
+                change_logs.append(
+                    "STYLES_XML_SKIP_EXCLUDED_STYLE: "
+                    f"styleId={style_id}; name={style_name}; reason=used_by_chapter_參"
+                )
+            continue
         if is_toc_style_definition(style_id, style_name):
             if change_logs is not None:
                 change_logs.append(

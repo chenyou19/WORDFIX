@@ -27,11 +27,13 @@ class CliOptionTests(unittest.TestCase):
             "--level1-level2-body-first-line-indent",
             "--word-com-check-body-font",
             "--skip-special-layout-under-chapter-three",
+            "--skip-all-under-chapter-three",
         ])
 
         self.assertTrue(args.level1_level2_body_first_line_indent)
         self.assertTrue(args.word_com_check_body_font)
         self.assertTrue(args.skip_special_layout_under_chapter_three)
+        self.assertTrue(args.skip_all_under_chapter_three)
 
     def test_old_level_two_body_indent_argument_is_kept_as_alias(self):
         args = parse_args(["input.docx", "output.docx", "--level2-body-first-line-indent"])

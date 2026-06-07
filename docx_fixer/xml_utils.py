@@ -70,7 +70,7 @@ def remove_character_indent_attrs_from_root(
                     if len(preview) > 80:
                         preview = preview[:77] + "..."
                     change_logs.append(
-                        "CHAR_INDENT_SANITIZE_SKIP_TOC: "
+                        "CHAR_INDENT_SANITIZE_SKIP_EXCLUDED: "
                         f"part={part_name} paragraph_index={paragraph_index} text={preview}"
                     )
                 continue

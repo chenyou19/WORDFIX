@@ -489,6 +489,43 @@ def make_toc_immutable_styles_xml() -> bytes:
     return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_chapter_three_skip_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(
+        body,
+        "\u53c3\u3001\u7b2c\u4e09\u7ae0",
+        outline=4,
+        ind_attrs={"left": "321", "leftChars": "111", "firstLineChars": "222"},
+        font_size_pt=14,
+    )
+    add_test_paragraph(
+        body,
+        "\u4e00\u3001\u53c3\u7ae0\u5b50\u6a19",
+        outline=5,
+        ind_attrs={"left": "654", "leftChars": "333", "firstLineChars": "444"},
+        font_size_pt=14,
+    )
+    add_test_paragraph(
+        body,
+        "\u53c3\u7ae0\u666e\u901a\u5167\u6587",
+        outline=6,
+        ind_attrs={"left": "777", "leftChars": "555", "firstLineChars": "666"},
+        font_size_pt=14,
+    )
+    body.append(make_table([3, 3]))
+    add_test_paragraph(body, "\u8086\u3001\u7b2c\u56db\u7ae0")
+    add_test_paragraph(
+        body,
+        "\u8086\u7ae0\u666e\u901a\u5167\u6587",
+        ind_attrs={"left": "999", "leftChars": "888", "firstLineChars": "777"},
+        font_size_pt=14,
+    )
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def read_part_root(path: Path, part_name: str):
     with ZipFile(path, "r") as zf:
         return etree.fromstring(zf.read(part_name))
@@ -540,6 +577,66 @@ def assert_all_document_outlines_are_body(test_case: unittest.TestCase, path: Pa
 
 
 class DocxProcessorTests(unittest.TestCase):
+    def test_skip_all_under_chapter_three_preserves_paragraphs_tables_and_char_indents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            make_docx(input_docx, make_chapter_three_skip_document_xml())
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=True,
+                    fix_color=True,
+                    fix_paragraph=True,
+                    remove_all_outline_levels=True,
+                    normalize_with_word_com=False,
+                    skip_all_under_chapter_three=True,
+                ),
+            )
+
+            root = read_document_root(output_docx)
+            paragraphs = root.xpath(".//w:p[not(ancestor::w:tbl)]", namespaces=NS)
+            chapter_heading_ind = paragraphs[2].find("./w:pPr/w:ind", NS)
+            chapter_child_ind = paragraphs[3].find("./w:pPr/w:ind", NS)
+            chapter_body_ind = paragraphs[4].find("./w:pPr/w:ind", NS)
+            after_chapter_body_ind = paragraphs[6].find("./w:pPr/w:ind", NS)
+
+            self.assertEqual(paragraphs[2].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "4")
+            self.assertEqual(paragraphs[3].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "5")
+            self.assertEqual(paragraphs[4].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "6")
+            self.assertEqual(chapter_heading_ind.get(qn("left")), "321")
+            self.assertEqual(chapter_heading_ind.get(qn("leftChars")), "111")
+            self.assertEqual(chapter_child_ind.get(qn("leftChars")), "333")
+            self.assertEqual(chapter_body_ind.get(qn("leftChars")), "555")
+            self.assertIsNotNone(chapter_body_ind.get(qn("firstLineChars")))
+
+            self.assertEqual(paragraphs[5].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "0")
+            self.assertIsNone(after_chapter_body_ind.get(qn("leftChars")))
+            self.assertIsNone(after_chapter_body_ind.get(qn("firstLineChars")))
+            self.assertTrue(any(
+                record.get("text_preview") == "\u8086\u7ae0\u666e\u901a\u5167\u6587"
+                for record in summary.body_indent_records
+            ))
+            self.assertFalse(any(
+                "\u53c3\u7ae0" in str(record.get("text_preview"))
+                for record in summary.body_indent_records
+            ))
+
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertIsNone(tables[0].find("w:tblPr", NS))
+            self.assertEqual(summary.table_log_records[0]["table_type"], "skipped_chapter_three_table")
+            self.assertEqual(summary.table_log_records[0]["action"], "skipped")
+            self.assertEqual(
+                summary.table_log_records[0]["reason"],
+                "under chapter \u53c3; all table layout and color fixes skipped",
+            )
+
+            joined_logs = "\n".join(summary.paragraph_logs + summary.numbering_xml_logs)
+            self.assertIn("skipped chapter \u53c3 content; no formatting applied", joined_logs)
+            self.assertIn("CHAR_INDENT_SANITIZE_SKIP_EXCLUDED", joined_logs)
+
     def test_special_table_uses_previous_paragraph_text_start_and_page_right_boundary(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
@@ -1909,7 +2006,7 @@ class DocxProcessorTests(unittest.TestCase):
             joined_paragraph_logs = "\n".join(summary.paragraph_logs)
             joined_numbering_logs = "\n".join(summary.numbering_xml_logs)
             self.assertIn("skipped TOC paragraph; no formatting applied", joined_paragraph_logs)
-            self.assertIn("CHAR_INDENT_SANITIZE_SKIP_TOC", joined_numbering_logs)
+            self.assertIn("CHAR_INDENT_SANITIZE_SKIP_EXCLUDED", joined_numbering_logs)
             self.assertIn("STYLES_XML_SKIP_TOC_STYLE: styleId=TOC1", joined_numbering_logs)
             self.assertIn("NUMBERING_XML_SKIP_TOC_NUMBERING", joined_numbering_logs)
             self.assertNotIn("STYLES_XML_NUMBERED_STYLE_INDENT: styleId=TOC1", joined_numbering_logs)

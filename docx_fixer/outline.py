@@ -441,9 +441,24 @@ def remove_all_outline_levels_from_any_root(
     root,
     stop: StopController | None = None,
     summary=None,
+    exclude_paragraph_ids: set[int] | None = None,
 ) -> int:
     """Remove outline levels from paragraph properties in this XML root."""
     removed_count = 0
+    if exclude_paragraph_ids:
+        for p in root.xpath(".//w:p", namespaces=NS):
+            if stop:
+                stop.check()
+            if id(p) in exclude_paragraph_ids:
+                continue
+            if remove_paragraph_outline_level(p):
+                removed_count += 1
+
+        if summary is not None:
+            summary.removed_all_outline_paragraphs += removed_count
+
+        return removed_count
+
     for outline_lvl in root.xpath(".//w:pPr/w:outlineLvl", namespaces=NS):
         if stop:
             stop.check()
@@ -463,12 +478,15 @@ def force_all_paragraphs_to_body_outline_level(
     root,
     stop: StopController | None = None,
     summary=None,
+    exclude_paragraph_ids: set[int] | None = None,
 ) -> int:
     """Force every paragraph in this XML root to Word body outline level."""
     changed_count = 0
     for p in root.xpath(".//w:p", namespaces=NS):
         if stop:
             stop.check()
+        if exclude_paragraph_ids and id(p) in exclude_paragraph_ids:
+            continue
 
         pPr = get_or_add(p, "pPr", first=True)
         outline_lvl = get_or_add(pPr, "outlineLvl")
@@ -487,11 +505,13 @@ def remove_all_outline_levels_from_root(
     root,
     stop: StopController | None = None,
     summary=None,
+    exclude_paragraph_ids: set[int] | None = None,
 ) -> int:
     return force_all_paragraphs_to_body_outline_level(
         root,
         stop=stop,
         summary=summary,
+        exclude_paragraph_ids=exclude_paragraph_ids,
     )
 
 
@@ -1502,6 +1522,7 @@ def fix_outline_paragraphs(
     outline_preface_paragraphs: bool = False,
     enable_level1_level2_body_first_line_indent: bool = False,
     word_com_check_body_font_when_xml_not_14: bool = False,
+    skip_paragraph_ids: set[int] | None = None,
 ) -> int:
     paragraphs = root.xpath(".//w:p", namespaces=NS)
     if summary is not None:
@@ -1572,6 +1593,18 @@ def fix_outline_paragraphs(
                 continue
 
             before_outline = get_paragraph_outline_level_value(p)
+            if skip_paragraph_ids and id(p) in skip_paragraph_ids:
+                append_paragraph_change_log(
+                    change_logs,
+                    part_name,
+                    paragraph_index,
+                    text,
+                    before_outline,
+                    before_outline,
+                    "skipped chapter 參 content; no formatting applied",
+                )
+                continue
+
             if not main_outline_started and is_processing_start_marker(
                 p,
                 text,

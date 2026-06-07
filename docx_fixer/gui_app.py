@@ -64,7 +64,7 @@ class DocxFixerApp:
         self.outline_preface_var = tk.BooleanVar(value=False)
         self.level1_level2_body_first_line_indent_var = tk.BooleanVar(value=True)
         self.word_com_check_body_font_var = tk.BooleanVar(value=True)
-        self.skip_special_table_layout_under_chapter_three_var = tk.BooleanVar(value=True)
+        self.skip_all_under_chapter_three_var = tk.BooleanVar(value=True)
 
         self.status_var = tk.StringVar(value="請先選擇 .docx 檔案")
         self.progress_var = tk.DoubleVar(value=0)
@@ -164,8 +164,8 @@ class DocxFixerApp:
 
         ttk.Checkbutton(
             advanced_option_frame,
-            text="參、裡面的表格不要套用特殊縮排",
-            variable=self.skip_special_table_layout_under_chapter_three_var,
+            text="參、區段全部不調整",
+            variable=self.skip_all_under_chapter_three_var,
         ).grid(row=1, column=0, pady=4, sticky="w")
 
         ttk.Checkbutton(
@@ -457,7 +457,7 @@ class DocxFixerApp:
             outline_preface_paragraphs=self.outline_preface_var.get(),
             enable_level1_level2_body_first_line_indent=self.level1_level2_body_first_line_indent_var.get(),
             word_com_check_body_font_when_xml_not_14=self.word_com_check_body_font_var.get(),
-            skip_special_table_layout_under_chapter_three=self.skip_special_table_layout_under_chapter_three_var.get(),
+            skip_all_under_chapter_three=self.skip_all_under_chapter_three_var.get(),
         )
 
         if not (
@@ -668,5 +668,4 @@ class DocxFixerApp:
             pass
 
         self.root.after(120, self._poll_queue)
-
 

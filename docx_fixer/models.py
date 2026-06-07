@@ -13,7 +13,14 @@ class ProcessOptions:
     normalize_with_word_com: bool = True
     enable_level1_level2_body_first_line_indent: bool = False
     word_com_check_body_font_when_xml_not_14: bool = False
+    skip_all_under_chapter_three: bool = False
     skip_special_table_layout_under_chapter_three: bool = False
+
+    def __post_init__(self) -> None:
+        # Backward compatibility: the old table-only flag now means the safer
+        # chapter-wide skip behavior.
+        if self.skip_special_table_layout_under_chapter_three:
+            self.skip_all_under_chapter_three = True
 
 
 @dataclass

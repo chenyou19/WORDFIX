@@ -34,6 +34,10 @@ def run_cli(args) -> int:
         outline_preface_paragraphs=args.outline_preface,
         enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
         word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
+        skip_all_under_chapter_three=(
+            args.skip_all_under_chapter_three
+            or args.skip_special_layout_under_chapter_three
+        ),
         skip_special_table_layout_under_chapter_three=args.skip_special_layout_under_chapter_three,
     )
 
@@ -54,6 +58,10 @@ def run_cli(args) -> int:
             outline_preface_paragraphs=False,
             enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
             word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
+            skip_all_under_chapter_three=(
+                args.skip_all_under_chapter_three
+                or args.skip_special_layout_under_chapter_three
+            ),
             skip_special_table_layout_under_chapter_three=args.skip_special_layout_under_chapter_three,
         )
 
@@ -127,7 +135,12 @@ def parse_args(argv: list[str]):
     parser.add_argument(
         "--skip-special-layout-under-chapter-three",
         action="store_true",
-        help="Do not apply special table layout under chapter 參",
+        help="Backward-compatible alias for --skip-all-under-chapter-three",
+    )
+    parser.add_argument(
+        "--skip-all-under-chapter-three",
+        action="store_true",
+        help="Do not modify any content under chapter 參 until the next first-level heading",
     )
     parser.add_argument("--quiet", action="store_true", help="Do not print progress")
     return parser.parse_args(argv)
