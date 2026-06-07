@@ -58,6 +58,7 @@ def make_document_xml() -> bytes:
     for text, outline, style in [
         ("\u666e\u901a\u6b63\u6587", 5, "Heading1"),
         ("\u58f9\u3001\u5e8f\u8a00", 2, None),
+        ("\u58f9\u3001\u5e8f\u8a00", 2, None),
     ]:
         p = etree.SubElement(body, qn("p"))
         pPr = etree.SubElement(p, qn("pPr"))
@@ -172,6 +173,7 @@ def make_document_with_styled_level_four_body() -> bytes:
 
     for text, style in [
         ("\u58f9\u3001\u5e8f\u8a00", None),
+        ("\u58f9\u3001\u5e8f\u8a00", None),
         ("1. \u7b2c\u56db\u968e\u6a19\u984c", None),
         ("\u4f7f\u7528 DefaultText 14 pt \u7684\u5167\u6587", "DefaultText"),
     ]:
@@ -197,6 +199,7 @@ def make_document_with_styled_level_two_body() -> bytes:
     body = etree.SubElement(document, qn("body"))
 
     for text, style in [
+        ("\u58f9\u3001\u5e8f\u8a00", None),
         ("\u58f9\u3001\u5e8f\u8a00", None),
         ("\u4e00\u3001\u7b2c\u4e8c\u968e\u6a19\u984c", None),
         ("\u4f7f\u7528 DefaultText 14 pt \u7684\u7b2c\u4e8c\u968e\u5167\u6587", "DefaultText"),
@@ -323,6 +326,7 @@ def make_document_with_style_level_four_heading_and_body(
 
     for text, style, font_size_pt in [
         ("\u58f9\u3001\u5e8f\u8a00", None, None),
+        ("\u58f9\u3001\u5e8f\u8a00", None, None),
         ("\u7b2c\u56db\u968e\u81ea\u52d5\u6a19\u984c", "NumberedL4", None),
         (body_text, "BodyText", body_font_size_pt),
     ]:
@@ -340,6 +344,149 @@ def make_document_with_style_level_four_heading_and_body(
         t.text = text
 
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def add_test_paragraph(
+    body,
+    text: str,
+    *,
+    style: str | None = None,
+    num_id: str | None = None,
+    ilvl: int | None = None,
+    outline: int | None = None,
+    ind_attrs: dict[str, str] | None = None,
+    tab_pos: str | None = None,
+    font_size_pt: int | None = None,
+):
+    p = etree.SubElement(body, qn("p"))
+    pPr = etree.SubElement(p, qn("pPr"))
+    if style is not None:
+        p_style = etree.SubElement(pPr, qn("pStyle"))
+        p_style.set(qn("val"), style)
+    if outline is not None:
+        outline_el = etree.SubElement(pPr, qn("outlineLvl"))
+        outline_el.set(qn("val"), str(outline))
+    if num_id is not None:
+        num_pr = etree.SubElement(pPr, qn("numPr"))
+        ilvl_el = etree.SubElement(num_pr, qn("ilvl"))
+        ilvl_el.set(qn("val"), str(ilvl or 0))
+        num_id_el = etree.SubElement(num_pr, qn("numId"))
+        num_id_el.set(qn("val"), num_id)
+    if ind_attrs:
+        make_ind(pPr, **ind_attrs)
+    if tab_pos is not None:
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "left")
+        tab.set(qn("pos"), tab_pos)
+    r = etree.SubElement(p, qn("r"))
+    if font_size_pt is not None:
+        rPr = etree.SubElement(r, qn("rPr"))
+        sz = etree.SubElement(rPr, qn("sz"))
+        sz.set(qn("val"), str(font_size_pt * 2))
+    t = etree.SubElement(r, qn("t"))
+    t.text = text
+    return p
+
+
+def make_toc_immutable_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+    add_test_paragraph(body, "\u76ee\u9304")
+    add_test_paragraph(
+        body,
+        "\u58f9\u3001\u5e8f\u8a00",
+        style="TOC1",
+        num_id="1",
+        ilvl=0,
+        outline=5,
+        ind_attrs={
+            "left": "111",
+            "hanging": "22",
+            "leftChars": "333",
+            "startChars": "444",
+            "hangingChars": "555",
+            "firstLineChars": "666",
+        },
+        tab_pos="777",
+    )
+    add_test_paragraph(
+        body,
+        "\u4e00\u3001\u76ee\u9304\u9805\u76ee",
+        outline=6,
+        ind_attrs={
+            "left": "211",
+            "start": "212",
+            "leftChars": "313",
+            "startChars": "414",
+            "hangingChars": "515",
+            "firstLineChars": "616",
+        },
+        tab_pos="878",
+    )
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(
+        body,
+        "\u9019\u662f\u6b63\u6587 14 pt \u5167\u5bb9",
+        font_size_pt=14,
+        ind_attrs={"left": "999", "leftChars": "111", "firstLineChars": "222"},
+        tab_pos="999",
+    )
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_toc_immutable_numbering_xml() -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    for abstract_id, left, chars, tab_pos in [("1", "111", "333", "777"), ("2", "999", "444", "888")]:
+        abstract = etree.SubElement(numbering, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), abstract_id)
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1. ")
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        make_ind(pPr, left=left, hanging="22", leftChars=chars, firstLineChars="555")
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "left")
+        tab.set(qn("pos"), tab_pos)
+        suff = etree.SubElement(lvl, qn("suff"))
+        suff.set(qn("val"), "tab")
+
+        num = etree.SubElement(numbering, qn("num"))
+        num.set(qn("numId"), abstract_id)
+        abstract_el = etree.SubElement(num, qn("abstractNumId"))
+        abstract_el.set(qn("val"), abstract_id)
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_toc_immutable_styles_xml() -> bytes:
+    styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
+    toc_style = etree.SubElement(styles, qn("style"))
+    toc_style.set(qn("type"), "paragraph")
+    toc_style.set(qn("styleId"), "TOC1")
+    toc_name = etree.SubElement(toc_style, qn("name"))
+    toc_name.set(qn("val"), "Table of Contents 1")
+    toc_pPr = etree.SubElement(toc_style, qn("pPr"))
+    make_ind(toc_pPr, left="111", leftChars="333", firstLineChars="555")
+    toc_tabs = etree.SubElement(toc_pPr, qn("tabs"))
+    toc_tab = etree.SubElement(toc_tabs, qn("tab"))
+    toc_tab.set(qn("val"), "left")
+    toc_tab.set(qn("pos"), "777")
+
+    numbered_style = etree.SubElement(styles, qn("style"))
+    numbered_style.set(qn("type"), "paragraph")
+    numbered_style.set(qn("styleId"), "BodyNumbered")
+    pPr = etree.SubElement(numbered_style, qn("pPr"))
+    num_pr = etree.SubElement(pPr, qn("numPr"))
+    ilvl_el = etree.SubElement(num_pr, qn("ilvl"))
+    ilvl_el.set(qn("val"), "0")
+    num_id_el = etree.SubElement(num_pr, qn("numId"))
+    num_id_el.set(qn("val"), "2")
+    make_ind(pPr, left="999", leftChars="444")
+    return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
 def read_part_root(path: Path, part_name: str):
@@ -1284,7 +1431,7 @@ class DocxProcessorTests(unittest.TestCase):
             )
 
             root = read_document_root(output_docx)
-            body_paragraph = root.xpath(".//w:p", namespaces=NS)[2]
+            body_paragraph = root.xpath(".//w:p", namespaces=NS)[3]
             ind = body_paragraph.find("./w:pPr/w:ind", NS)
             self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
             self.assertIsNone(ind.get(qn("start")))
@@ -1292,7 +1439,7 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
             debug = "\n".join(summary.body_indent_debug_logs)
             self.assertIn("font_size_source=paragraph_style:DefaultText", debug)
-            self.assertTrue(any(int(record["paragraph_index"]) == 3 for record in summary.body_indent_records))
+            self.assertTrue(any(int(record["paragraph_index"]) == 4 for record in summary.body_indent_records))
 
     def test_level_two_body_indent_sets_first_line_twips_and_record(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1317,7 +1464,7 @@ class DocxProcessorTests(unittest.TestCase):
             )
 
             root = read_document_root(output_docx)
-            body_paragraph = root.xpath(".//w:p", namespaces=NS)[2]
+            body_paragraph = root.xpath(".//w:p", namespaces=NS)[3]
             ind = body_paragraph.find("./w:pPr/w:ind", NS)
             self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
             self.assertEqual(ind.get(qn("firstLine")), "560")
@@ -1352,7 +1499,7 @@ class DocxProcessorTests(unittest.TestCase):
             )
 
             root = read_document_root(output_docx)
-            body_paragraph = root.xpath(".//w:p", namespaces=NS)[2]
+            body_paragraph = root.xpath(".//w:p", namespaces=NS)[3]
             ind = body_paragraph.find("./w:pPr/w:ind", NS)
             self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
             self.assertIsNone(ind.get(qn("start")))
@@ -1386,8 +1533,8 @@ class DocxProcessorTests(unittest.TestCase):
             spec = TEMPLATE_OUTLINE_INDENTS[3]
             document_root = read_part_root(output_docx, "word/document.xml")
             paragraphs = document_root.xpath(".//w:p", namespaces=NS)
-            heading_ind = paragraphs[1].find("./w:pPr/w:ind", NS)
-            body_ind = paragraphs[2].find("./w:pPr/w:ind", NS)
+            heading_ind = paragraphs[2].find("./w:pPr/w:ind", NS)
+            body_ind = paragraphs[3].find("./w:pPr/w:ind", NS)
             self.assertEqual(heading_ind.get(qn("left")), spec["left"])
             self.assertEqual(heading_ind.get(qn("hanging")), spec["hanging"])
             self.assertAlmostEqual(int(heading_ind.get(qn("left"))) / 20 / 28.3464567, 3.46, places=2)
@@ -1396,7 +1543,7 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIsNone(body_ind.get(qn("hanging")))
             self.assertIsNone(body_ind.get(qn("firstLine")))
             self.assertIsNone(body_ind.get(qn("start")))
-            self.assertIsNone(paragraphs[2].find("./w:pPr/w:tabs", NS))
+            self.assertIsNone(paragraphs[3].find("./w:pPr/w:tabs", NS))
 
             numbering_root = read_part_root(output_docx, "word/numbering.xml")
             numbering_lvl = numbering_root.find(".//w:lvl", NS)
@@ -1428,7 +1575,7 @@ class DocxProcessorTests(unittest.TestCase):
             records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.46, places=2)
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_hanging_cm"], 0.50, places=2)
-            self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.70, places=2)
+            self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.45, places=2)
             self.assertEqual(records_by_kind["body"]["expected_firstline_cm"], 0.0)
 
     def test_fix_docx_fast_passes_only_font_check_records_to_word_com(self):
@@ -1692,6 +1839,81 @@ class DocxProcessorTests(unittest.TestCase):
             assert_docx_has_no_character_indent_attrs(self, output_docx)
             self.assertGreater(summary.character_indent_attrs_removed, 0)
 
+    def test_toc_range_is_immutable_across_document_styles_numbering_and_sanitize(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            document_xml = make_toc_immutable_document_xml()
+            styles_xml = make_toc_immutable_styles_xml()
+            numbering_xml = make_toc_immutable_numbering_xml()
+            make_docx(
+                input_docx,
+                document_xml,
+                styles_xml=styles_xml,
+                numbering_xml=numbering_xml,
+            )
+
+            input_document_root = etree.fromstring(document_xml)
+            input_styles_root = etree.fromstring(styles_xml)
+            input_numbering_root = etree.fromstring(numbering_xml)
+            input_paragraphs = input_document_root.xpath(".//w:p", namespaces=NS)
+            input_toc_marker_xml = etree.tostring(input_paragraphs[1])
+            input_toc_entry_xml = etree.tostring(input_paragraphs[2])
+            input_toc_style_xml = etree.tostring(
+                input_styles_root.xpath("./w:style[@w:styleId='TOC1']", namespaces=NS)[0]
+            )
+            input_toc_numbering_xml = etree.tostring(
+                input_numbering_root.xpath("./w:abstractNum[@w:abstractNumId='1']", namespaces=NS)[0]
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                ),
+            )
+
+            output_document_root = read_document_root(output_docx)
+            output_styles_root = read_part_root(output_docx, "word/styles.xml")
+            output_numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            output_paragraphs = output_document_root.xpath(".//w:p", namespaces=NS)
+
+            self.assertEqual(etree.tostring(output_paragraphs[1]), input_toc_marker_xml)
+            self.assertEqual(etree.tostring(output_paragraphs[2]), input_toc_entry_xml)
+            self.assertEqual(
+                etree.tostring(output_styles_root.xpath("./w:style[@w:styleId='TOC1']", namespaces=NS)[0]),
+                input_toc_style_xml,
+            )
+            self.assertEqual(
+                etree.tostring(output_numbering_root.xpath("./w:abstractNum[@w:abstractNumId='1']", namespaces=NS)[0]),
+                input_toc_numbering_xml,
+            )
+
+            body_marker = output_paragraphs[3]
+            body_paragraph = output_paragraphs[4]
+            self.assertEqual(body_marker.find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "0")
+            self.assertIsNotNone(body_paragraph.find("./w:pPr/w:ind", NS))
+            self.assertIsNone(body_paragraph.find("./w:pPr/w:ind", NS).get(qn("leftChars")))
+            self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
+
+            non_toc_numbering_ind = output_numbering_root.xpath(
+                "./w:abstractNum[@w:abstractNumId='2']/w:lvl/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertNotEqual(non_toc_numbering_ind.get(qn("left")), "999")
+            self.assertIsNone(non_toc_numbering_ind.get(qn("leftChars")))
+
+            joined_paragraph_logs = "\n".join(summary.paragraph_logs)
+            joined_numbering_logs = "\n".join(summary.numbering_xml_logs)
+            self.assertIn("skipped TOC paragraph; no formatting applied", joined_paragraph_logs)
+            self.assertIn("CHAR_INDENT_SANITIZE_SKIP_TOC", joined_numbering_logs)
+            self.assertIn("STYLES_XML_SKIP_TOC_STYLE: styleId=TOC1", joined_numbering_logs)
+            self.assertIn("NUMBERING_XML_SKIP_TOC_NUMBERING", joined_numbering_logs)
+            self.assertNotIn("STYLES_XML_NUMBERED_STYLE_INDENT: styleId=TOC1", joined_numbering_logs)
+
     def test_remove_all_outline_only_clears_existing_outline_levels_in_all_parts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_docx = Path(temp_dir) / "input.docx"
@@ -1714,11 +1936,11 @@ class DocxProcessorTests(unittest.TestCase):
                 ),
             )
 
-            self.assertEqual(paragraph_outlines(output_docx), ["9", "9"])
+            self.assertEqual(paragraph_outlines(output_docx), ["9", "9", "9"])
             assert_all_document_outlines_are_body(self, output_docx)
             self.assertEqual(part_outline_count(output_docx, "word/styles.xml"), 0)
             self.assertEqual(part_outline_count(output_docx, "word/numbering.xml"), 0)
-            self.assertEqual(summary.removed_all_outline_paragraphs, 4)
+            self.assertEqual(summary.removed_all_outline_paragraphs, 5)
             self.assertEqual(summary.paragraphs, 0)
 
     def test_remove_all_outline_runs_before_paragraph_fixing_reapplies_numbered_outline(self):
@@ -1738,8 +1960,8 @@ class DocxProcessorTests(unittest.TestCase):
                 ),
             )
 
-            self.assertEqual(paragraph_outlines(output_docx), ["9", "0"])
-            self.assertEqual(summary.removed_all_outline_paragraphs, 2)
+            self.assertEqual(paragraph_outlines(output_docx), ["9", "9", "0"])
+            self.assertEqual(summary.removed_all_outline_paragraphs, 3)
             self.assertEqual(summary.paragraph_level_counts[0], 1)
 
 

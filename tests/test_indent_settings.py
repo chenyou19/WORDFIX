@@ -47,14 +47,14 @@ class IndentSettingsTests(unittest.TestCase):
     def test_current_settings_expose_new_body_indent_defaults_for_gui(self):
         settings = current_indent_settings()
         expected = [
-            (-0.04, 1.15, 0),
+            (-0.04, 1.27, 1.23),
             (0.70, 1.12, 1.83),
             (1.47, 1.48, 2.96),
-            (2.96, 0.50, 3.70),
-            (3.45, 1.23, 4.91),
-            (4.92, 0.50, 5.41),
-            (5.16, 1.24, 6.41),
-            (6.39, 0.50, 6.85),
+            (2.96, 0.50, 3.45),
+            (3.21, 1.23, 4.44),
+            (4.45, 0.50, 4.94),
+            (4.70, 1.23, 5.94),
+            (5.94, 0.49, 6.85),
             (7.72, 1.24, 8.96),
         ]
 
@@ -69,15 +69,15 @@ class IndentSettingsTests(unittest.TestCase):
         level_8 = settings["body"][7]
 
         heading_left = float(level_8["number_start_cm"]) + float(level_8["hanging_cm"])
-        self.assertAlmostEqual(heading_left, 6.89, places=2)
+        self.assertAlmostEqual(heading_left, 6.43, places=2)
         self.assertAlmostEqual(float(level_8["body_left_cm"]), 6.85, places=2)
         self.assertNotAlmostEqual(float(level_8["body_left_cm"]), heading_left, places=2)
 
     def test_heading_left_is_computed_from_number_start_and_hanging(self):
         expected = {
             3: 2.96 + 0.50,
-            5: 4.92 + 0.50,
-            7: 6.39 + 0.50,
+            5: 4.45 + 0.50,
+            7: 5.94 + 0.49,
         }
 
         for level, heading_left_cm in expected.items():
@@ -97,7 +97,7 @@ class IndentSettingsTests(unittest.TestCase):
 
         self.assertAlmostEqual(float(builtin_level_four["number_start_cm"]), 2.96, places=2)
         self.assertAlmostEqual(float(builtin_level_four["hanging_cm"]), 0.50, places=2)
-        self.assertAlmostEqual(float(builtin_level_four["body_left_cm"]), 3.70, places=2)
+        self.assertAlmostEqual(float(builtin_level_four["body_left_cm"]), 3.45, places=2)
 
     def test_save_and_load_settings_round_trips_preface_values(self):
         settings = current_indent_settings()

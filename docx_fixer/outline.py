@@ -57,10 +57,11 @@ def normalize_visible_text(text: str) -> str:
 
 def should_skip_style_numbering(text: str) -> bool:
     """
-    判斷這段文字是否應跳過「樣式編號」推論。
+    Return whether this text should skip style-numbering inference.
 
-    註解型長段文字通常不是標題，若文字太長且結尾不像標題，
-    就不要只因樣式關聯而把它判成大綱編號。
+    Long note-like paragraphs are usually not headings. When text is too long
+    and does not end like a heading, do not classify it as outline numbering
+    based only on style association.
     """
     normalized = normalize_visible_text(text)
     if starts_with_note_marker(normalized):
@@ -108,8 +109,9 @@ def is_processing_start_marker(
 
 def effective_indent_level(level: int, set_outline: bool) -> int:
     """
-    序言只套縮排、不套大綱時，層級要往前折一層，但最低仍為 0。
-    這樣序言的視覺縮排會比本文對應層級稍微收斂。
+    When preface paragraphs receive indentation without outline levels, fold
+    the level back by one while keeping the minimum at 0. This makes preface
+    indentation slightly tighter than the matching body level.
     """
     if set_outline:
         return level
@@ -146,13 +148,14 @@ def is_ascii_letter_or_digit(ch: str) -> bool:
 
 def match_parenthesized_numbering(text: str):
     """
-    比對括號型手動編號。
-    level 2: `(壹)` / `（一）`
+    Match parenthesized manual numbering.
+    level 2: parenthesized Chinese numerals
     level 4: `(1)`
     level 6: `(A)`
     level 8: `(a)`
 
-    後方若緊接英數內容，避免把一般文字誤判成編號。
+    Avoid treating normal text as numbering when alphanumeric content follows
+    the marker immediately.
     """
     patterns = [
         (rf"^[（(][{SIMPLE_NUM}]+[)）]", 2),
@@ -168,7 +171,7 @@ def match_parenthesized_numbering(text: str):
 
         end_index = m.end()
 
-        # 避免把 `(A)pple`、`(a)bc`、`(1)234` 之類內容誤判成編號。
+        # Avoid misclassifying content like `(A)pple`, `(a)bc`, or `(1)234`.
         if end_index < len(text):
             next_char = text[end_index]
             if level in {4, 6, 8} and is_ascii_letter_or_digit(next_char):
@@ -181,14 +184,15 @@ def match_parenthesized_numbering(text: str):
 
 def match_plain_numbering(text: str):
     """
-    比對一般手動編號。
-    level 0: `壹、`
-    level 1: `一、`
+    Match plain manual numbering.
+    level 0: financial Chinese numerals with an ideographic separator
+    level 1: simple Chinese numerals with an ideographic separator
     level 3: `1.`
     level 5: `A.`
     level 7: `a.`
 
-    編號後若立刻接英數內容，視為一般文字而非大綱編號。
+    Treat the text as normal content instead of outline numbering when
+    alphanumeric content follows the marker immediately.
     """
     checks = [
         (rf"^[{FINANCIAL_NUM}]+、", 0),
@@ -278,12 +282,13 @@ def trim_manual_numbering_suffix_spacing(p, text: str | None = None) -> tuple[bo
 
 def detect_outline_level(text: str):
     """
-    依段落可見文字推測手動編號層級。
-    會先檢查括號型，再檢查一般型，避免不同編號樣式互相干擾。
+    Infer the manual numbering level from paragraph visible text.
+    Check parenthesized markers before plain markers so numbering styles do not
+    interfere with each other.
 
-    level 0: `壹、`
-    level 1: `一、`
-    level 2: `(壹)` / `（一）`
+    level 0: financial Chinese numerals with an ideographic separator
+    level 1: simple Chinese numerals with an ideographic separator
+    level 2: parenthesized Chinese numerals
     level 3: `1.`
     level 4: `(1)`
     level 5: `A.`
@@ -321,11 +326,12 @@ def clear_indent_attrs(ind) -> None:
 
 def normalize_tabs_to_text_position(pPr, text_position_twips: str) -> None:
     """
-    重新建立對齊文字起點所需的 tab stop。
+    Rebuild the tab stop required to align with the text start.
 
-    Word 的編號段落若保留舊 tab 設定，可能會讓編號與正文位置跑掉。
-    這裡會先清除既有 tabs，再寫入與 left indent 對齊的新 tab stop，
-    讓段落在 Word 重新開啟後仍維持預期排版。
+    Old tab settings on Word numbered paragraphs can shift the number and body
+    text positions. Existing tabs are cleared before writing a new tab stop
+    aligned with the left indent, preserving the expected layout after Word
+    reopens the document.
     """
     tabs = pPr.find("w:tabs", NS)
     if tabs is not None:
@@ -393,10 +399,11 @@ def apply_indent_spec_to_pPr(
 
 
 def apply_paragraph_outline_level(pPr, level: int) -> None:
-    """設定 Word 段落的大綱層級。
+    """Set a Word paragraph outline level.
 
-    Word 介面中的大綱層級 1 到 9，在 XML `w:outlineLvl` 中對應 0 到 8。
-    這裡只寫入 0 到 8 的有效值，實際「本文階層」另由其他函式處理。
+    Word UI outline levels 1 through 9 map to XML `w:outlineLvl` values 0
+    through 8. Only valid values from 0 to 8 are written here; body hierarchy
+    handling is performed by other functions.
     """
     if not (0 <= level <= 8):
         return
@@ -1327,7 +1334,7 @@ def is_toc_style_value(style_value: str) -> bool:
 
     normalized = style_value.replace(" ", "").replace("_", "").upper()
 
-    # Word 常見的目錄樣式包含 TOC1~TOC9，也可能使用 TOCHeading。
+    # Common Word TOC styles include TOC1 through TOC9 and may also use TOCHeading.
     if re.fullmatch(r"TOC\d+", normalized):
         return True
     if normalized in {"TOCHEADING", "目錄", "目录"}:
@@ -1345,25 +1352,25 @@ def field_instr_is_toc(instr: str) -> bool:
     return re.search(r"(^|\s)TOC(\s|$|\\)", instr.upper()) is not None
 
 
-def collect_toc_paragraph_ids(root) -> set[int]:
+def collect_toc_paragraph_ids(root, paragraphs=None) -> set[int]:
     """Collect paragraph ids that belong to Word-generated TOC content."""
     toc_ids: set[int] = set()
     field_stack: list[dict[str, object]] = []
 
-    for p in root.xpath(".//w:p", namespaces=NS):
+    for p in paragraphs if paragraphs is not None else root.xpath(".//w:p", namespaces=NS):
         p_is_toc = is_toc_style_value(get_paragraph_style_value(p))
 
-        # 若目前仍位在 TOC field 範圍內，這一段也視為目錄內容。
+        # If the current paragraph is still inside a TOC field, treat it as TOC content.
         if any(frame.get("is_toc") for frame in field_stack):
             p_is_toc = True
 
-        # fldSimple 也可能直接包住目錄欄位。
+        # fldSimple may directly wrap a TOC field.
         for fld_simple in p.xpath("ancestor-or-self::w:fldSimple", namespaces=NS):
             if field_instr_is_toc(fld_simple.get(qn("instr")) or ""):
                 p_is_toc = True
                 break
 
-        # 追蹤複合欄位的 begin / instrText / separate / end 狀態。
+        # Track complex field begin / instrText / separate / end state.
         for el in p.iter():
             if el.tag == qn("fldChar"):
                 fld_type = el.get(qn("fldCharType"))
@@ -1388,7 +1395,7 @@ def collect_toc_paragraph_ids(root) -> set[int]:
                 if field_stack:
                     field_stack[-1]["instr"] = str(field_stack[-1].get("instr", "")) + (el.text or "")
                     if field_instr_is_toc(str(field_stack[-1].get("instr", ""))):
-                        # 一旦欄位指令已確認是 TOC，後續段落也應視為目錄內容。
+                        # Once the field instruction is confirmed as TOC, following paragraphs are TOC content too.
                         p_is_toc = True
 
         if any(frame.get("is_toc") for frame in field_stack):
@@ -1411,6 +1418,8 @@ def collect_plain_toc_range_paragraph_ids(
 ) -> set[int]:
     toc_ids: set[int] = set()
     in_toc_range = False
+    processing_start_marker_count = 0
+    required_processing_start_marker_count = 2
 
     for p in paragraphs:
         text = paragraph_text(p)
@@ -1421,7 +1430,12 @@ def collect_plain_toc_range_paragraph_ids(
             numbering_level_lookup=numbering_level_lookup,
             style_numbering_lookup=style_numbering_lookup,
         ):
+            processing_start_marker_count += 1
+            if processing_start_marker_count < required_processing_start_marker_count:
+                toc_ids.add(id(p))
+                continue
             in_toc_range = False
+            continue
 
         if in_toc_range:
             toc_ids.add(id(p))
@@ -1430,6 +1444,24 @@ def collect_plain_toc_range_paragraph_ids(
             toc_ids.add(id(p))
             in_toc_range = True
 
+    return toc_ids
+
+
+def collect_all_toc_paragraph_ids(
+    root,
+    numbering_level_lookup=None,
+    style_numbering_lookup=None,
+    paragraphs=None,
+) -> set[int]:
+    paragraphs = paragraphs if paragraphs is not None else root.xpath(".//w:p", namespaces=NS)
+    toc_ids = collect_toc_paragraph_ids(root, paragraphs=paragraphs)
+    toc_ids.update(
+        collect_plain_toc_range_paragraph_ids(
+            paragraphs,
+            numbering_level_lookup=numbering_level_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+        )
+    )
     return toc_ids
 
 
@@ -1477,18 +1509,19 @@ def fix_outline_paragraphs(
         if change_logs is None:
             change_logs = summary.paragraph_logs
 
-    # 先收集所有目錄段落，避免修正文內規則時誤改 Word 目錄。
-    toc_paragraph_ids = collect_toc_paragraph_ids(root)
-    toc_paragraph_ids.update(
-        collect_plain_toc_range_paragraph_ids(
-            paragraphs,
-            numbering_level_lookup=numbering_level_lookup,
-            style_numbering_lookup=style_numbering_lookup,
-        )
+    # Collect all TOC paragraphs first to avoid changing Word-generated TOC content.
+    toc_paragraph_ids = collect_toc_paragraph_ids(root, paragraphs=paragraphs)
+    plain_toc_paragraph_ids = collect_plain_toc_range_paragraph_ids(
+        paragraphs,
+        numbering_level_lookup=numbering_level_lookup,
+        style_numbering_lookup=style_numbering_lookup,
     )
+    toc_paragraph_ids.update(plain_toc_paragraph_ids)
 
     changed_count = 0
     main_outline_started = False
+    processing_start_marker_count = 0
+    required_processing_start_marker_count = 2
     current_heading_indent: tuple[int, bool] | None = None
 
     for paragraph_index, p in enumerate(paragraphs, start=1):
@@ -1508,6 +1541,34 @@ def fix_outline_paragraphs(
             if id(p) in toc_paragraph_ids:
                 if summary is not None:
                     summary.skipped_toc_paragraphs += 1
+                before_outline = get_paragraph_outline_level_value(p)
+                if id(p) in plain_toc_paragraph_ids and not main_outline_started and is_processing_start_marker(
+                    p,
+                    text,
+                    numbering_level_lookup=numbering_level_lookup,
+                    style_numbering_lookup=style_numbering_lookup,
+                ):
+                    processing_start_marker_count += 1
+                    append_paragraph_change_log(
+                        change_logs,
+                        part_name,
+                        paragraph_index,
+                        text,
+                        before_outline,
+                        before_outline,
+                        "processing start marker seen "
+                        f"count={processing_start_marker_count}/{required_processing_start_marker_count}; "
+                        "still before main body",
+                    )
+                append_paragraph_change_log(
+                    change_logs,
+                    part_name,
+                    paragraph_index,
+                    text,
+                    before_outline,
+                    before_outline,
+                    "skipped TOC paragraph; no formatting applied",
+                )
                 continue
 
             before_outline = get_paragraph_outline_level_value(p)
@@ -1517,7 +1578,32 @@ def fix_outline_paragraphs(
                 numbering_level_lookup=numbering_level_lookup,
                 style_numbering_lookup=style_numbering_lookup,
             ):
-                main_outline_started = True
+                processing_start_marker_count += 1
+                if processing_start_marker_count >= required_processing_start_marker_count:
+                    main_outline_started = True
+                    append_paragraph_change_log(
+                        change_logs,
+                        part_name,
+                        paragraph_index,
+                        text,
+                        before_outline,
+                        before_outline,
+                        "processing start marker seen "
+                        f"count={processing_start_marker_count}/{required_processing_start_marker_count}; "
+                        "main outline started",
+                    )
+                else:
+                    append_paragraph_change_log(
+                        change_logs,
+                        part_name,
+                        paragraph_index,
+                        text,
+                        before_outline,
+                        before_outline,
+                        "processing start marker seen "
+                        f"count={processing_start_marker_count}/{required_processing_start_marker_count}; "
+                        "still before main body",
+                    )
 
             if main_outline_started:
                 if not fix_numbered_paragraphs:

@@ -13,7 +13,7 @@ from docx_fixer.constants import (
     validate_template_outline_indents,
 )
 from docx_fixer.models import ProcessSummary
-from docx_fixer.numbering import apply_numbering_outline_format, build_numbering_format_lookup
+from docx_fixer.numbering import apply_numbering_outline_format, apply_styles_outline_format_to_root, build_numbering_format_lookup
 from docx_fixer.style_resolver import build_style_font_size_lookup
 from docx_fixer.indent_settings import twips_to_cm
 from docx_fixer.outline import (
@@ -257,14 +257,14 @@ class OutlineFixTests(unittest.TestCase):
 
     def test_template_indents_match_requested_cm_values(self):
         expected = {
-            0: (1.11, -0.04, 1.15, 0),
+            0: (1.23, -0.04, 1.27, 1.23),
             1: (1.82, 0.70, 1.12, 1.83),
             2: (2.95, 1.47, 1.48, 2.96),
-            3: (3.46, 2.96, 0.50, 3.70),
-            4: (4.68, 3.45, 1.23, 4.91),
-            5: (5.42, 4.92, 0.50, 5.41),
-            6: (6.40, 5.16, 1.24, 6.41),
-            7: (6.89, 6.39, 0.50, 6.85),
+            3: (3.46, 2.96, 0.50, 3.45),
+            4: (4.44, 3.21, 1.23, 4.44),
+            5: (4.95, 4.45, 0.50, 4.94),
+            6: (5.93, 4.70, 1.23, 5.94),
+            7: (6.43, 5.94, 0.49, 6.85),
             8: (8.96, 7.72, 1.24, 8.96),
         }
 
@@ -289,12 +289,16 @@ class OutlineFixTests(unittest.TestCase):
             make_paragraph("\uff081\uff09\u5e8f\u8a00\u5167\u5c64"),
         ]
         root = make_root(*paragraphs)
+        first_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        root.find("./w:body", NS).insert(4, first_marker)
 
         fix_outline_paragraphs(root, include_tables=True)
 
         for paragraph in paragraphs[:4]:
             self.assertIsNone(paragraph_indent(paragraph))
             self.assertIsNone(paragraph_outline(paragraph))
+        self.assertIsNone(paragraph_indent(first_marker))
+        self.assertIsNone(paragraph_outline(first_marker))
 
         for paragraph, level in zip(paragraphs[4:], [0, 1, 2, 3, 4]):
             self.assertEqual(paragraph_indent(paragraph), expected_indent(level))
@@ -305,7 +309,7 @@ class OutlineFixTests(unittest.TestCase):
         level_two = make_paragraph("\u4e00\u3001\u6a19\u984c", font_size_pt=12)
         level_three = make_paragraph("\uff08\u4e00\uff09\u6a19\u984c", font_size_pt=12)
         add_ind_with_char_attrs(level_two)
-        root = make_root(marker, level_two, level_three)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, level_two, level_three)
 
         fix_outline_paragraphs(root, include_tables=True)
 
@@ -323,7 +327,7 @@ class OutlineFixTests(unittest.TestCase):
             ilvl=1,
             font_size_pt=12,
         )
-        root = make_root(marker, auto_level_two)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, auto_level_two)
 
         fix_outline_paragraphs(
             root,
@@ -342,7 +346,7 @@ class OutlineFixTests(unittest.TestCase):
             ilvl=1,
             font_size_pt=12,
         )
-        root = make_root(marker, auto_level_two)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, auto_level_two)
         summary = ProcessSummary()
         spec = TEMPLATE_OUTLINE_INDENTS[1]
         numbering_format_lookup = {
@@ -399,8 +403,9 @@ class OutlineFixTests(unittest.TestCase):
     def test_toc_paragraph_does_not_start_outline_processing(self):
         toc = make_paragraph("\u58f9\u3001\u5e8f\u8a00", style="TOC1")
         preface = make_paragraph("\u4e00\u3001\u76ee\u9304\u5f8c\u7684\u524d\u7f6e\u9805")
+        first_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
-        root = make_root(toc, preface, marker)
+        root = make_root(toc, preface, first_marker, marker)
 
         fix_outline_paragraphs(root, include_tables=True)
 
@@ -408,13 +413,16 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIsNone(paragraph_outline(toc))
         self.assertIsNone(paragraph_indent(preface))
         self.assertIsNone(paragraph_outline(preface))
+        self.assertIsNone(paragraph_indent(first_marker))
+        self.assertIsNone(paragraph_outline(first_marker))
         self.assertEqual(paragraph_outline(marker), "0")
 
     def test_plain_toc_range_is_skipped_until_body_start(self):
         toc_heading = make_paragraph("\u76ee\u9304")
         toc_entry = make_paragraph("\u4e00\u3001\u5e8f\u8a00")
+        first_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
-        root = make_root(toc_heading, toc_entry, marker)
+        root = make_root(toc_heading, toc_entry, first_marker, marker)
 
         fix_outline_paragraphs(root, include_tables=True)
 
@@ -422,8 +430,90 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIsNone(paragraph_outline(toc_heading))
         self.assertIsNone(paragraph_indent(toc_entry))
         self.assertIsNone(paragraph_outline(toc_entry))
+        self.assertIsNone(paragraph_indent(first_marker))
+        self.assertIsNone(paragraph_outline(first_marker))
         self.assertEqual(paragraph_indent(marker), expected_indent(0))
         self.assertEqual(paragraph_outline(marker), "0")
+
+    def test_main_outline_starts_only_on_second_processing_start_marker(self):
+        first_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        preface_after_first = make_paragraph("\u4e00\u3001\u524d\u7f6e\u5167\u5bb9", outline=2)
+        second_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        body_after_second = make_paragraph("\u9019\u662f\u7b2c\u4e8c\u6b21\u5e8f\u8a00\u5f8c\u7684 14 pt \u5167\u6587", font_size_pt=14)
+        root = make_root(first_marker, preface_after_first, second_marker, body_after_second)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary)
+
+        self.assertIsNone(paragraph_indent(first_marker))
+        self.assertIsNone(paragraph_outline(first_marker))
+        self.assertIsNone(paragraph_indent(preface_after_first))
+        self.assertEqual(paragraph_outline(preface_after_first), "2")
+        self.assertEqual(paragraph_indent(second_marker), expected_indent(0))
+        self.assertEqual(paragraph_outline(second_marker), "0")
+        self.assertEqual(paragraph_left_indent(body_after_second), TEMPLATE_OUTLINE_INDENTS[0]["body_left"])
+        joined_logs = "\n".join(summary.paragraph_logs)
+        self.assertIn("processing start marker seen count=1/2; still before main body", joined_logs)
+        self.assertIn("processing start marker seen count=2/2; main outline started", joined_logs)
+
+    def test_single_processing_start_marker_does_not_start_main_outline(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        after_marker = make_paragraph("\u4e00\u3001\u4ecd\u662f\u524d\u7f6e\u5167\u5bb9")
+        root = make_root(marker, after_marker)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary)
+
+        self.assertIsNone(paragraph_indent(marker))
+        self.assertIsNone(paragraph_outline(marker))
+        self.assertIsNone(paragraph_indent(after_marker))
+        self.assertIsNone(paragraph_outline(after_marker))
+        joined_logs = "\n".join(summary.paragraph_logs)
+        self.assertIn("processing start marker seen count=1/2; still before main body", joined_logs)
+        self.assertNotIn("main outline started", joined_logs)
+
+    def test_styles_xml_toc_styles_are_not_modified(self):
+        root = etree.Element(qn("styles"), nsmap={"w": W_NS})
+        originals: dict[str, bytes] = {}
+        for style_id, name in [
+            ("TOC1", "Table of Contents 1"),
+            ("TOC9", "Contents level 9"),
+            ("TOCHeading", "TOC Heading"),
+            ("\u76ee\u9304", "\u76ee\u9304"),
+        ]:
+            style = etree.SubElement(root, qn("style"))
+            style.set(qn("type"), "paragraph")
+            style.set(qn("styleId"), style_id)
+            name_el = etree.SubElement(style, qn("name"))
+            name_el.set(qn("val"), name)
+            pPr = etree.SubElement(style, qn("pPr"))
+            num_pr = etree.SubElement(pPr, qn("numPr"))
+            ilvl = etree.SubElement(num_pr, qn("ilvl"))
+            ilvl.set(qn("val"), "0")
+            num_id = etree.SubElement(num_pr, qn("numId"))
+            num_id.set(qn("val"), "1")
+            ind = etree.SubElement(pPr, qn("ind"))
+            ind.set(qn("left"), "111")
+            ind.set(qn("leftChars"), "222")
+            originals[style_id] = etree.tostring(style)
+        logs: list[str] = []
+
+        apply_styles_outline_format_to_root(
+            root,
+            numbering_level_lookup={("1", 0): 0},
+            style_numbering_lookup={style_id: ("1", 0) for style_id in originals},
+            change_logs=logs,
+        )
+
+        for style_id, original_xml in originals.items():
+            with self.subTest(style_id=style_id):
+                style = root.xpath(f"./w:style[@w:styleId='{style_id}']", namespaces=NS)[0]
+                self.assertEqual(etree.tostring(style), original_xml)
+        joined_logs = "\n".join(logs)
+        self.assertIn("STYLES_XML_SKIP_TOC_STYLE: styleId=TOC1", joined_logs)
+        self.assertIn("STYLES_XML_SKIP_TOC_STYLE: styleId=TOC9", joined_logs)
+        self.assertIn("STYLES_XML_SKIP_TOC_STYLE: styleId=TOCHeading", joined_logs)
+        self.assertNotIn("STYLES_XML_NUMBERED_STYLE_INDENT", joined_logs)
 
     def test_style_numbering_skip_keeps_notes_and_long_body_out_of_outline(self):
         note = make_paragraph("\u203b \u9019\u662f\u8a3b\u8a18", style="NumberedStyle", outline=2)
@@ -450,9 +540,10 @@ class OutlineFixTests(unittest.TestCase):
 
     def test_auto_numbering_before_preface_is_unchanged_by_default(self):
         auto_before = make_paragraph("\u81ea\u52d5\u7de8\u865f\u524d", num_id="1", ilvl=1)
+        first_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         auto_after = make_paragraph("\u81ea\u52d5\u7de8\u865f\u5f8c", num_id="1", ilvl=1)
-        root = make_root(auto_before, marker, auto_after)
+        root = make_root(auto_before, first_marker, marker, auto_after)
 
         fix_outline_paragraphs(
             root,
@@ -462,6 +553,8 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertIsNone(paragraph_indent(auto_before))
         self.assertIsNone(paragraph_outline(auto_before))
+        self.assertIsNone(paragraph_indent(first_marker))
+        self.assertIsNone(paragraph_outline(first_marker))
         self.assertEqual(paragraph_outline(marker), "0")
         self.assertEqual(paragraph_indent(auto_after), expected_indent(1))
         self.assertEqual(paragraph_outline(auto_after), "1")
@@ -469,9 +562,10 @@ class OutlineFixTests(unittest.TestCase):
     def test_preface_numbering_is_untouched_when_new_preface_options_are_off(self):
         before_one = make_paragraph("\u4e00\u3001\u76ee\u9304\u5f8c\u7684\u524d\u7f6e\u9805", outline=1)
         before_nested = make_paragraph("\uff08\u4e00\uff09\u524d\u7f6e\u5167\u5c64", outline=2)
+        first_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         after = make_paragraph("\u4e00\u3001\u5e8f\u8a00\u5167\u5c64")
-        root = make_root(before_one, before_nested, marker, after)
+        root = make_root(before_one, before_nested, first_marker, marker, after)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -484,6 +578,8 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(paragraph_outline(before_one), "1")
         self.assertIsNone(paragraph_indent(before_nested))
         self.assertEqual(paragraph_outline(before_nested), "2")
+        self.assertIsNone(paragraph_indent(first_marker))
+        self.assertIsNone(paragraph_outline(first_marker))
         self.assertEqual(paragraph_outline(marker), "0")
         self.assertEqual(paragraph_outline(after), "1")
         self.assertEqual(summary.indented_preface_paragraphs, 0)
@@ -507,7 +603,7 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(paragraph_outline(before_decimal), "3")
         self.assertEqual(paragraph_indent(before_parenthesized_decimal), expected_preface_indent(3))
         self.assertEqual(paragraph_outline(before_parenthesized_decimal), "4")
-        self.assertEqual(summary.indented_preface_paragraphs, 2)
+        self.assertEqual(summary.indented_preface_paragraphs, 3)
         self.assertEqual(summary.outlined_preface_paragraphs, 0)
 
     def test_outline_preface_only_adds_outline_without_changing_indent(self):
@@ -529,7 +625,7 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIsNone(paragraph_indent(before_nested))
         self.assertEqual(paragraph_outline(before_nested), "1")
         self.assertEqual(summary.indented_preface_paragraphs, 0)
-        self.assertEqual(summary.outlined_preface_paragraphs, 2)
+        self.assertEqual(summary.outlined_preface_paragraphs, 3)
 
     def test_indent_and_outline_preface_apply_both_preface_rules(self):
         before_one = make_paragraph("\u4e00\u3001\u524d\u7f6e\u9805")
@@ -550,8 +646,8 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(paragraph_outline(before_one), "0")
         self.assertEqual(paragraph_indent(before_nested), expected_preface_indent(1))
         self.assertEqual(paragraph_outline(before_nested), "1")
-        self.assertEqual(summary.indented_preface_paragraphs, 2)
-        self.assertEqual(summary.outlined_preface_paragraphs, 2)
+        self.assertEqual(summary.indented_preface_paragraphs, 3)
+        self.assertEqual(summary.outlined_preface_paragraphs, 3)
 
     def test_body_paragraph_after_heading_aligns_to_heading_text_start(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
@@ -559,7 +655,7 @@ class OutlineFixTests(unittest.TestCase):
         body = make_paragraph("\u9019\u662f\u6a19\u984c\u4e0b\u65b9\u5167\u6587", font_size_pt=14)
         nested_heading = make_paragraph("\uff08\u4e00\uff09\u5167\u5c64\u6a19\u984c")
         nested_body = make_paragraph("\u9019\u662f\u5167\u5c64\u6a19\u984c\u4e0b\u65b9\u5167\u6587", font_size_pt=14)
-        root = make_root(marker, heading, body, nested_heading, nested_body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body, nested_heading, nested_body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(root, include_tables=True, summary=summary)
@@ -581,7 +677,7 @@ class OutlineFixTests(unittest.TestCase):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\u4e00\u3001\u7814\u7a76\u76ee\u7684")
         body = make_paragraph("\u9019\u662f\u666e\u901a\u5167\u6587", font_size_pt=14)
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
 
         fix_outline_paragraphs(root, include_tables=True)
 
@@ -595,7 +691,7 @@ class OutlineFixTests(unittest.TestCase):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\uff08\u4e00\uff09\u7814\u7a76\u65b9\u6cd5")
         body = make_paragraph("\u9019\u662f\u666e\u901a\u5167\u6587", font_size_pt=14)
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
 
         fix_outline_paragraphs(root, include_tables=True)
 
@@ -621,7 +717,7 @@ class OutlineFixTests(unittest.TestCase):
         ind.set(qn("hangingChars"), "100")
         ind.set(qn("firstLineChars"), "100")
         add_tab_stop(body, pos="1480")
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(root, include_tables=True, summary=summary)
@@ -654,7 +750,7 @@ class OutlineFixTests(unittest.TestCase):
         ind.set(qn("firstLine"), "111")
         ind.set(qn("firstLineChars"), "100")
         add_tab_stop(body, pos="1480")
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -692,7 +788,7 @@ class OutlineFixTests(unittest.TestCase):
         ind.set(qn("firstLine"), "111")
         ind.set(qn("firstLineChars"), "100")
         add_tab_stop(body, pos="1480")
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -724,7 +820,7 @@ class OutlineFixTests(unittest.TestCase):
         ind = add_ind_with_char_attrs(body)
         ind.set(qn("firstLine"), "111")
         add_tab_stop(body, pos="1990")
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(root, include_tables=True, summary=summary)
@@ -732,14 +828,14 @@ class OutlineFixTests(unittest.TestCase):
         body_ind = body.find("./w:pPr/w:ind", NS)
         expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
         self.assertEqual(body_ind.get(qn("left")), expected_left)
-        self.assertAlmostEqual(twips_to_cm(expected_left), 3.70, places=2)
+        self.assertAlmostEqual(twips_to_cm(expected_left), 3.45, places=2)
         self.assertIsNone(body_ind.get(qn("hanging")))
         self.assertIsNone(body_ind.get(qn("firstLine")))
         assert_no_char_indent_attrs(self, body_ind)
         self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=3", debug)
-        self.assertIn("spec_body_left_cm=3.70", debug)
+        self.assertIn("spec_body_left_cm=3.45", debug)
         self.assertIn("spec_firstLine_twips=None", debug)
         self.assertIn(f"written_left_twips={expected_left}", debug)
         self.assertIn("tab_pos=None", debug)
@@ -753,7 +849,7 @@ class OutlineFixTests(unittest.TestCase):
             make_paragraph("a.\u3000\u6a19\u984c"),
             make_paragraph("\uff08\u4e00\uff09 \u6a19\u984c"),
         ]
-        root = make_root(marker, *samples)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, *samples)
 
         fix_outline_paragraphs(root, include_tables=True)
 
@@ -774,7 +870,7 @@ class OutlineFixTests(unittest.TestCase):
             style="DefaultText",
         )
         add_tab_stop(body, pos="1990")
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -802,7 +898,7 @@ class OutlineFixTests(unittest.TestCase):
             "\u53d7 style start \u5e72\u64fe\u7684\u5167\u6587",
             style="DefaultText",
         )
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -834,7 +930,7 @@ class OutlineFixTests(unittest.TestCase):
             "\u4f7f\u7528 basedOn 14 pt \u7684\u5167\u6587",
             style="DefaultText",
         )
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -853,7 +949,7 @@ class OutlineFixTests(unittest.TestCase):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
         body = make_paragraph("\u4f7f\u7528 docDefaults 14 pt \u7684\u5167\u6587")
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -877,7 +973,7 @@ class OutlineFixTests(unittest.TestCase):
             "\u4f7f\u7528\u5b57\u5143\u6a23\u5f0f 14 pt \u7684\u5167\u6587",
             run_style="EmphasisBody",
         )
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -904,7 +1000,7 @@ class OutlineFixTests(unittest.TestCase):
             style="DefaultText",
             font_size_pt=10,
         )
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -929,7 +1025,7 @@ class OutlineFixTests(unittest.TestCase):
                 {"text": "\u5f8c\u9762\u5927\u90e8\u5206\u5167\u6587\u90fd\u662f\u5341\u56db\u9ede", "font_size_pt": 14},
             ],
         )
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -955,7 +1051,7 @@ class OutlineFixTests(unittest.TestCase):
                 {"text": "\u5f8c\u9762\u6bd4\u8f03\u9577\u7684\u6bb5\u843d\u5167\u6587\u5176\u5be6\u662f\u5341\u4e8c\u9ede", "font_size_pt": 12},
             ],
         )
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -974,7 +1070,7 @@ class OutlineFixTests(unittest.TestCase):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\u4e00\u3001\u7b2c\u4e8c\u968e\u6a19\u984c")
         body = make_paragraph("\u9019\u662f XML 12 pt \u4f46 Word \u986f\u793a\u70ba 14 pt \u7684\u5167\u6587", font_size_pt=12)
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -1000,7 +1096,7 @@ class OutlineFixTests(unittest.TestCase):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
         body = make_paragraph("\u7d14 14 pt \u5167\u6587", font_size_pt=14)
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -1018,7 +1114,7 @@ class OutlineFixTests(unittest.TestCase):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
         body = make_paragraph("\u7121\u6cd5\u5224\u65b7\u5b57\u865f\u7684\u5167\u6587")
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -1036,7 +1132,7 @@ class OutlineFixTests(unittest.TestCase):
         heading = make_paragraph("\u4e00\u3001\u7814\u7a76\u76ee\u7684")
         body = make_paragraph("\u9019\u662f 12 pt \u5167\u6587", font_size_pt=12)
         original_ind = add_ind_with_char_attrs(body)
-        root = make_root(marker, heading, body)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(root, include_tables=True, summary=summary, change_logs=summary.paragraph_logs)
@@ -1055,7 +1151,7 @@ class OutlineFixTests(unittest.TestCase):
         body_12 = make_paragraph("\u9019\u662f 12 pt \u5167\u6587", font_size_pt=12)
         add_ind_with_char_attrs(body_14)
         add_ind_with_char_attrs(body_12)
-        root = make_root(marker, heading, body_14, body_12)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body_14, body_12)
 
         fix_outline_paragraphs(root, include_tables=True)
 
@@ -1084,7 +1180,7 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(paragraph_left_indent(body), PREFACE_OUTLINE_INDENTS[0]["body_left"])
         self.assertIsNone(paragraph_indent(body)[1])
         self.assertEqual(paragraph_outline(body), "2")
-        self.assertEqual(summary.indented_preface_paragraphs, 1)
+        self.assertEqual(summary.indented_preface_paragraphs, 2)
 
     def test_preface_body_aligns_when_preface_indent_is_enabled(self):
         heading = make_paragraph("\u4e00\u3001\u524d\u7f6e\u9805")
@@ -1119,9 +1215,10 @@ class OutlineFixTests(unittest.TestCase):
 
     def test_preface_options_can_run_without_main_paragraph_fixing(self):
         before = make_paragraph("\u4e00\u3001\u524d\u7f6e\u9805")
+        first_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00", outline=4)
         after = make_paragraph("\u4e00\u3001\u5e8f\u8a00\u5167\u5c64")
-        root = make_root(before, marker, after)
+        root = make_root(before, first_marker, marker, after)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(
@@ -1135,10 +1232,12 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertEqual(paragraph_indent(before), expected_preface_indent(0))
         self.assertEqual(paragraph_outline(before), "0")
+        self.assertEqual(paragraph_indent(first_marker), expected_preface_indent(0))
+        self.assertEqual(paragraph_outline(first_marker), "0")
         self.assertEqual(paragraph_outline(marker), "4")
         self.assertIsNone(paragraph_indent(after))
-        self.assertEqual(summary.indented_preface_paragraphs, 1)
-        self.assertEqual(summary.outlined_preface_paragraphs, 1)
+        self.assertEqual(summary.indented_preface_paragraphs, 2)
+        self.assertEqual(summary.outlined_preface_paragraphs, 2)
 
     def test_preface_options_skip_toc_before_marker(self):
         toc = make_paragraph("\u58f9\u3001\u5e8f\u8a00", style="TOC1", outline=0)
@@ -1156,15 +1255,15 @@ class OutlineFixTests(unittest.TestCase):
         )
 
         self.assertEqual(paragraph_outline(toc), "0")
-        self.assertIsNone(paragraph_outline(marker))
+        self.assertEqual(paragraph_outline(marker), "0")
         self.assertEqual(summary.skipped_toc_paragraphs, 1)
-        self.assertEqual(summary.indented_preface_paragraphs, 0)
-        self.assertEqual(summary.outlined_preface_paragraphs, 0)
+        self.assertEqual(summary.indented_preface_paragraphs, 1)
+        self.assertEqual(summary.outlined_preface_paragraphs, 1)
 
     def test_table_paragraph_is_skipped_even_when_include_tables_is_true(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         table, table_p = make_table_paragraph("\uff08\u4e00\uff09\u8868\u683c\u5167\u9805\u76ee")
-        root = make_root(marker, table)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, table)
 
         fix_outline_paragraphs(root, include_tables=True)
 
@@ -1225,16 +1324,17 @@ class OutlineFixTests(unittest.TestCase):
     def test_paragraph_summary_counts_levels_and_skips(self):
         toc = make_paragraph("\u76ee\u9304")
         toc_entry = make_paragraph("\u4e00\u3001\u5e8f\u8a00")
+        first_marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         normal = make_paragraph("\u666e\u901a\u6b63\u6587")
         table, _ = make_table_paragraph("1. \u8868\u683c\u5167\u9805\u76ee")
-        root = make_root(toc, toc_entry, marker, normal, table)
+        root = make_root(toc, toc_entry, first_marker, marker, normal, table)
         summary = ProcessSummary()
 
         fix_outline_paragraphs(root, include_tables=True, summary=summary)
 
-        self.assertEqual(summary.total_paragraphs, 5)
-        self.assertEqual(summary.skipped_toc_paragraphs, 2)
+        self.assertEqual(summary.total_paragraphs, 6)
+        self.assertEqual(summary.skipped_toc_paragraphs, 3)
         self.assertEqual(summary.skipped_table_paragraphs, 1)
         self.assertEqual(summary.paragraph_level_counts[0], 1)
         self.assertEqual(summary.unknown_paragraphs, 0)
@@ -1409,5 +1509,6 @@ class OutlineFixTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

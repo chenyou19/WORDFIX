@@ -18,7 +18,6 @@ def numbering_suffix_for_level(level: int) -> str:
 
 def sanitize_numbering_level_suffix_tabs_and_text(lvl) -> bool:
     changed = False
-
     suff = lvl.find("w:suff", NS)
     if suff is None:
         suff = etree.Element(qn("suff"))
@@ -77,11 +76,11 @@ def is_parenthesized_lvl_text(text: str) -> bool:
 
 def numbering_pattern_to_outline_level(num_fmt: str | None, lvl_text: str | None):
     """
-    將 Word numbering.xml 的 numFmt + lvlText 轉成範本階層。
+    Convert Word numbering.xml numFmt + lvlText values to template levels.
 
-    範本中的自動編號多為「每一種符號一組 numId」，所以 ilvl 幾乎都是 0。
-    因此不能只看 ilvl，必須看實際編號格式：
-    一、／（一）／(一)／1.／（1）／(1)／A.／（A）／(A)／a.／（a）／(a)。
+    Template automatic numbering usually assigns one numId per marker style,
+    so ilvl is almost always 0. Therefore, the actual numbering format must be
+    inspected instead of relying only on ilvl.
     """
     fmt = (num_fmt or "").strip()
     text = normalize_lvl_text(lvl_text)
@@ -90,33 +89,33 @@ def numbering_pattern_to_outline_level(num_fmt: str | None, lvl_text: str | None
     has_dot = text.endswith((".", "．")) or "." in text or "．" in text
     has_ideographic_separator = "、" in text
 
-    # 壹、貳、參...
+    # Financial Chinese numerals with an ideographic separator.
     if fmt in {"ideographLegalTraditional", "chineseLegalSimplified"}:
         if has_ideographic_separator:
             return 0
 
-    # 一、二、三... 或 （一）（二）（三）... / (一)(二)(三)...
+    # Simple Chinese numerals, either plain or parenthesized.
     if fmt in {"taiwaneseCountingThousand", "ideographTraditional", "chineseCounting"}:
         if bracketed:
             return 2
         if has_ideographic_separator:
             return 1
 
-    # 1. 或 （1）/ (1)
+    # Decimal numbering, either dotted or parenthesized.
     if fmt == "decimal":
         if bracketed:
             return 4
         if has_dot or has_ideographic_separator:
             return 3
 
-    # A. 或 （A）/ (A)
+    # Uppercase letters, either dotted or parenthesized.
     if fmt == "upperLetter":
         if bracketed:
             return 6
         if has_dot or has_ideographic_separator:
             return 5
 
-    # a. 或 （a）/ (a)
+    # Lowercase letters, either dotted or parenthesized.
     if fmt == "lowerLetter":
         if bracketed:
             return 8
@@ -128,7 +127,7 @@ def numbering_pattern_to_outline_level(num_fmt: str | None, lvl_text: str | None
 
 def build_numbering_level_lookup(numbering_xml: bytes | None):
     """
-    建立 {(numId, ilvl): outline_level} 對照表，讓自動編號可套用範本階層。
+    Build a {(numId, ilvl): outline_level} lookup for template-level matching.
     """
     if not numbering_xml:
         return {}
@@ -162,9 +161,10 @@ def build_numbering_level_lookup(numbering_xml: bytes | None):
 
             outline_level = numbering_pattern_to_outline_level(num_fmt, lvl_text)
 
-            # 若 numbering.xml 的格式無法直接判斷，但它是 Word 自動編號層級，
-            # 就把 ilvl 本身視為大綱階層。
-            # 這符合「文件中的每個自動編號都是大綱階層」的前提。
+            # If numbering.xml cannot identify the format directly but this is
+            # a Word automatic numbering level, use ilvl as the outline level.
+            # This matches the assumption that every automatic numbering entry
+            # in the document represents an outline level.
             if outline_level is None and 0 <= ilvl <= 8:
                 outline_level = ilvl
 
@@ -185,7 +185,7 @@ def build_numbering_level_lookup(numbering_xml: bytes | None):
         for ilvl, outline_level in abstract_levels.get(abstract_id, {}).items():
             lookup[(num_id, ilvl)] = outline_level
 
-        # 若有個別 num 的 lvlOverride，也覆蓋進 lookup。
+        # Apply per-num lvlOverride definitions to the lookup as well.
         for override in num.xpath("./w:lvlOverride", namespaces=NS):
             try:
                 ilvl = int(override.get(qn("ilvl")))
@@ -216,10 +216,11 @@ def build_numbering_level_lookup(numbering_xml: bytes | None):
 
 def build_style_numbering_lookup(styles_xml: bytes | None) -> dict[str, tuple[str, int]]:
     """
-    建立 {styleId: (numId, ilvl)} 對照表。
+    Build a {styleId: (numId, ilvl)} lookup.
 
-    有些 Word 文件會把編號掛在段落樣式上，而不是每個段落的 pPr/numPr。
-    這裡同時處理 basedOn 繼承，讓套用樣式的段落也能被判斷成文件編號階層。
+    Some Word documents attach numbering to paragraph styles instead of each
+    paragraph's pPr/numPr. basedOn inheritance is resolved so styled paragraphs
+    can still be recognized as document numbering levels.
     """
     if not styles_xml:
         return {}
@@ -435,13 +436,16 @@ def apply_numbering_level_body_text_format(lvl) -> bool:
     return True
 
 
-def apply_numbering_outline_format(
+def _legacy_apply_numbering_outline_format(
     numbering_xml: bytes | None,
     change_logs: list[str] | None = None,
+    excluded_numbering_pairs: set[tuple[str, int]] | None = None,
+    excluded_num_ids: set[str] | None = None,
+    excluded_abstract_ids: set[str] | None = None,
 ) -> bytes | None:
     """
-    將 numbering.xml 裡可辨識的自動編號格式同步套用範本縮排。
-    若解析失敗，回傳原始 XML，避免中斷整份文件處理。
+    Apply template indentation to recognizable automatic numbering formats.
+    If parsing fails, return the original XML to keep document processing alive.
     """
     if not numbering_xml:
         return numbering_xml
@@ -453,7 +457,7 @@ def apply_numbering_outline_format(
 
     changed = False
 
-    # 一般 abstract numbering 定義。
+    # General abstract numbering definitions.
     for lvl in root.xpath("./w:abstractNum/w:lvl", namespaces=NS):
         changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
         num_fmt_el = lvl.find("w:numFmt", NS)
@@ -477,7 +481,7 @@ def apply_numbering_outline_format(
             apply_numbering_level_outline_format(lvl, outline_level, change_logs=change_logs)
             changed = True
 
-    # 個別 num 的 override 定義。
+    # Per-num override definitions.
     for lvl in root.xpath("./w:num/w:lvlOverride/w:lvl", namespaces=NS):
         changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
         num_fmt_el = lvl.find("w:numFmt", NS)
@@ -496,6 +500,123 @@ def apply_numbering_outline_format(
                 ilvl = None
             if ilvl is not None and 0 <= ilvl <= 8:
                 outline_level = ilvl
+
+        if outline_level is not None:
+            apply_numbering_level_outline_format(lvl, outline_level, change_logs=change_logs)
+            changed = True
+
+    if not changed:
+        return numbering_xml
+
+    return etree.tostring(
+        root,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
+
+
+def apply_numbering_outline_format(
+    numbering_xml: bytes | None,
+    change_logs: list[str] | None = None,
+    excluded_numbering_pairs: set[tuple[str, int]] | None = None,
+    excluded_num_ids: set[str] | None = None,
+    excluded_abstract_ids: set[str] | None = None,
+) -> bytes | None:
+    if not numbering_xml:
+        return numbering_xml
+
+    try:
+        root = etree.fromstring(numbering_xml)
+    except Exception:
+        return numbering_xml
+
+    changed = False
+    excluded_numbering_pairs = excluded_numbering_pairs or set()
+    excluded_num_ids = excluded_num_ids or set()
+    excluded_abstract_ids = excluded_abstract_ids or set()
+
+    num_to_abstract_id: dict[str, str] = {}
+    for num in root.xpath("./w:num", namespaces=NS):
+        num_id = num.get(qn("numId"))
+        abstract_el = num.find("w:abstractNumId", NS)
+        abstract_id = abstract_el.get(qn("val")) if abstract_el is not None else None
+        if num_id is not None and abstract_id is not None:
+            num_to_abstract_id[num_id] = abstract_id
+
+    def should_skip_numbering(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
+        if abstract_id is not None and abstract_id in excluded_abstract_ids:
+            return True
+        if num_id is not None and num_id in excluded_num_ids:
+            return True
+        if num_id is not None and ilvl is not None and (num_id, ilvl) in excluded_numbering_pairs:
+            return True
+        return False
+
+    def log_skip_numbering(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> None:
+        if change_logs is None:
+            return
+        change_logs.append(
+            "NUMBERING_XML_SKIP_TOC_NUMBERING: "
+            f"numId={num_id if num_id is not None else 'unknown'}; "
+            f"ilvl={ilvl if ilvl is not None else 'unknown'}; "
+            f"abstractNumId={abstract_id if abstract_id is not None else 'unknown'}; "
+            "reason=used_by_toc"
+        )
+
+    for lvl in root.xpath("./w:abstractNum/w:lvl", namespaces=NS):
+        abstract_num = lvl.getparent()
+        abstract_id = abstract_num.get(qn("abstractNumId")) if abstract_num is not None else None
+        try:
+            ilvl = int(lvl.get(qn("ilvl")))
+        except Exception:
+            ilvl = None
+        if should_skip_numbering(None, ilvl, abstract_id):
+            log_skip_numbering(None, ilvl, abstract_id)
+            continue
+
+        changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
+        num_fmt_el = lvl.find("w:numFmt", NS)
+        lvl_text_el = lvl.find("w:lvlText", NS)
+        num_fmt = num_fmt_el.get(qn("val")) if num_fmt_el is not None else None
+        lvl_text = lvl_text_el.get(qn("val")) if lvl_text_el is not None else None
+        if is_bullet_num_fmt(num_fmt):
+            changed = apply_numbering_level_body_text_format(lvl) or changed
+            continue
+
+        outline_level = numbering_pattern_to_outline_level(num_fmt, lvl_text)
+        if outline_level is None and ilvl is not None and 0 <= ilvl <= 8:
+            outline_level = ilvl
+
+        if outline_level is not None:
+            apply_numbering_level_outline_format(lvl, outline_level, change_logs=change_logs)
+            changed = True
+
+    for lvl in root.xpath("./w:num/w:lvlOverride/w:lvl", namespaces=NS):
+        override = lvl.getparent()
+        num = override.getparent() if override is not None else None
+        num_id = num.get(qn("numId")) if num is not None else None
+        abstract_id = num_to_abstract_id.get(num_id or "")
+        try:
+            ilvl = int(override.get(qn("ilvl"))) if override is not None else None
+        except Exception:
+            ilvl = None
+        if should_skip_numbering(num_id, ilvl, abstract_id):
+            log_skip_numbering(num_id, ilvl, abstract_id)
+            continue
+
+        changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
+        num_fmt_el = lvl.find("w:numFmt", NS)
+        lvl_text_el = lvl.find("w:lvlText", NS)
+        num_fmt = num_fmt_el.get(qn("val")) if num_fmt_el is not None else None
+        lvl_text = lvl_text_el.get(qn("val")) if lvl_text_el is not None else None
+        if is_bullet_num_fmt(num_fmt):
+            changed = apply_numbering_level_body_text_format(lvl) or changed
+            continue
+
+        outline_level = numbering_pattern_to_outline_level(num_fmt, lvl_text)
+        if outline_level is None and ilvl is not None and 0 <= ilvl <= 8:
+            outline_level = ilvl
 
         if outline_level is not None:
             apply_numbering_level_outline_format(lvl, outline_level, change_logs=change_logs)
@@ -538,6 +659,27 @@ def clean_plain_style_pPr(pPr) -> None:
     remove_paragraph_tabs(pPr)
 
 
+def style_name_value(style) -> str:
+    name_el = style.find("w:name", NS)
+    return name_el.get(qn("val")) if name_el is not None else ""
+
+
+def is_toc_style_definition(style_id: str, style_name: str) -> bool:
+    normalized_id = (style_id or "").replace(" ", "").replace("_", "").upper()
+    normalized_name = (style_name or "").replace(" ", "").replace("_", "").upper()
+    if normalized_id.startswith("TOC") or normalized_id in {"目錄", "目录"}:
+        return True
+    if normalized_name.startswith("TOC") or normalized_name in {"目錄", "目录"}:
+        return True
+    lowered_name = (style_name or "").lower()
+    return (
+        "table of contents" in lowered_name
+        or "contents" in lowered_name
+        or "目錄" in style_name
+        or "目录" in style_name
+    )
+
+
 def apply_styles_outline_format_to_root(
     root,
     numbering_level_lookup=None,
@@ -552,6 +694,14 @@ def apply_styles_outline_format_to_root(
 
     for style in root.xpath("./w:style[@w:type='paragraph']", namespaces=NS):
         style_id = style.get(qn("styleId")) or ""
+        style_name = style_name_value(style)
+        if is_toc_style_definition(style_id, style_name):
+            if change_logs is not None:
+                change_logs.append(
+                    "STYLES_XML_SKIP_TOC_STYLE: "
+                    f"styleId={style_id}; name={style_name}; reason=toc_style"
+                )
+            continue
         pPr = style.find("w:pPr", NS)
         direct_num_id, direct_ilvl = _style_direct_num_identity(style)
         num_id, ilvl = style_numbering_lookup.get(style_id, (direct_num_id, direct_ilvl))
@@ -649,10 +799,10 @@ def detect_number_level_from_identity(num_id, ilvl, numbering_level_lookup=None)
 
 def detect_auto_number_level(p, numbering_level_lookup=None, style_numbering_lookup=None):
     """
-    處理 Word 自動編號。
+    Resolve Word automatic numbering.
 
-    Word 自動編號的「壹、」「一、」「（一）」「1.」等不在 w:t 文字裡，
-    因此必須根據 numId + ilvl 回查 numbering.xml 的實際編號格式。
+    Word automatic numbering markers are not stored in w:t text, so the actual
+    numbering format must be looked up from numbering.xml by numId + ilvl.
     """
     ilvl_el = p.find("./w:pPr/w:numPr/w:ilvl", NS)
     num_id_el = p.find("./w:pPr/w:numPr/w:numId", NS)

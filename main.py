@@ -11,12 +11,12 @@ from docx_fixer.gui_app import DocxFixerApp
 def main() -> int:
     args = parse_args(sys.argv[1:])
 
-    # 有 input/output 參數時走 CLI，否則啟動 GUI。
+    # Use CLI mode when input/output arguments are provided; otherwise start the GUI.
     if args.input_docx and args.output_docx:
         return run_cli(args)
 
     root = tk.Tk()
-    # Windows 下設定 Tk 預設中文字型，避免介面字體顯示異常。
+    # Set Tk's default font on Windows to avoid broken UI font rendering.
     try:
         root.option_add("*Font", ("Microsoft JhengHei UI", 10))
     except Exception:

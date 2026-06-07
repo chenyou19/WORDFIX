@@ -20,9 +20,12 @@ from .numbering import (
     build_numbering_level_lookup,
     build_style_numbering_lookup,
     has_auto_numbering,
+    is_toc_style_definition,
     paragraph_style_id,
+    style_name_value,
 )
 from .outline import (
+    collect_all_toc_paragraph_ids,
     detect_manual_numbering_prefix,
     fix_outline_paragraphs,
     force_all_paragraphs_to_body_outline_level,
@@ -34,7 +37,7 @@ from .process_runner import run_powershell_file, run_powershell_script
 from .stop_controller import StopController
 from .style_resolver import build_style_font_size_lookup
 from .table_format import process_table, table_cell_count, table_column_count
-from .xml_utils import paragraph_text, qn, remove_character_indent_attrs_from_root
+from .xml_utils import paragraph_text, qn, remove_character_indent_attrs, remove_character_indent_attrs_from_root
 
 POINTS_PER_CM = 28.3464567
 WORD_COM_TIMEOUT_SECONDS = 600
@@ -128,12 +131,12 @@ def should_sanitize_indent_unit_part(name: str) -> bool:
 
 def should_fix_paragraph_part(name: str) -> bool:
     """
-    只對 `word/document.xml` 套用段落縮排與大綱修正。
+    Apply paragraph indentation and outline fixes only to `word/document.xml`.
 
-    header/footer/footnotes/endnotes 不執行本文段落階層主邏輯，
-    避免誤改非本文區域。
+    Headers, footers, footnotes, and endnotes do not run the main body
+    paragraph hierarchy logic, which avoids changing non-body regions.
 
-    表格、顏色與其他 XML 處理仍由各自函式判斷是否套用。
+    Table, color, and other XML handlers still decide their own applicability.
     """
     return name == "word/document.xml"
 
@@ -1698,6 +1701,126 @@ def _filter_word_com_body_indent_records(
     return filtered
 
 
+def collect_toc_numbering_exclusions(
+    document_root,
+    toc_paragraph_ids: set[int],
+    style_numbering_lookup: dict[str, tuple[str, int]],
+    numbering_xml: bytes | None,
+    paragraphs=None,
+) -> tuple[set[tuple[str, int]], set[str], set[str]]:
+    pairs: set[tuple[str, int]] = set()
+    num_ids: set[str] = set()
+    abstract_ids: set[str] = set()
+    num_to_abstract_id: dict[str, str] = {}
+
+    if numbering_xml:
+        try:
+            numbering_root = etree.fromstring(numbering_xml)
+            for num in numbering_root.xpath("./w:num", namespaces=NS):
+                num_id = num.get(qn("numId"))
+                abstract_el = num.find("w:abstractNumId", NS)
+                abstract_id = abstract_el.get(qn("val")) if abstract_el is not None else None
+                if num_id is not None and abstract_id is not None:
+                    num_to_abstract_id[num_id] = abstract_id
+        except Exception:
+            pass
+
+    paragraphs = paragraphs if paragraphs is not None else document_root.xpath(".//w:p", namespaces=NS)
+    for p in paragraphs:
+        if id(p) not in toc_paragraph_ids:
+            continue
+
+        num_id = None
+        ilvl = None
+        if has_auto_numbering(p):
+            num_id, ilvl = get_auto_number_identity(p)
+        if num_id is None:
+            style_id = paragraph_style_id(p)
+            if style_id:
+                num_id, ilvl = style_numbering_lookup.get(style_id, (None, None))
+
+        if num_id is None:
+            continue
+        if ilvl is None:
+            ilvl = 0
+
+        num_ids.add(str(num_id))
+        pairs.add((str(num_id), int(ilvl)))
+        abstract_id = num_to_abstract_id.get(str(num_id))
+        if abstract_id is not None:
+            abstract_ids.add(abstract_id)
+
+    return pairs, num_ids, abstract_ids
+
+
+def remove_character_indent_attrs_from_styles_root_excluding_toc(
+    root,
+    change_logs: list[str] | None = None,
+) -> int:
+    removed = 0
+    for style in root.xpath("./w:style[@w:type='paragraph']", namespaces=NS):
+        style_id = style.get(qn("styleId")) or ""
+        style_name = style_name_value(style)
+        if is_toc_style_definition(style_id, style_name):
+            continue
+        for ind in style.xpath(".//w:ind", namespaces=NS):
+            removed += remove_character_indent_attrs(ind)
+    return removed
+
+
+def remove_character_indent_attrs_from_numbering_root_excluding_toc(
+    root,
+    excluded_numbering_pairs: set[tuple[str, int]],
+    excluded_num_ids: set[str],
+    excluded_abstract_ids: set[str],
+) -> int:
+    removed = 0
+    num_to_abstract_id: dict[str, str] = {}
+    for num in root.xpath("./w:num", namespaces=NS):
+        num_id = num.get(qn("numId"))
+        abstract_el = num.find("w:abstractNumId", NS)
+        abstract_id = abstract_el.get(qn("val")) if abstract_el is not None else None
+        if num_id is not None and abstract_id is not None:
+            num_to_abstract_id[num_id] = abstract_id
+
+    def should_skip(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
+        if abstract_id is not None and abstract_id in excluded_abstract_ids:
+            return True
+        if num_id is not None and num_id in excluded_num_ids:
+            return True
+        if num_id is not None and ilvl is not None and (num_id, ilvl) in excluded_numbering_pairs:
+            return True
+        return False
+
+    for lvl in root.xpath("./w:abstractNum/w:lvl", namespaces=NS):
+        abstract_num = lvl.getparent()
+        abstract_id = abstract_num.get(qn("abstractNumId")) if abstract_num is not None else None
+        try:
+            ilvl = int(lvl.get(qn("ilvl")))
+        except Exception:
+            ilvl = None
+        if should_skip(None, ilvl, abstract_id):
+            continue
+        for ind in lvl.xpath(".//w:ind", namespaces=NS):
+            removed += remove_character_indent_attrs(ind)
+
+    for lvl in root.xpath("./w:num/w:lvlOverride/w:lvl", namespaces=NS):
+        override = lvl.getparent()
+        num = override.getparent() if override is not None else None
+        num_id = num.get(qn("numId")) if num is not None else None
+        abstract_id = num_to_abstract_id.get(num_id or "")
+        try:
+            ilvl = int(override.get(qn("ilvl"))) if override is not None else None
+        except Exception:
+            ilvl = None
+        if should_skip(num_id, ilvl, abstract_id):
+            continue
+        for ind in lvl.xpath(".//w:ind", namespaces=NS):
+            removed += remove_character_indent_attrs(ind)
+
+    return removed
+
+
 def fix_docx_fast(
     input_docx: str | Path,
     output_docx: str | Path,
@@ -1724,15 +1847,46 @@ def fix_docx_fast(
     with ZipFile(input_docx, "r") as zin, ZipFile(output_docx, "w", ZIP_DEFLATED) as zout:
         numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in zin.namelist() else None
         styles_xml = zin.read("word/styles.xml") if "word/styles.xml" in zin.namelist() else None
+        numbering_level_lookup = build_numbering_level_lookup(numbering_xml)
+        style_numbering_lookup = build_style_numbering_lookup(styles_xml)
+        style_font_size_lookup = build_style_font_size_lookup(styles_xml)
+        document_root_for_toc = None
+        document_toc_paragraph_ids: set[int] = set()
+        toc_numbering_pairs: set[tuple[str, int]] = set()
+        toc_num_ids: set[str] = set()
+        toc_abstract_ids: set[str] = set()
+        if "word/document.xml" in zin.namelist():
+            try:
+                document_root_for_toc = etree.fromstring(zin.read("word/document.xml"), parser)
+                document_paragraphs_for_toc = document_root_for_toc.xpath(".//w:p", namespaces=NS)
+                document_toc_paragraph_ids = collect_all_toc_paragraph_ids(
+                    document_root_for_toc,
+                    numbering_level_lookup=numbering_level_lookup,
+                    style_numbering_lookup=style_numbering_lookup,
+                    paragraphs=document_paragraphs_for_toc,
+                )
+                toc_numbering_pairs, toc_num_ids, toc_abstract_ids = collect_toc_numbering_exclusions(
+                    document_root_for_toc,
+                    document_toc_paragraph_ids,
+                    style_numbering_lookup,
+                    numbering_xml,
+                    paragraphs=document_paragraphs_for_toc,
+                )
+            except Exception:
+                document_root_for_toc = None
+                document_toc_paragraph_ids = set()
         formatted_numbering_xml = (
-            apply_numbering_outline_format(numbering_xml, change_logs=summary.numbering_xml_logs)
+            apply_numbering_outline_format(
+                numbering_xml,
+                change_logs=summary.numbering_xml_logs,
+                excluded_numbering_pairs=toc_numbering_pairs,
+                excluded_num_ids=toc_num_ids,
+                excluded_abstract_ids=toc_abstract_ids,
+            )
             if options.fix_paragraph
             else numbering_xml
         )
-        numbering_level_lookup = build_numbering_level_lookup(numbering_xml)
         numbering_format_lookup = build_numbering_format_lookup(formatted_numbering_xml)
-        style_numbering_lookup = build_style_numbering_lookup(styles_xml)
-        style_font_size_lookup = build_style_font_size_lookup(styles_xml)
 
         items = zin.infolist()
         total_items = max(len(items), 1)
@@ -1749,6 +1903,8 @@ def fix_docx_fast(
 
             data = zin.read(item.filename)
             root = None
+            if item.filename == "word/document.xml" and document_root_for_toc is not None:
+                root = document_root_for_toc
 
             if options.remove_all_outline_levels and should_remove_outline_part(item.filename):
                 if progress_callback:
@@ -1756,7 +1912,8 @@ def fix_docx_fast(
                         percent=((item_index + 0.25) / total_items) * 100,
                         message=f"{item.filename}: removing outline levels",
                     )
-                root = etree.fromstring(data, parser)
+                if root is None:
+                    root = etree.fromstring(data, parser)
                 if should_force_body_outline_part(item.filename):
                     force_all_paragraphs_to_body_outline_level(
                         root,
@@ -2030,7 +2187,30 @@ def fix_docx_fast(
             if should_sanitize_indent_unit_part(item.filename):
                 if root is None:
                     root = etree.fromstring(data, parser)
-                removed_char_indent_attrs = remove_character_indent_attrs_from_root(root)
+                exclude_paragraph_ids = (
+                    document_toc_paragraph_ids
+                    if item.filename == "word/document.xml" and document_toc_paragraph_ids
+                    else None
+                )
+                if item.filename == "word/styles.xml":
+                    removed_char_indent_attrs = remove_character_indent_attrs_from_styles_root_excluding_toc(
+                        root,
+                        change_logs=summary.numbering_xml_logs,
+                    )
+                elif item.filename == "word/numbering.xml":
+                    removed_char_indent_attrs = remove_character_indent_attrs_from_numbering_root_excluding_toc(
+                        root,
+                        toc_numbering_pairs,
+                        toc_num_ids,
+                        toc_abstract_ids,
+                    )
+                else:
+                    removed_char_indent_attrs = remove_character_indent_attrs_from_root(
+                        root,
+                        exclude_paragraph_ids=exclude_paragraph_ids,
+                        change_logs=summary.numbering_xml_logs,
+                        part_name=item.filename,
+                    )
                 if removed_char_indent_attrs:
                     summary.character_indent_attrs_removed += removed_char_indent_attrs
                 data = etree.tostring(
