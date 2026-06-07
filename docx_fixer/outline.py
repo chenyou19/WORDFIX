@@ -57,9 +57,10 @@ def normalize_visible_text(text: str) -> str:
 
 def should_skip_style_numbering(text: str) -> bool:
     """
-    ?踹??芸?畾菔璅??撣嗥楊??撠望?甇??隤文??隞嗅之蝬晞?
+    判斷這段文字是否應跳過「樣式編號」推論。
 
-    璅??蝺刻?銝餉??冽?剜?憿??剝??殷??瑞??膩??銝蝙?冽見撘楊???券?撅扎?
+    註解型長段文字通常不是標題，若文字太長且結尾不像標題，
+    就不要只因樣式關聯而把它判成大綱編號。
     """
     normalized = normalize_visible_text(text)
     if starts_with_note_marker(normalized):
@@ -107,8 +108,8 @@ def is_processing_start_marker(
 
 def effective_indent_level(level: int, set_outline: bool) -> int:
     """
-    ?具ㄨ??閮??嚗?蝵格挾?賭???曉ㄨ??撅歹??迨銝???粹?撅?0??
-    敺ㄨ??閮??憪?雿輻甇???辣?惜??
+    序言只套縮排、不套大綱時，層級要往前折一層，但最低仍為 0。
+    這樣序言的視覺縮排會比本文對應層級稍微收斂。
     """
     if set_outline:
         return level
@@ -145,13 +146,13 @@ def is_ascii_letter_or_digit(ch: str) -> bool:
 
 def match_parenthesized_numbering(text: str):
     """
-    ?祈???隞嗥楊??
-    撅斤? 2嚗?銝嚗? (銝)
-    撅斤? 4嚗?1嚗? (1)
-    撅斤? 6嚗?A嚗? (A)
-    撅斤? 8嚗?a嚗? (a)
+    比對括號型手動編號。
+    level 2: `(壹)` / `（一）`
+    level 4: `(1)`
+    level 6: `(A)`
+    level 8: `(a)`
 
-    ???舀?耦?祈???雿嚗?憒?(10)??
+    後方若緊接英數內容，避免把一般文字誤判成編號。
     """
     patterns = [
         (rf"^[（(][{SIMPLE_NUM}]+[)）]", 2),
@@ -167,7 +168,7 @@ def match_parenthesized_numbering(text: str):
 
         end_index = m.end()
 
-        # ?踹? (A)pple??a)pple??1)234 ??隤文??
+        # 避免把 `(A)pple`、`(a)bc`、`(1)234` 之類內容誤判成編號。
         if end_index < len(text):
             next_char = text[end_index]
             if level in {4, 6, 8} and is_ascii_letter_or_digit(next_char):
@@ -180,14 +181,14 @@ def match_parenthesized_numbering(text: str):
 
 def match_plain_numbering(text: str):
     """
-    ????辣蝺刻?嚗?
-    撅斤? 0嚗ㄨ?眾??...
-    撅斤? 1嚗?????...
-    撅斤? 3嚗?.
-    撅斤? 5嚗.
-    撅斤? 7嚗.
+    比對一般手動編號。
+    level 0: `壹、`
+    level 1: `一、`
+    level 3: `1.`
+    level 5: `A.`
+    level 7: `a.`
 
-    敹?撣嗆?摰?暺??踹? 1???? ???桃??鋡怨炊?扎?
+    編號後若立刻接英數內容，視為一般文字而非大綱編號。
     """
     checks = [
         (rf"^[{FINANCIAL_NUM}]+、", 0),
@@ -277,18 +278,18 @@ def trim_manual_numbering_suffix_spacing(p, text: str | None = None) -> tuple[bo
 
 def detect_outline_level(text: str):
     """
-    ?芣?畾菔?蝚血??辣蝺刻??澆????撅斤???
-    蝺刻???迂蝛箇嚗??隞?摮?撠曹?閬?辣蝺刻???
+    依段落可見文字推測手動編號層級。
+    會先檢查括號型，再檢查一般型，避免不同編號樣式互相干擾。
 
-    撅斤? 0嚗ㄨ??
-    撅斤? 1嚗???
-    撅斤? 2嚗?銝嚗? (銝)
-    撅斤? 3嚗?.
-    撅斤? 4嚗?1嚗? (1)
-    撅斤? 5嚗.
-    撅斤? 6嚗?A嚗? (A)
-    撅斤? 7嚗.
-    撅斤? 8嚗?a嚗? (a)
+    level 0: `壹、`
+    level 1: `一、`
+    level 2: `(壹)` / `（一）`
+    level 3: `1.`
+    level 4: `(1)`
+    level 5: `A.`
+    level 6: `(A)`
+    level 7: `a.`
+    level 8: `(a)`
     """
     if not text:
         return None
@@ -320,11 +321,11 @@ def clear_indent_attrs(ind) -> None:
 
 def normalize_tabs_to_text_position(pPr, text_position_twips: str) -> None:
     """
-    撠挾?踝?蝺刻?撅斤???tab stop 蝯曹??唳?摮絲暺?
+    重新建立對齊文字起點所需的 tab stop。
 
-    Word ?芸?蝺刻?撣豢??函楊???Ｘ銝??tab嚗?????tab stop 敺?嚗?
-    撠望??箇??銝嚗??嫣?憭抒???ㄐ???? tabs嚗?鋆???
-    ??left indent ?詨?雿蔭??tab stop嚗??摮◤??tab ?典云??
+    Word 的編號段落若保留舊 tab 設定，可能會讓編號與正文位置跑掉。
+    這裡會先清除既有 tabs，再寫入與 left indent 對齊的新 tab stop，
+    讓段落在 Word 重新開啟後仍維持預期排版。
     """
     tabs = pPr.find("w:tabs", NS)
     if tabs is not None:
@@ -392,11 +393,10 @@ def apply_indent_spec_to_pPr(
 
 
 def apply_paragraph_outline_level(pPr, level: int) -> None:
-    """閮剖? Word 畾菔撅祆找葉?之蝬梢?撅扎?
+    """設定 Word 段落的大綱層級。
 
-    Word ?之蝬梢?撅?1~9? XML 鋆⊥ w:outlineLvl嚗潛 0~8??
-    ???臬?葬??閫嚗霈挾?賜??◤ Word 閬撠??之蝬梢?撅歹?
-    ?舐?澆?閬賜??潦?之蝬望炎閬????
+    Word 介面中的大綱層級 1 到 9，在 XML `w:outlineLvl` 中對應 0 到 8。
+    這裡只寫入 0 到 8 的有效值，實際「本文階層」另由其他函式處理。
     """
     if not (0 <= level <= 8):
         return
@@ -700,7 +700,7 @@ def is_body_indent_font_size_allowed(p, style_font_size_lookup=None) -> bool:
 
 def format_font_size_for_log(font_size_pt: float | None) -> str:
     if font_size_pt is None:
-        return "?⊥??斗"
+        return "未知字號"
     return f"{font_size_pt:g} pt"
 
 
@@ -1320,7 +1320,7 @@ def is_toc_style_value(style_value: str) -> bool:
 
     normalized = style_value.replace(" ", "").replace("_", "").upper()
 
-    # Word ?桅???虜??TOC1~TOC9嚗??憿虜??TOCHeading??
+    # Word 常見的目錄樣式包含 TOC1~TOC9，也可能使用 TOCHeading。
     if re.fullmatch(r"TOC\d+", normalized):
         return True
     if normalized in {"TOCHEADING", "目錄", "目录"}:
@@ -1346,17 +1346,17 @@ def collect_toc_paragraph_ids(root) -> set[int]:
     for p in root.xpath(".//w:p", namespaces=NS):
         p_is_toc = is_toc_style_value(get_paragraph_style_value(p))
 
-        # ?亦?歇??TOC field ?改??挾?賭?閬歲??
+        # 若目前仍位在 TOC field 範圍內，這一段也視為目錄內容。
         if any(frame.get("is_toc") for frame in field_stack):
             p_is_toc = True
 
-        # fldSimple ?陛?格?雿耦撘?
+        # fldSimple 也可能直接包住目錄欄位。
         for fld_simple in p.xpath("ancestor-or-self::w:fldSimple", namespaces=NS):
             if field_instr_is_toc(fld_simple.get(qn("instr")) or ""):
                 p_is_toc = True
                 break
 
-        # 靘?隞園?摨?????雿?begin / instrText / separate / end??
+        # 追蹤複合欄位的 begin / instrText / separate / end 狀態。
         for el in p.iter():
             if el.tag == qn("fldChar"):
                 fld_type = el.get(qn("fldCharType"))
@@ -1381,7 +1381,7 @@ def collect_toc_paragraph_ids(root) -> set[int]:
                 if field_stack:
                     field_stack[-1]["instr"] = str(field_stack[-1].get("instr", "")) + (el.text or "")
                     if field_instr_is_toc(str(field_stack[-1].get("instr", ""))):
-                        # TOC ?誘??冽挾?賣頨思?銝??之蝬梢?撅扎?
+                        # 一旦欄位指令已確認是 TOC，後續段落也應視為目錄內容。
                         p_is_toc = True
 
         if any(frame.get("is_toc") for frame in field_stack):
@@ -1470,7 +1470,7 @@ def fix_outline_paragraphs(
         if change_logs is None:
             change_logs = summary.paragraph_logs
 
-    # ?桅??祈澈銝??之蝬梢?撅歹??踹? TOC ?鋡?Word ?嗆?甇??蝡???
+    # 先收集所有目錄段落，避免修正文內規則時誤改 Word 目錄。
     toc_paragraph_ids = collect_toc_paragraph_ids(root)
     toc_paragraph_ids.update(
         collect_plain_toc_range_paragraph_ids(
@@ -1600,7 +1600,7 @@ def fix_outline_paragraphs(
                             text,
                             before_outline,
                             before_outline,
-                            f"????????????? 14 pt????{format_font_size_for_log(dominant_body_font_size_pt)}?"
+                            f"本文縮排略過：XML 判斷內文字號不是 14 pt，目前為 {format_font_size_for_log(dominant_body_font_size_pt)}"
                         )
                         append_paragraph_change_log(
                             change_logs,

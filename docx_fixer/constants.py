@@ -35,7 +35,7 @@ def make_outline_indent_spec(number_start_cm: float, hanging_cm: float, body_lef
 
 
 TEMPLATE_OUTLINE_INDENTS = {
-    0: make_outline_indent_spec(-0.04, 1.15, 0),
+    0: make_outline_indent_spec(-0.04, 1.27, 1.23),
     1: make_outline_indent_spec(0.70, 1.12, 1.83),
     2: make_outline_indent_spec(1.47, 1.48, 2.96),
     3: make_outline_indent_spec(2.96, 0.50, 3.70),

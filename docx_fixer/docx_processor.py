@@ -128,11 +128,12 @@ def should_sanitize_indent_unit_part(name: str) -> bool:
 
 def should_fix_paragraph_part(name: str) -> bool:
     """
-    ?辣?惜蝮格??芾????
+    只對 `word/document.xml` 套用段落縮排與大綱修正。
 
-    ???偏撣豢??Ⅳ嚗?蝣潭?摮?賢?胯????車?詨?嚗?
-    ?交??憟?隞嗥楊????瘀??◤隤方??箇洵 3 ?楊??
-    撠蝵桐葉?Ⅳ鋡怠???left/hanging 蝮格?????
+    header/footer/footnotes/endnotes 不執行本文段落階層主邏輯，
+    避免誤改非本文區域。
+
+    表格、顏色與其他 XML 處理仍由各自函式判斷是否套用。
     """
     return name == "word/document.xml"
 
