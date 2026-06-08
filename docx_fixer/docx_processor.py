@@ -42,7 +42,10 @@ from .xml_utils import paragraph_text, qn, remove_character_indent_attrs, remove
 POINTS_PER_CM = 28.3464567
 WORD_COM_TIMEOUT_SECONDS = 600
 WORD_COM_TEMP_DIR_NAME = "wfix"
-CHAPTER_THREE_SKIP_TITLE = "參、價格形成之主要因素分析"
+CHAPTER_THREE_SKIP_TITLE = "價格形成之主要因素分析"
+CHAPTER_THREE_SKIP_VISIBLE_PREFIXES = (
+    "參、價格形成之主要因素分析",
+)
 
 
 def create_word_application_for_com_fix(logs: list[str]):
@@ -300,17 +303,41 @@ def _compact_heading_text(text: str) -> str:
     return "".join((text or "").split())
 
 
-def _is_target_chapter_three_heading(p, prefix: str | None) -> bool:
-    if prefix != "參、":
-        return False
-
-    text = paragraph_text(p)
-    target = _compact_heading_text(CHAPTER_THREE_SKIP_TITLE)
-    compact_text = _compact_heading_text(text)
-    if compact_text == target:
+def is_chapter_three_start_marker(
+    p,
+    text: str,
+    *,
+    numbering_level_lookup=None,
+    numbering_format_lookup=None,
+    style_numbering_lookup=None,
+) -> bool:
+    del numbering_format_lookup  # Kept for parity with chapter prefix helpers.
+    compact = _compact_heading_text(text)
+    visible_prefixes = tuple(
+        _compact_heading_text(prefix)
+        for prefix in CHAPTER_THREE_SKIP_VISIBLE_PREFIXES
+    )
+    if compact.startswith(visible_prefixes):
         return True
 
-    return _compact_heading_text(f"{prefix}{text}") == target
+    if not compact.startswith(_compact_heading_text(CHAPTER_THREE_SKIP_TITLE)):
+        return False
+
+    level = None
+    if has_auto_numbering(p):
+        num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
+        level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
+
+    if level is None:
+        num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
+        level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
+
+    if level is None:
+        manual = detect_manual_numbering_prefix(text)
+        if manual is not None:
+            level = manual[0]
+
+    return level == 0
 
 
 def is_table_under_chapter_three(
@@ -321,6 +348,7 @@ def is_table_under_chapter_three(
 ) -> bool:
     paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
     for p in reversed(paragraphs):
+        text = paragraph_text(p)
         prefix = _first_level_heading_prefix_for_paragraph(
             p,
             numbering_level_lookup=numbering_level_lookup,
@@ -328,7 +356,13 @@ def is_table_under_chapter_three(
             style_numbering_lookup=style_numbering_lookup,
         )
         if prefix is not None:
-            return _is_target_chapter_three_heading(p, prefix)
+            return is_chapter_three_start_marker(
+                p,
+                text,
+                numbering_level_lookup=numbering_level_lookup,
+                numbering_format_lookup=numbering_format_lookup,
+                style_numbering_lookup=style_numbering_lookup,
+            )
     return False
 
 
@@ -369,6 +403,8 @@ def collect_chapter_three_paragraph_ids(
         if paragraph_id in toc_ids:
             continue
 
+        text = paragraph_text(p)
+        is_first_level_heading = False
         prefix = _first_level_heading_prefix_for_paragraph(
             p,
             numbering_level_lookup=numbering_level_lookup,
@@ -376,10 +412,28 @@ def collect_chapter_three_paragraph_ids(
             style_numbering_lookup=style_numbering_lookup,
         )
         if prefix is not None:
-            if _is_target_chapter_three_heading(p, prefix):
-                in_chapter_three = True
-            elif in_chapter_three:
-                in_chapter_three = False
+            is_first_level_heading = True
+        else:
+            num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
+            level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
+
+            if level is None:
+                manual = detect_manual_numbering_prefix(text.strip())
+                if manual is not None:
+                    level = manual[0]
+
+            is_first_level_heading = level == 0
+
+        if is_chapter_three_start_marker(
+            p,
+            text,
+            numbering_level_lookup=numbering_level_lookup,
+            numbering_format_lookup=numbering_format_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+        ):
+            in_chapter_three = True
+        elif in_chapter_three and is_first_level_heading:
+            in_chapter_three = False
 
         if in_chapter_three:
             skip_ids.add(paragraph_id)
@@ -1943,6 +1997,9 @@ def fix_docx_fast(
                         numbering_format_lookup=original_numbering_format_lookup,
                         style_numbering_lookup=style_numbering_lookup,
                         toc_paragraph_ids=document_toc_paragraph_ids,
+                    )
+                    summary.numbering_xml_logs.append(
+                        f"CHAPTER_THREE_SKIP_IDS collected={len(document_chapter_three_paragraph_ids)}"
                     )
                     (
                         chapter_three_numbering_pairs,

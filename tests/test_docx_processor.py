@@ -17,6 +17,7 @@ from docx_fixer.docx_processor import (
     _filter_word_com_body_indent_records,
     _verify_and_fix_body_indents_with_word_com_in_process,
     apply_word_com_approved_body_indents_to_docx_xml,
+    collect_chapter_three_paragraph_ids,
     find_word_paragraph_index_for_record,
     fix_docx_fast,
     verify_and_fix_body_indents_with_word_com,
@@ -577,6 +578,31 @@ def assert_all_document_outlines_are_body(test_case: unittest.TestCase, path: Pa
 
 
 class DocxProcessorTests(unittest.TestCase):
+    def test_collect_chapter_three_ids_uses_title_text_and_level_zero_when_prefix_unknown(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        before = add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+        target = add_test_paragraph(
+            body,
+            "\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790",
+            num_id="9",
+            ilvl=0,
+        )
+        protected_body = add_test_paragraph(body, "\u53c3\u7ae0\u5167\u6587")
+        after = add_test_paragraph(body, "\u8086\u3001\u7b2c\u56db\u7ae0")
+
+        skip_ids = collect_chapter_three_paragraph_ids(
+            document,
+            numbering_level_lookup={("9", 0): 0},
+            numbering_format_lookup={},
+            style_numbering_lookup={},
+        )
+
+        self.assertNotIn(id(before), skip_ids)
+        self.assertIn(id(target), skip_ids)
+        self.assertIn(id(protected_body), skip_ids)
+        self.assertNotIn(id(after), skip_ids)
+
     def test_skip_all_under_chapter_three_preserves_paragraphs_tables_and_char_indents(self):
         with tempfile.TemporaryDirectory() as tmp:
             input_docx = Path(tmp) / "input.docx"
@@ -634,6 +660,8 @@ class DocxProcessorTests(unittest.TestCase):
             )
 
             joined_logs = "\n".join(summary.paragraph_logs + summary.numbering_xml_logs)
+            self.assertIn("CHAPTER_THREE_SKIP_IDS collected=", joined_logs)
+            self.assertNotIn("CHAPTER_THREE_SKIP_IDS collected=0", joined_logs)
             self.assertIn(
                 "skipped chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790 content; no formatting applied",
                 joined_logs,

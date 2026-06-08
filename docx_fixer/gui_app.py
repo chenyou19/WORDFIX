@@ -63,7 +63,7 @@ class DocxFixerApp:
         self.indent_preface_var = tk.BooleanVar(value=False)
         self.outline_preface_var = tk.BooleanVar(value=False)
         self.level1_level2_body_first_line_indent_var = tk.BooleanVar(value=True)
-        self.word_com_check_body_font_var = tk.BooleanVar(value=True)
+        self.word_com_check_body_font_var = tk.BooleanVar(value=False)
         self.skip_all_under_chapter_three_var = tk.BooleanVar(value=True)
 
         self.status_var = tk.StringVar(value="請先選擇 .docx 檔案")
