@@ -46,7 +46,7 @@ python main.py input.docx output.docx --table --color --paragraph
 - `--level1-level2-body-first-line-indent`：在第 1、2 層標題下的內文，額外套用首行縮排。
 - `--level2-body-first-line-indent`：相容舊參數名稱，作用同上。
 - `--word-com-check-body-font`：當 XML 判斷內文字號不是 14pt 時，改用 Word COM 再確認。
-- `--skip-all-under-chapter-three`：從 `參、` 標題本身開始，到下一個同級第一層標題前，完全不調整該區段內容。
+- `--skip-all-under-chapter-three`：從 `參、價格形成之主要因素分析` 標題本身開始，到下一個同級第一層標題前，完全不調整該區段內容。
 - `--skip-special-layout-under-chapter-three`：相容舊參數名稱，作用同 `--skip-all-under-chapter-three`。
 - `--quiet`：減少終端輸出訊息。
 
@@ -62,7 +62,7 @@ python main.py input.docx output.docx --table --color --paragraph
 - 第一個本文表格會依現有邏輯略過，不直接套用一般修正。
 - 儲存格數量過少的表格會依既有規則略過。
 - 欄數較少的表格會使用專案既有的特殊版面處理。
-- `參、` 區段可透過 `--skip-all-under-chapter-three` 完全跳過處理；從 `參、` 標題本身開始，到下一個同級第一層標題前，段落、表格、底色、縮排、大綱、Word COM 補救與字元縮排清理都不會套用。
+- `參、價格形成之主要因素分析` 區段可透過 `--skip-all-under-chapter-three` 完全跳過處理；從該標題本身開始，到下一個同級第一層標題前，段落、表格、底色、縮排、大綱、Word COM 補救與字元縮排清理都不會套用。
 
 ## 段落 / 大綱 / 縮排處理規則
 

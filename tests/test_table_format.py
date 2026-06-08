@@ -282,7 +282,7 @@ class TableFormatTests(unittest.TestCase):
         body = etree.SubElement(document, qn("body"))
         body.append(make_paragraph("\u58f9\u3001\u5e8f\u8a00"))
         body.append(make_table([5, 5]))
-        body.append(make_paragraph("\u53c3\u3001\u7b2c\u4e09\u7ae0"))
+        body.append(make_paragraph("\u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790"))
         body.append(make_table([3, 3]))
         body.append(make_paragraph("\u8086\u3001\u7b2c\u56db\u7ae0"))
         body.append(make_table([3, 3]))
@@ -319,7 +319,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3; all table layout and color fixes skipped",
+                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; all table layout and color fixes skipped",
             )
             self.assertEqual(summary.table_log_records[2]["table_type"], "special_table")
             self.assertEqual(summary.table_log_records[2]["special_layout_used"], True)
@@ -332,13 +332,58 @@ class TableFormatTests(unittest.TestCase):
             self.assertIsNone(table_setting(tables[1], "tblInd", "w"))
             self.assertEqual(table_setting(tables[2], "jc"), "right")
 
-    def test_processor_skips_special_layout_for_auto_numbered_chapter_three(self):
+    def test_processor_does_not_skip_other_chapter_three_titles(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("\u58f9\u3001\u5e8f\u8a00"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("\u53c3\u3001\u7b2c\u4e09\u7ae0"))
+        body.append(make_table([3, 3]))
+        body.append(make_paragraph("\u8086\u3001\u7b2c\u56db\u7ae0"))
+        body.append(make_table([3, 3]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=False,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_all_under_chapter_three=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.tables, 3)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+            self.assertEqual(summary.normal_processed_tables, 0)
+            self.assertEqual(summary.special_autofit_right_tables, 2)
+            self.assertEqual(summary.table_log_records[1]["table_type"], "special_table")
+            self.assertEqual(summary.table_log_records[1]["special_layout_used"], True)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertEqual(table_setting(tables[1], "jc"), "right")
+
+    def test_processor_skips_special_layout_for_auto_numbered_target_chapter_three(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
         body.append(make_paragraph("\u5e8f\u8a00", num_id="1", ilvl=0))
         body.append(make_table([5, 5]))
         body.append(make_paragraph("\u7b2c\u4e8c\u7ae0", num_id="1", ilvl=0))
-        body.append(make_paragraph("\u7b2c\u4e09\u7ae0", num_id="1", ilvl=0))
+        body.append(make_paragraph("\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790", num_id="1", ilvl=0))
         body.append(make_table([3, 3]))
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -374,7 +419,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3; all table layout and color fixes skipped",
+                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; all table layout and color fixes skipped",
             )
 
             with ZipFile(output_docx) as zin:
@@ -383,13 +428,13 @@ class TableFormatTests(unittest.TestCase):
             self.assertIsNone(tables[1].find("w:tblPr", NS))
             self.assertIsNone(table_setting(tables[1], "tblInd", "w"))
 
-    def test_processor_skips_special_layout_for_style_numbered_chapter_three(self):
+    def test_processor_skips_special_layout_for_style_numbered_target_chapter_three(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
         body.append(make_paragraph("\u5e8f\u8a00", style="ChapterHeading"))
         body.append(make_table([5, 5]))
         body.append(make_paragraph("\u7b2c\u4e8c\u7ae0", style="ChapterHeading"))
-        body.append(make_paragraph("\u7b2c\u4e09\u7ae0", style="ChapterHeading"))
+        body.append(make_paragraph("\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790", style="ChapterHeading"))
         body.append(make_table([3, 3]))
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -429,7 +474,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3; all table layout and color fixes skipped",
+                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; all table layout and color fixes skipped",
             )
 
             with ZipFile(output_docx) as zin:

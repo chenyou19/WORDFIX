@@ -140,7 +140,7 @@ def parse_args(argv: list[str]):
     parser.add_argument(
         "--skip-all-under-chapter-three",
         action="store_true",
-        help="Do not modify any content under chapter 參 until the next first-level heading",
+        help="Do not modify any content under chapter 參、價格形成之主要因素分析 until the next first-level heading",
     )
     parser.add_argument("--quiet", action="store_true", help="Do not print progress")
     return parser.parse_args(argv)

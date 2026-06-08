@@ -1601,7 +1601,7 @@ def fix_outline_paragraphs(
                     text,
                     before_outline,
                     before_outline,
-                    "skipped chapter 參 content; no formatting applied",
+                    "skipped chapter 參、價格形成之主要因素分析 content; no formatting applied",
                 )
                 continue
 

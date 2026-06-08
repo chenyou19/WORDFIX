@@ -164,7 +164,7 @@ class DocxFixerApp:
 
         ttk.Checkbutton(
             advanced_option_frame,
-            text="參、區段全部不調整",
+            text="參、價格形成之主要因素分析區段全部不調整",
             variable=self.skip_all_under_chapter_three_var,
         ).grid(row=1, column=0, pady=4, sticky="w")
 
@@ -668,4 +668,3 @@ class DocxFixerApp:
             pass
 
         self.root.after(120, self._poll_queue)
-

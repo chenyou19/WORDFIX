@@ -42,6 +42,7 @@ from .xml_utils import paragraph_text, qn, remove_character_indent_attrs, remove
 POINTS_PER_CM = 28.3464567
 WORD_COM_TIMEOUT_SECONDS = 600
 WORD_COM_TEMP_DIR_NAME = "wfix"
+CHAPTER_THREE_SKIP_TITLE = "參、價格形成之主要因素分析"
 
 
 def create_word_application_for_com_fix(logs: list[str]):
@@ -295,19 +296,40 @@ def _first_level_heading_prefix_for_paragraph(
     return lvl_text.replace("%1", token)
 
 
+def _compact_heading_text(text: str) -> str:
+    return "".join((text or "").split())
+
+
+def _is_target_chapter_three_heading(p, prefix: str | None) -> bool:
+    if prefix != "參、":
+        return False
+
+    text = paragraph_text(p)
+    target = _compact_heading_text(CHAPTER_THREE_SKIP_TITLE)
+    compact_text = _compact_heading_text(text)
+    if compact_text == target:
+        return True
+
+    return _compact_heading_text(f"{prefix}{text}") == target
+
+
 def is_table_under_chapter_three(
     tbl,
     numbering_level_lookup,
     numbering_format_lookup,
     style_numbering_lookup,
 ) -> bool:
-    heading = find_table_first_level_heading(
-        tbl,
-        numbering_level_lookup,
-        numbering_format_lookup,
-        style_numbering_lookup,
-    )
-    return heading == "參、"
+    paragraphs = tbl.xpath("preceding::w:p[not(ancestor::w:tbl)]", namespaces=NS)
+    for p in reversed(paragraphs):
+        prefix = _first_level_heading_prefix_for_paragraph(
+            p,
+            numbering_level_lookup=numbering_level_lookup,
+            numbering_format_lookup=numbering_format_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+        )
+        if prefix is not None:
+            return _is_target_chapter_three_heading(p, prefix)
+    return False
 
 
 def find_table_first_level_heading(
@@ -337,7 +359,7 @@ def collect_chapter_three_paragraph_ids(
     style_numbering_lookup,
     toc_paragraph_ids=None,
 ) -> set[int]:
-    """Collect paragraphs from chapter 參 until the next first-level heading."""
+    """Collect paragraphs from the target chapter 參 title until the next first-level heading."""
     skip_ids: set[int] = set()
     toc_ids = toc_paragraph_ids or set()
     in_chapter_three = False
@@ -354,7 +376,7 @@ def collect_chapter_three_paragraph_ids(
             style_numbering_lookup=style_numbering_lookup,
         )
         if prefix is not None:
-            if prefix == "參、":
+            if _is_target_chapter_three_heading(p, prefix):
                 in_chapter_three = True
             elif in_chapter_three:
                 in_chapter_three = False
@@ -2136,7 +2158,11 @@ def fix_docx_fast(
                         skip_all_under_chapter_three = (
                             options.skip_all_under_chapter_three
                             and item.filename == "word/document.xml"
-                            and first_level_heading == "參、"
+                            and chapter_three_exclude_paragraph_ids
+                            and any(
+                                id(p) in chapter_three_exclude_paragraph_ids
+                                for p in tbl.xpath(".//w:p", namespaces=NS)
+                            )
                         )
                         if skip_all_under_chapter_three:
                             summary.table_log_records.append(
@@ -2150,7 +2176,10 @@ def fix_docx_fast(
                                     column_count=column_count,
                                     table_type="skipped_chapter_three_table",
                                     action="skipped",
-                                    reason="under chapter 參; all table layout and color fixes skipped",
+                                    reason=(
+                                        "under chapter 參、價格形成之主要因素分析; "
+                                        "all table layout and color fixes skipped"
+                                    ),
                                     special_layout_used=False,
                                     layout_fixed=False,
                                     color_fixed=False,

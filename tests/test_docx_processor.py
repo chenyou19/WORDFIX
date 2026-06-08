@@ -496,7 +496,7 @@ def make_chapter_three_skip_document_xml() -> bytes:
     add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
     add_test_paragraph(
         body,
-        "\u53c3\u3001\u7b2c\u4e09\u7ae0",
+        "\u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790",
         outline=4,
         ind_attrs={"left": "321", "leftChars": "111", "firstLineChars": "222"},
         font_size_pt=14,
@@ -630,11 +630,14 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[0]["action"], "skipped")
             self.assertEqual(
                 summary.table_log_records[0]["reason"],
-                "under chapter \u53c3; all table layout and color fixes skipped",
+                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; all table layout and color fixes skipped",
             )
 
             joined_logs = "\n".join(summary.paragraph_logs + summary.numbering_xml_logs)
-            self.assertIn("skipped chapter \u53c3 content; no formatting applied", joined_logs)
+            self.assertIn(
+                "skipped chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790 content; no formatting applied",
+                joined_logs,
+            )
             self.assertIn("CHAR_INDENT_SANITIZE_SKIP_EXCLUDED", joined_logs)
 
     def test_special_table_uses_previous_paragraph_text_start_and_page_right_boundary(self):
