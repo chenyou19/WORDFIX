@@ -1463,6 +1463,79 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIsNone(lookup[("10", 1)]["tab_pos"])
         self.assertIsNone(lookup[("20", 1)]["tab_pos"])
 
+    def test_numbering_xml_normalizes_lvl_override_missing_suffix_and_tabs(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "1")
+        abstract_lvl = etree.SubElement(abstract, qn("lvl"))
+        abstract_lvl.set(qn("ilvl"), "0")
+        abstract_fmt = etree.SubElement(abstract_lvl, qn("numFmt"))
+        abstract_fmt.set(qn("val"), "decimal")
+        abstract_text = etree.SubElement(abstract_lvl, qn("lvlText"))
+        abstract_text.set(qn("val"), "%1.")
+
+        num = etree.SubElement(root, qn("num"))
+        num.set(qn("numId"), "42")
+        abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+        abstract_ref.set(qn("val"), "1")
+        override = etree.SubElement(num, qn("lvlOverride"))
+        override.set(qn("ilvl"), "0")
+        override_lvl = etree.SubElement(override, qn("lvl"))
+        override_lvl.set(qn("ilvl"), "0")
+        override_fmt = etree.SubElement(override_lvl, qn("numFmt"))
+        override_fmt.set(qn("val"), "decimal")
+        override_text = etree.SubElement(override_lvl, qn("lvlText"))
+        override_text.set(qn("val"), "%1.")
+        override_pPr = etree.SubElement(override_lvl, qn("pPr"))
+        override_tabs = etree.SubElement(override_pPr, qn("tabs"))
+        override_tab = etree.SubElement(override_tabs, qn("tab"))
+        override_tab.set(qn("val"), "left")
+        override_tab.set(qn("pos"), "999")
+
+        updated = apply_numbering_outline_format(etree.tostring(root))
+        updated_root = etree.fromstring(updated)
+        updated_override_lvl = updated_root.xpath("./w:num/w:lvlOverride/w:lvl", namespaces=NS)[0]
+
+        self.assertEqual(updated_override_lvl.find("./w:suff", NS).get(qn("val")), "nothing")
+        self.assertIsNone(updated_override_lvl.find("./w:pPr/w:tabs", NS))
+
+    def test_numbering_xml_cleans_suffix_tabs_for_excluded_level_without_changing_indent(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "99")
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1.")
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "left")
+        tab.set(qn("pos"), "999")
+        ind = etree.SubElement(pPr, qn("ind"))
+        ind.set(qn("left"), "2279")
+        ind.set(qn("hanging"), "420")
+
+        num = etree.SubElement(root, qn("num"))
+        num.set(qn("numId"), "99")
+        abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+        abstract_ref.set(qn("val"), "99")
+
+        updated = apply_numbering_outline_format(
+            etree.tostring(root),
+            excluded_abstract_ids={"99"},
+        )
+        updated_root = etree.fromstring(updated)
+        updated_lvl = updated_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]
+        updated_ind = updated_lvl.find("./w:pPr/w:ind", NS)
+
+        self.assertEqual(updated_lvl.find("./w:suff", NS).get(qn("val")), "nothing")
+        self.assertIsNone(updated_lvl.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(updated_ind.get(qn("left")), "2279")
+        self.assertEqual(updated_ind.get(qn("hanging")), "420")
+
     def test_numbering_xml_suffix_by_internal_level_and_no_tabs(self):
         root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
         abstract = etree.SubElement(root, qn("abstractNum"))

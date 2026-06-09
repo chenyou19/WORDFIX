@@ -98,6 +98,60 @@ def make_numbering_xml() -> bytes:
     return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_heading_suffix_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+
+    for text in ["壹、序言", "壹、序言", "一、 手動標題"]:
+        p = etree.SubElement(body, qn("p"))
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    p = etree.SubElement(body, qn("p"))
+    pPr = etree.SubElement(p, qn("pPr"))
+    numPr = etree.SubElement(pPr, qn("numPr"))
+    ilvl = etree.SubElement(numPr, qn("ilvl"))
+    ilvl.set(qn("val"), "0")
+    numId = etree.SubElement(numPr, qn("numId"))
+    numId.set(qn("val"), "42")
+    r = etree.SubElement(p, qn("r"))
+    t = etree.SubElement(r, qn("t"))
+    t.text = "自動標題"
+
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_heading_suffix_numbering_xml(suffix: str | None = "tab", *, include_tabs: bool = True) -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    abstract = etree.SubElement(numbering, qn("abstractNum"))
+    abstract.set(qn("abstractNumId"), "42")
+    lvl = etree.SubElement(abstract, qn("lvl"))
+    lvl.set(qn("ilvl"), "0")
+    num_fmt = etree.SubElement(lvl, qn("numFmt"))
+    num_fmt.set(qn("val"), "decimal")
+    lvl_text = etree.SubElement(lvl, qn("lvlText"))
+    lvl_text.set(qn("val"), "%1.")
+    if suffix is not None:
+        suff = etree.SubElement(lvl, qn("suff"))
+        suff.set(qn("val"), suffix)
+    pPr = etree.SubElement(lvl, qn("pPr"))
+    if include_tabs:
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "left")
+        tab.set(qn("pos"), "2279")
+    ind = etree.SubElement(pPr, qn("ind"))
+    ind.set(qn("left"), "2279")
+    ind.set(qn("hanging"), "420")
+
+    num = etree.SubElement(numbering, qn("num"))
+    num.set(qn("numId"), "42")
+    abstract_id = etree.SubElement(num, qn("abstractNumId"))
+    abstract_id.set(qn("val"), "42")
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def make_ind(parent, **attrs):
     ind = etree.SubElement(parent, qn("ind"))
     for name, value in attrs.items():
@@ -1990,9 +2044,11 @@ class DocxProcessorTests(unittest.TestCase):
             input_toc_style_xml = etree.tostring(
                 input_styles_root.xpath("./w:style[@w:styleId='TOC1']", namespaces=NS)[0]
             )
-            input_toc_numbering_xml = etree.tostring(
-                input_numbering_root.xpath("./w:abstractNum[@w:abstractNumId='1']", namespaces=NS)[0]
-            )
+            input_toc_numbering_lvl = input_numbering_root.xpath(
+                "./w:abstractNum[@w:abstractNumId='1']/w:lvl",
+                namespaces=NS,
+            )[0]
+            input_toc_numbering_ind = input_toc_numbering_lvl.find("./w:pPr/w:ind", NS)
 
             summary = fix_docx_fast(
                 input_docx,
@@ -2015,10 +2071,15 @@ class DocxProcessorTests(unittest.TestCase):
                 etree.tostring(output_styles_root.xpath("./w:style[@w:styleId='TOC1']", namespaces=NS)[0]),
                 input_toc_style_xml,
             )
-            self.assertEqual(
-                etree.tostring(output_numbering_root.xpath("./w:abstractNum[@w:abstractNumId='1']", namespaces=NS)[0]),
-                input_toc_numbering_xml,
-            )
+            output_toc_numbering_lvl = output_numbering_root.xpath(
+                "./w:abstractNum[@w:abstractNumId='1']/w:lvl",
+                namespaces=NS,
+            )[0]
+            output_toc_numbering_ind = output_toc_numbering_lvl.find("./w:pPr/w:ind", NS)
+            self.assertEqual(output_toc_numbering_ind.get(qn("left")), input_toc_numbering_ind.get(qn("left")))
+            self.assertEqual(output_toc_numbering_ind.get(qn("hanging")), input_toc_numbering_ind.get(qn("hanging")))
+            self.assertEqual(output_toc_numbering_lvl.find("./w:suff", NS).get(qn("val")), "nothing")
+            self.assertIsNone(output_toc_numbering_lvl.find("./w:pPr/w:tabs", NS))
 
             body_marker = output_paragraphs[3]
             body_paragraph = output_paragraphs[4]
@@ -2091,6 +2152,132 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(paragraph_outlines(output_docx), ["9", "9", "0"])
             self.assertEqual(summary.removed_all_outline_paragraphs, 3)
             self.assertEqual(summary.paragraph_level_counts[0], 1)
+
+    def test_heading_suffix_summary_records_before_and_after_fix_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_heading_suffix_document_xml(),
+                numbering_xml=make_heading_suffix_numbering_xml(),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            before_by_index = {
+                int(record["paragraph_index"]): record
+                for record in summary.heading_suffix_before_records
+            }
+            after_by_index = {
+                int(record["paragraph_index"]): record
+                for record in summary.heading_suffix_after_records
+            }
+
+            self.assertEqual(before_by_index[3]["source"], "manual_text")
+            self.assertEqual(before_by_index[3]["suffix"], "space")
+            self.assertEqual(before_by_index[3]["space_count"], 1)
+            self.assertEqual(after_by_index[3]["suffix"], "nothing")
+            self.assertEqual(after_by_index[3]["space_count"], 0)
+
+            self.assertEqual(before_by_index[4]["source"], "auto_numbering_xml")
+            self.assertEqual(before_by_index[4]["suffix"], "tab")
+            self.assertEqual(before_by_index[4]["has_tab_stop"], True)
+            self.assertEqual(before_by_index[4]["tab_pos_twips"], "2279")
+            self.assertEqual(after_by_index[4]["suffix"], "nothing")
+            self.assertEqual(after_by_index[4]["has_tab_stop"], False)
+            self.assertIsNone(after_by_index[4]["tab_pos_twips"])
+
+    def test_heading_suffix_normalizes_auto_numbering_missing_suffix_and_tabs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_heading_suffix_document_xml(),
+                numbering_xml=make_heading_suffix_numbering_xml(suffix=None, include_tabs=True),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            before_auto = next(
+                record for record in summary.heading_suffix_before_records
+                if record.get("source") == "auto_numbering_xml"
+            )
+            after_auto = next(
+                record for record in summary.heading_suffix_after_records
+                if record.get("source") == "auto_numbering_xml"
+            )
+            self.assertEqual(before_auto["raw_suffix"], "missing")
+            self.assertEqual(before_auto["effective_suffix"], "tab")
+            self.assertEqual(after_auto["raw_suffix"], "nothing")
+            self.assertEqual(after_auto["effective_suffix"], "nothing")
+            self.assertEqual(after_auto["has_tab_stop"], False)
+            self.assertIsNone(after_auto["tab_pos_twips"])
+
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            lvl = numbering_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]
+            self.assertEqual(lvl.find("w:suff", NS).get(qn("val")), "nothing")
+            self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
+
+    def test_heading_suffix_normalizes_auto_numbering_tab_and_space_suffixes(self):
+        for suffix in ("tab", "space"):
+            with self.subTest(suffix=suffix):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    input_docx = Path(temp_dir) / "input.docx"
+                    output_docx = Path(temp_dir) / "output.docx"
+                    make_docx(
+                        input_docx,
+                        make_heading_suffix_document_xml(),
+                        numbering_xml=make_heading_suffix_numbering_xml(suffix=suffix, include_tabs=True),
+                    )
+
+                    summary = fix_docx_fast(
+                        input_docx,
+                        output_docx,
+                        ProcessOptions(
+                            fix_table_layout=False,
+                            fix_color=False,
+                            fix_paragraph=True,
+                            normalize_with_word_com=False,
+                        ),
+                    )
+
+                    before_auto = next(
+                        record for record in summary.heading_suffix_before_records
+                        if record.get("source") == "auto_numbering_xml"
+                    )
+                    after_auto = next(
+                        record for record in summary.heading_suffix_after_records
+                        if record.get("source") == "auto_numbering_xml"
+                    )
+                    self.assertEqual(before_auto["raw_suffix"], suffix)
+                    self.assertEqual(after_auto["raw_suffix"], "nothing")
+                    self.assertEqual(after_auto["effective_suffix"], "nothing")
+                    self.assertEqual(after_auto["has_tab_stop"], False)
+
+                    numbering_root = read_part_root(output_docx, "word/numbering.xml")
+                    lvl = numbering_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]
+                    self.assertEqual(lvl.find("w:suff", NS).get(qn("val")), "nothing")
+                    self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
 
 
 if __name__ == "__main__":

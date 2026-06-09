@@ -12,6 +12,7 @@ from lxml import etree
 
 from .constants import NS, TEMPLATE_OUTLINE_INDENTS
 from .exceptions import ProcessStopped
+from .indent_settings import twips_to_cm
 from .models import ProcessOptions, ProcessSummary
 from .numbering import (
     apply_numbering_outline_format,
@@ -31,6 +32,7 @@ from .outline import (
     force_all_paragraphs_to_body_outline_level,
     get_auto_number_identity,
     remove_all_outline_levels_from_any_root,
+    should_skip_style_numbering,
 )
 from .path_utils import is_same_file_path
 from .process_runner import run_powershell_file, run_powershell_script
@@ -478,6 +480,156 @@ def build_table_log_record(
         "cleared_colors": cleared_colors,
         "shading_debug": list(shading_debug or []),
     }
+
+
+def _twips_to_log_cm(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return round(twips_to_cm(int(value)), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _manual_suffix_details(text: str, prefix: str) -> dict[str, object]:
+    stripped = text.lstrip()
+    prefix_start = len(text) - len(stripped)
+    separator_start = prefix_start + len(prefix)
+    separator_end = separator_start
+    while separator_end < len(text) and text[separator_end] in {" ", "\t", "\u3000"}:
+        separator_end += 1
+
+    raw_separator = text[separator_start:separator_end]
+    if raw_separator == "":
+        suffix = "nothing"
+    elif raw_separator[0] == "\t":
+        suffix = "tab"
+    elif raw_separator[0] in {" ", "\u3000"}:
+        suffix = "space"
+    else:
+        suffix = "other"
+
+    return {
+        "suffix": suffix,
+        "space_count": raw_separator.count(" ") + raw_separator.count("\u3000"),
+        "tab_count": raw_separator.count("\t"),
+        "raw_separator_repr": repr(raw_separator),
+    }
+
+
+def _auto_suffix_details(
+    num_id: str | None,
+    ilvl: int | None,
+    numbering_format_lookup,
+) -> dict[str, object]:
+    level_format = numbering_format_lookup.get((num_id, ilvl), {}) if num_id is not None and ilvl is not None else {}
+    raw_suffix = level_format.get("suff")
+    if raw_suffix is None:
+        suffix = "missing"
+    elif raw_suffix in {"nothing", "tab", "space"}:
+        suffix = raw_suffix
+    else:
+        suffix = "other"
+    effective_suffix = "tab" if suffix == "missing" else suffix
+
+    tab_pos = level_format.get("tab_pos")
+    left = level_format.get("left")
+    hanging = level_format.get("hanging")
+    number_start = level_format.get("number_start")
+    return {
+        "suffix": suffix,
+        "raw_suffix": suffix,
+        "effective_suffix": effective_suffix,
+        "numId": num_id,
+        "ilvl": ilvl,
+        "numFmt": level_format.get("numFmt"),
+        "lvlText": level_format.get("lvlText"),
+        "has_tab_stop": tab_pos is not None,
+        "tab_pos_twips": tab_pos,
+        "tab_pos_cm": _twips_to_log_cm(tab_pos),
+        "left_twips": left,
+        "hanging_twips": hanging,
+        "number_start_twips": number_start,
+        "left_cm": _twips_to_log_cm(left),
+        "hanging_cm": _twips_to_log_cm(hanging),
+        "number_start_cm": _twips_to_log_cm(number_start),
+    }
+
+
+def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict[str, object]]:
+    parser = etree.XMLParser(remove_blank_text=False, recover=True)
+    records: list[dict[str, object]] = []
+    with ZipFile(docx_path, "r") as zin:
+        names = set(zin.namelist())
+        numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in names else None
+        styles_xml = zin.read("word/styles.xml") if "word/styles.xml" in names else None
+        numbering_level_lookup = build_numbering_level_lookup(numbering_xml)
+        numbering_format_lookup = build_numbering_format_lookup(numbering_xml)
+        style_numbering_lookup = build_style_numbering_lookup(styles_xml)
+
+        for part_name in sorted(name for name in names if should_process_part(name)):
+            try:
+                root = etree.fromstring(zin.read(part_name), parser)
+            except Exception:
+                continue
+
+            for paragraph_index, p in enumerate(root.xpath(".//w:p", namespaces=NS), start=1):
+                if p.xpath("ancestor::w:tbl", namespaces=NS):
+                    continue
+
+                text = paragraph_text(p)
+                if not text or not text.strip():
+                    continue
+
+                num_id = None
+                ilvl = None
+                level = None
+                source = None
+                number_token = None
+                details: dict[str, object] | None = None
+
+                if has_auto_numbering(p):
+                    num_id, ilvl = get_auto_number_identity(p)
+                    level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
+                    if level is not None:
+                        source = "auto_numbering_xml"
+                        details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup)
+
+                if level is None and not should_skip_style_numbering(text):
+                    num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
+                    level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
+                    if level is not None:
+                        source = "auto_numbering_xml"
+                        details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup)
+
+                if level is None:
+                    manual = detect_manual_numbering_prefix(text)
+                    if manual is not None:
+                        level, number_token = manual
+                        source = "manual_text"
+                        details = _manual_suffix_details(text, number_token)
+
+                if level is None or source is None or details is None:
+                    continue
+                if level < 0 or level > 8:
+                    continue
+
+                if number_token is None:
+                    number_token = (details.get("lvlText") if details else None) or "(auto)"
+
+                records.append(
+                    {
+                        "part_name": part_name,
+                        "paragraph_index": paragraph_index,
+                        "source": source,
+                        "outline_level": level,
+                        "heading_text": text,
+                        "number_token": number_token,
+                        **details,
+                    }
+                )
+
+    return records
 
 
 def _parse_twips_attr(element, attr_name: str) -> int | None:
@@ -1955,6 +2107,20 @@ def fix_docx_fast(
     parser = etree.XMLParser(remove_blank_text=False, recover=True)
     summary = ProcessSummary()
     global_table_index = 0
+    try:
+        summary.heading_suffix_before_records = collect_heading_suffix_records_from_docx(input_docx)
+    except Exception as exc:
+        summary.heading_suffix_before_records = [
+            {
+                "part_name": "(scan_error)",
+                "paragraph_index": 0,
+                "source": "error",
+                "outline_level": None,
+                "heading_text": f"BEFORE_FIX scan failed: {exc!r}",
+                "number_token": None,
+                "suffix": "other",
+            }
+        ]
 
     with ZipFile(input_docx, "r") as zin, ZipFile(output_docx, "w", ZIP_DEFLATED) as zout:
         numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in zin.namelist() else None
@@ -2440,6 +2606,21 @@ def fix_docx_fast(
             )
     else:
         summary.word_com_body_indent_logs.append("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=disabled")
+
+    try:
+        summary.heading_suffix_after_records = collect_heading_suffix_records_from_docx(output_docx)
+    except Exception as exc:
+        summary.heading_suffix_after_records = [
+            {
+                "part_name": "(scan_error)",
+                "paragraph_index": 0,
+                "source": "error",
+                "outline_level": None,
+                "heading_text": f"AFTER_FIX scan failed: {exc!r}",
+                "number_token": None,
+                "suffix": "other",
+            }
+        ]
 
     if progress_callback:
         progress_callback(percent=100, message="done")

@@ -7,9 +7,12 @@ from pathlib import Path
 from docx_fixer.models import ProcessSummary
 from docx_fixer.process_log import (
     format_indent_settings_log_lines,
+    format_heading_suffix_log_lines,
     format_numbering_indent_log_lines,
     format_table_log_lines,
+    get_heading_suffix_log_path,
     get_table_log_path,
+    write_heading_suffix_log_file,
     write_process_log,
     write_table_log_file,
 )
@@ -68,6 +71,128 @@ class ProcessLogTests(unittest.TestCase):
     def test_table_log_path_uses_output_docx_stem(self):
         output_docx = Path("D:/tmp/sample_fixed.docx")
         self.assertEqual(get_table_log_path(output_docx).name, "sample_fixed_table_log.txt")
+
+    def test_heading_suffix_log_path_uses_output_docx_stem(self):
+        output_docx = Path("D:/tmp/sample_fixed.docx")
+        self.assertEqual(
+            get_heading_suffix_log_path(output_docx).name,
+            "sample_fixed_heading_suffix_log.txt",
+        )
+
+    def test_heading_suffix_log_file_writes_before_after_records(self):
+        summary = ProcessSummary()
+        summary.heading_suffix_before_records.append(
+            {
+                "part_name": "word/document.xml",
+                "paragraph_index": 12,
+                "source": "manual_text",
+                "outline_level": 1,
+                "heading_text": "一、 標題",
+                "number_token": "一、",
+                "suffix": "space",
+                "space_count": 1,
+                "tab_count": 0,
+                "raw_separator_repr": "' '",
+            }
+        )
+        summary.heading_suffix_after_records.append(
+            {
+                "part_name": "word/document.xml",
+                "paragraph_index": 12,
+                "source": "manual_text",
+                "outline_level": 1,
+                "heading_text": "一、標題",
+                "number_token": "一、",
+                "suffix": "nothing",
+                "space_count": 0,
+                "tab_count": 0,
+                "raw_separator_repr": "''",
+            }
+        )
+
+        lines = format_heading_suffix_log_lines(summary)
+        self.assertIn("HEADING_SUFFIX_LOG", lines)
+        self.assertIn("changed_to_nothing: 1", lines)
+        self.assertIn("suffix_before: space", lines)
+        self.assertIn("suffix_after: nothing", lines)
+        self.assertIn("change_type: space_to_nothing", lines)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_docx = Path(tmp) / "sample_fixed.docx"
+            log_path = write_heading_suffix_log_file(output_docx, summary)
+            content = log_path.read_text(encoding="utf-8")
+
+        self.assertEqual(log_path.name, "sample_fixed_heading_suffix_log.txt")
+        self.assertIn("===== SUMMARY BEFORE_FIX =====", content)
+        self.assertIn("heading_text_after: 一、標題", content)
+
+    def test_heading_suffix_log_writes_auto_raw_and_effective_suffix(self):
+        summary = ProcessSummary()
+        summary.heading_suffix_before_records.append(
+            {
+                "part_name": "word/document.xml",
+                "paragraph_index": 27,
+                "source": "auto_numbering_xml",
+                "outline_level": 4,
+                "heading_text": "自動標題",
+                "number_token": "%1.",
+                "suffix": "missing",
+                "raw_suffix": "missing",
+                "effective_suffix": "tab",
+                "numId": "18",
+                "ilvl": 0,
+                "numFmt": "decimal",
+                "lvlText": "%1.",
+                "has_tab_stop": True,
+                "tab_pos_twips": "2279",
+                "tab_pos_cm": 4.02,
+                "left_twips": "2279",
+                "hanging_twips": "420",
+                "number_start_twips": "1859",
+                "left_cm": 4.02,
+                "hanging_cm": 0.74,
+                "number_start_cm": 3.28,
+            }
+        )
+        summary.heading_suffix_after_records.append(
+            {
+                "part_name": "word/document.xml",
+                "paragraph_index": 27,
+                "source": "auto_numbering_xml",
+                "outline_level": 4,
+                "heading_text": "自動標題",
+                "number_token": "%1.",
+                "suffix": "nothing",
+                "raw_suffix": "nothing",
+                "effective_suffix": "nothing",
+                "numId": "18",
+                "ilvl": 0,
+                "numFmt": "decimal",
+                "lvlText": "%1.",
+                "has_tab_stop": False,
+                "tab_pos_twips": None,
+                "tab_pos_cm": None,
+                "left_twips": "2279",
+                "hanging_twips": "420",
+                "number_start_twips": "1859",
+                "left_cm": 4.02,
+                "hanging_cm": 0.74,
+                "number_start_cm": 3.28,
+            }
+        )
+
+        lines = format_heading_suffix_log_lines(summary)
+
+        self.assertIn("suffix_missing: 0", lines[lines.index("===== SUMMARY AFTER_FIX ====="):])
+        self.assertIn("suffix_tab: 0", lines[lines.index("===== SUMMARY AFTER_FIX ====="):])
+        self.assertIn("suffix_space: 0", lines[lines.index("===== SUMMARY AFTER_FIX ====="):])
+        self.assertIn("tab_stop_remaining: 0", lines[lines.index("===== SUMMARY AFTER_FIX ====="):])
+        self.assertIn("raw_suffix_before: missing", lines)
+        self.assertIn("raw_suffix_after: nothing", lines)
+        self.assertIn("effective_suffix_before: tab", lines)
+        self.assertIn("effective_suffix_after: nothing", lines)
+        self.assertIn("has_tab_stop_after: false", lines)
+        self.assertIn("change_type: missing_effective_tab_to_nothing", lines)
 
     def test_table_log_file_writes_structured_table_records(self):
         summary = ProcessSummary()

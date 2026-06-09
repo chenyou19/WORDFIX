@@ -24,7 +24,7 @@ from .indent_settings import (
 )
 from .models import ProcessOptions
 from .path_utils import is_same_file_path
-from .process_log import write_process_log, write_table_log_file
+from .process_log import write_heading_suffix_log_file, write_process_log, write_table_log_file
 from .stop_controller import StopController
 
 DEFAULT_WINDOW_GEOMETRY = "1080x760"
@@ -564,6 +564,7 @@ class DocxFixerApp:
 
             log_path = None
             table_log_path = None
+            heading_suffix_log_path = None
             try:
                 log_path = write_process_log(final_output, summary)
             except Exception as exc:
@@ -572,8 +573,12 @@ class DocxFixerApp:
                 table_log_path = write_table_log_file(final_output, summary)
             except Exception as exc:
                 self.ui_queue.put(("warning", f"無法寫入表格 log：{exc}"))
+            try:
+                heading_suffix_log_path = write_heading_suffix_log_file(final_output, summary)
+            except Exception as exc:
+                self.ui_queue.put(("warning", f"無法寫入標題後方分隔符 log：{exc}"))
 
-            self.ui_queue.put(("done", final_output, summary, log_path, table_log_path))
+            self.ui_queue.put(("done", final_output, summary, log_path, table_log_path, heading_suffix_log_path))
 
         except ProcessStopped:
             try:
@@ -621,7 +626,7 @@ class DocxFixerApp:
                     self.append_log("警告: " + message)
 
                 elif kind == "done":
-                    _, output_path, summary, log_path, table_log_path = item
+                    _, output_path, summary, log_path, table_log_path, heading_suffix_log_path = item
                     self.current_temp_output = None
                     self.stop_progress_animation(100)
                     self.status_var.set("處理完成")
@@ -638,13 +643,16 @@ class DocxFixerApp:
                         self.append_log(f"process_log={log_path}")
                     if table_log_path is not None:
                         self.append_log(f"table_log={table_log_path}")
+                    if heading_suffix_log_path is not None:
+                        self.append_log(f"heading_suffix_log={heading_suffix_log_path}")
                     self.set_running_state(False)
                     messagebox.showinfo(
                         "處理完成",
                         "DOCX 處理完成。\n\n"
                         f"輸出檔案：\n{output_path}\n\n"
                         f"處理 log：\n{log_path if log_path is not None else '未產生'}\n\n"
-                        f"表格 log：\n{table_log_path if table_log_path is not None else '未產生'}",
+                        f"表格 log：\n{table_log_path if table_log_path is not None else '未產生'}\n\n"
+                        f"標題後方分隔符 log：\n{heading_suffix_log_path if heading_suffix_log_path is not None else '未產生'}",
                     )
 
                 elif kind == "stopped":

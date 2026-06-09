@@ -38,7 +38,7 @@ TEMPLATE_OUTLINE_INDENTS = {
     0: make_outline_indent_spec(-0.04, 1.27, 1.23),
     1: make_outline_indent_spec(0.70, 1.12, 1.83),
     2: make_outline_indent_spec(1.47, 1.48, 2.96),
-    3: make_outline_indent_spec(2.96, 0.50, 3.45),
+    3: make_outline_indent_spec(2.96, 0.74, 3.45),
     4: make_outline_indent_spec(3.21, 1.23, 4.44),
     5: make_outline_indent_spec(4.45, 0.50, 4.94),
     6: make_outline_indent_spec(4.70, 1.23, 5.94),

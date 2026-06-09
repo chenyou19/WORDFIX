@@ -16,6 +16,207 @@ def get_table_log_path(output_docx: str | Path) -> Path:
     return output_path.with_name(f"{output_path.stem}_table_log.txt")
 
 
+def get_heading_suffix_log_path(output_docx: str | Path) -> Path:
+    output_path = Path(output_docx)
+    return output_path.with_name(f"{output_path.stem}_heading_suffix_log.txt")
+
+
+def _suffix_record_key(record: dict[str, object]) -> tuple[str, int]:
+    return str(record.get("part_name", "")), int(record.get("paragraph_index", 0))
+
+
+def _suffix_count(records: list[dict[str, object]], suffix: str) -> int:
+    return sum(1 for record in records if record.get("suffix") == suffix)
+
+
+def _tab_stop_count(records: list[dict[str, object]]) -> int:
+    return sum(1 for record in records if record.get("has_tab_stop") is True)
+
+
+def _change_type(before_record: dict[str, object], after_record: dict[str, object]) -> str:
+    before_suffix = before_record.get("suffix")
+    after_suffix = after_record.get("suffix")
+    before_effective = before_record.get("effective_suffix", before_suffix)
+    after_effective = after_record.get("effective_suffix", after_suffix)
+    if before_suffix == "missing" and before_effective != before_suffix:
+        return f"missing_effective_{before_effective}_to_{after_effective}"
+    if before_effective != after_effective:
+        return f"{before_effective}_to_{after_effective}"
+    if before_suffix != after_suffix:
+        return f"{before_suffix}_to_{after_suffix}"
+    return f"{before_suffix}_to_{after_suffix}"
+
+
+def _format_optional_cm(value: object) -> str:
+    if value is None:
+        return "None"
+    return f"{float(value):.2f}"
+
+
+def _format_suffix_record_value(record: dict[str, object], key: str) -> str:
+    value = record.get(key)
+    if value is None:
+        return "None"
+    if isinstance(value, bool):
+        return _bool_text(value)
+    return str(value)
+
+
+def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
+    before = list(summary.heading_suffix_before_records)
+    after = list(summary.heading_suffix_after_records)
+    before_by_key = {_suffix_record_key(record): record for record in before}
+    after_by_key = {_suffix_record_key(record): record for record in after}
+    keys = sorted(set(before_by_key) | set(after_by_key), key=lambda item: (item[0], item[1]))
+
+    before_manual = sum(1 for record in before if record.get("source") == "manual_text")
+    before_auto = sum(1 for record in before if record.get("source") == "auto_numbering_xml")
+    after_manual = sum(1 for record in after if record.get("source") == "manual_text")
+    after_auto = sum(1 for record in after if record.get("source") == "auto_numbering_xml")
+
+    changed_to_nothing = 0
+    still_tab = 0
+    still_space = 0
+    still_missing = 0
+    still_other = 0
+    for key in keys:
+        before_record = before_by_key.get(key, {})
+        after_record = after_by_key.get(key, {})
+        before_suffix = before_record.get("suffix")
+        after_suffix = after_record.get("suffix")
+        if before_suffix != "nothing" and after_suffix == "nothing":
+            changed_to_nothing += 1
+        if after_suffix == "tab":
+            still_tab += 1
+        elif after_suffix == "space":
+            still_space += 1
+        elif after_suffix == "missing":
+            still_missing += 1
+        elif after_suffix == "other":
+            still_other += 1
+
+    lines = [
+        "HEADING_SUFFIX_LOG",
+        "",
+        "===== SUMMARY BEFORE_FIX =====",
+        f"total_headings: {len(before)}",
+        f"manual_headings: {before_manual}",
+        f"auto_numbering_headings: {before_auto}",
+        f"suffix_nothing: {_suffix_count(before, 'nothing')}",
+        f"suffix_tab: {_suffix_count(before, 'tab')}",
+        f"suffix_space: {_suffix_count(before, 'space')}",
+        f"suffix_missing: {_suffix_count(before, 'missing')}",
+        f"suffix_other: {_suffix_count(before, 'other')}",
+        f"tab_stop_remaining: {_tab_stop_count(before)}",
+        "",
+        "===== SUMMARY AFTER_FIX =====",
+        f"total_headings: {len(after)}",
+        f"manual_headings: {after_manual}",
+        f"auto_numbering_headings: {after_auto}",
+        f"suffix_nothing: {_suffix_count(after, 'nothing')}",
+        f"suffix_tab: {_suffix_count(after, 'tab')}",
+        f"suffix_space: {_suffix_count(after, 'space')}",
+        f"suffix_missing: {_suffix_count(after, 'missing')}",
+        f"suffix_other: {_suffix_count(after, 'other')}",
+        f"tab_stop_remaining: {_tab_stop_count(after)}",
+        "",
+        "===== SUMMARY CHANGE =====",
+        f"changed_to_nothing: {changed_to_nothing}",
+        f"still_tab: {still_tab}",
+        f"still_space: {still_space}",
+        f"still_missing: {still_missing}",
+        f"still_other: {still_other}",
+        "",
+    ]
+
+    if not keys:
+        lines.append("No heading suffix records.")
+        return lines
+
+    for index, key in enumerate(keys, start=1):
+        before_record = before_by_key.get(key, {})
+        after_record = after_by_key.get(key, {})
+        record = after_record or before_record
+        matched = bool(before_record and after_record)
+        if matched:
+            match_status = "matched"
+        elif before_record:
+            match_status = "before_only"
+        else:
+            match_status = "after_only"
+
+        source = record.get("source", "unknown")
+        changed = matched and (
+            before_record.get("suffix") != after_record.get("suffix")
+            or before_record.get("effective_suffix", before_record.get("suffix"))
+            != after_record.get("effective_suffix", after_record.get("suffix"))
+            or before_record.get("has_tab_stop") != after_record.get("has_tab_stop")
+        )
+        lines.extend(
+            [
+                f"===== Heading {index} =====",
+                f"part_name: {key[0]}",
+                f"paragraph_index: {key[1]}",
+                f"matched: {_bool_text(matched)}",
+                f"match_status: {match_status}",
+                f"source_before: {_format_suffix_record_value(before_record, 'source')}",
+                f"source_after: {_format_suffix_record_value(after_record, 'source')}",
+                f"outline_level_before: {_format_suffix_record_value(before_record, 'outline_level')}",
+                f"outline_level_after: {_format_suffix_record_value(after_record, 'outline_level')}",
+                f"heading_text_before: {_format_suffix_record_value(before_record, 'heading_text')}",
+                f"heading_text_after: {_format_suffix_record_value(after_record, 'heading_text')}",
+                f"number_token_before: {_format_suffix_record_value(before_record, 'number_token')}",
+                f"number_token_after: {_format_suffix_record_value(after_record, 'number_token')}",
+                f"suffix_before: {_format_suffix_record_value(before_record, 'suffix')}",
+                f"suffix_after: {_format_suffix_record_value(after_record, 'suffix')}",
+            ]
+        )
+
+        if source == "auto_numbering_xml":
+            for key_name in ("raw_suffix", "effective_suffix"):
+                lines.append(
+                    f"{key_name}_before: {_format_suffix_record_value(before_record, key_name)}"
+                )
+                lines.append(
+                    f"{key_name}_after: {_format_suffix_record_value(after_record, key_name)}"
+                )
+            for key_name in ("numId", "ilvl", "numFmt", "lvlText"):
+                lines.append(
+                    f"{key_name}_before: {_format_suffix_record_value(before_record, key_name)}"
+                )
+                lines.append(
+                    f"{key_name}_after: {_format_suffix_record_value(after_record, key_name)}"
+                )
+            for key_name in ("has_tab_stop", "tab_pos_twips", "left_twips", "hanging_twips", "number_start_twips"):
+                lines.append(
+                    f"{key_name}_before: {_format_suffix_record_value(before_record, key_name)}"
+                )
+                lines.append(
+                    f"{key_name}_after: {_format_suffix_record_value(after_record, key_name)}"
+                )
+            for key_name in ("tab_pos_cm", "left_cm", "hanging_cm", "number_start_cm"):
+                lines.append(f"{key_name}_before: {_format_optional_cm(before_record.get(key_name))}")
+                lines.append(f"{key_name}_after: {_format_optional_cm(after_record.get(key_name))}")
+        else:
+            for key_name in ("space_count", "tab_count", "raw_separator_repr"):
+                lines.append(
+                    f"{key_name}_before: {_format_suffix_record_value(before_record, key_name)}"
+                )
+                lines.append(
+                    f"{key_name}_after: {_format_suffix_record_value(after_record, key_name)}"
+                )
+
+        lines.extend(
+            [
+                f"changed: {_bool_text(changed)}",
+                f"change_type: {_change_type(before_record, after_record) if matched else match_status}",
+                "",
+            ]
+        )
+
+    return lines[:-1] if lines and lines[-1] == "" else lines
+
+
 def format_numbering_indent_log_lines(summary: ProcessSummary) -> list[str]:
     lines = ["編號縮排量測紀錄："]
     if not summary.numbering_measurements:
@@ -140,6 +341,12 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
 def write_table_log_file(output_docx: str | Path, summary: ProcessSummary) -> Path:
     log_path = get_table_log_path(output_docx)
     log_path.write_text("\n".join(format_table_log_lines(summary)) + "\n", encoding="utf-8")
+    return log_path
+
+
+def write_heading_suffix_log_file(output_docx: str | Path, summary: ProcessSummary) -> Path:
+    log_path = get_heading_suffix_log_path(output_docx)
+    log_path.write_text("\n".join(format_heading_suffix_log_lines(summary)) + "\n", encoding="utf-8")
     return log_path
 
 

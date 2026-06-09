@@ -571,11 +571,11 @@ def apply_numbering_outline_format(
             ilvl = int(lvl.get(qn("ilvl")))
         except Exception:
             ilvl = None
+        changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
         if should_skip_numbering(None, ilvl, abstract_id):
             log_skip_numbering(None, ilvl, abstract_id)
             continue
 
-        changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
         num_fmt_el = lvl.find("w:numFmt", NS)
         lvl_text_el = lvl.find("w:lvlText", NS)
         num_fmt = num_fmt_el.get(qn("val")) if num_fmt_el is not None else None
@@ -601,11 +601,11 @@ def apply_numbering_outline_format(
             ilvl = int(override.get(qn("ilvl"))) if override is not None else None
         except Exception:
             ilvl = None
+        changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
         if should_skip_numbering(num_id, ilvl, abstract_id):
             log_skip_numbering(num_id, ilvl, abstract_id)
             continue
 
-        changed = sanitize_numbering_level_suffix_tabs_and_text(lvl) or changed
         num_fmt_el = lvl.find("w:numFmt", NS)
         lvl_text_el = lvl.find("w:lvlText", NS)
         num_fmt = num_fmt_el.get(qn("val")) if num_fmt_el is not None else None

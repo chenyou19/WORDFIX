@@ -7,7 +7,7 @@ from .constants import DEFAULT_GRAY
 from .docx_processor import fix_docx_fast
 from .indent_settings import load_saved_indent_settings
 from .models import ProcessOptions
-from .process_log import write_process_log, write_table_log_file
+from .process_log import write_heading_suffix_log_file, write_process_log, write_table_log_file
 from .stop_controller import StopController
 
 
@@ -109,8 +109,10 @@ def run_cli(args) -> int:
     print(f"output_docx={args.output_docx}")
     log_path = write_process_log(args.output_docx, summary)
     table_log_path = write_table_log_file(args.output_docx, summary)
+    heading_suffix_log_path = write_heading_suffix_log_file(args.output_docx, summary)
     print(f"process_log={log_path}")
     print(f"table_log={table_log_path}")
+    print(f"heading_suffix_log={heading_suffix_log_path}")
     return 0
 
 
