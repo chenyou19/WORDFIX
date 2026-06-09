@@ -20,6 +20,7 @@ from .numbering import (
     build_numbering_format_lookup,
     build_numbering_level_lookup,
     build_style_numbering_lookup,
+    force_clean_numbering_suffix_tabs,
     has_auto_numbering,
     is_toc_style_definition,
     paragraph_style_id,
@@ -536,6 +537,7 @@ def _auto_suffix_details(
     left = level_format.get("left")
     hanging = level_format.get("hanging")
     number_start = level_format.get("number_start")
+    lvl_text = level_format.get("lvlText")
     return {
         "suffix": suffix,
         "raw_suffix": suffix,
@@ -543,7 +545,8 @@ def _auto_suffix_details(
         "numId": num_id,
         "ilvl": ilvl,
         "numFmt": level_format.get("numFmt"),
-        "lvlText": level_format.get("lvlText"),
+        "lvlText": lvl_text,
+        "lvlText_has_trailing_space": isinstance(lvl_text, str) and lvl_text.endswith((" ", "\t", "\u3000")),
         "has_tab_stop": tab_pos is not None,
         "tab_pos_twips": tab_pos,
         "tab_pos_cm": _twips_to_log_cm(tab_pos),
@@ -630,6 +633,46 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
                 )
 
     return records
+
+
+def force_clean_numbering_suffix_tabs_in_docx(docx_path: str | Path, logs: list[str] | None = None) -> bool:
+    docx_path = Path(docx_path)
+    temp_docx = docx_path.with_suffix(docx_path.suffix + ".numbering_suffix_clean.tmp")
+    changed = False
+
+    try:
+        with ZipFile(docx_path, "r") as zin:
+            if "word/numbering.xml" not in zin.namelist():
+                if logs is not None:
+                    logs.append("FINAL_NUMBERING_SUFFIX_CLEAN_DOCX_SKIPPED reason=missing_numbering_xml")
+                return False
+
+            with ZipFile(temp_docx, "w", ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "word/numbering.xml":
+                        cleaned = force_clean_numbering_suffix_tabs(data, logs=logs)
+                        if cleaned is not None and cleaned != data:
+                            data = cleaned
+                            changed = True
+                    zout.writestr(item, data)
+
+        if changed:
+            shutil.move(_long_path_compatible_str(temp_docx), _long_path_compatible_str(docx_path))
+        else:
+            temp_docx.unlink(missing_ok=True)
+        if logs is not None:
+            logs.append(f"FINAL_NUMBERING_SUFFIX_CLEAN_DOCX changed={'true' if changed else 'false'}")
+        return changed
+    except Exception as exc:
+        if logs is not None:
+            logs.append(f"FINAL_NUMBERING_SUFFIX_CLEAN_DOCX_FAILED reason={exc!r}")
+        try:
+            if temp_docx.exists():
+                temp_docx.unlink()
+        except Exception:
+            pass
+        return False
 
 
 def _parse_twips_attr(element, attr_name: str) -> int | None:
@@ -2606,6 +2649,10 @@ def fix_docx_fast(
             )
     else:
         summary.word_com_body_indent_logs.append("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=disabled")
+
+    if progress_callback:
+        progress_callback(percent=99, message="word/numbering.xml: final suffix cleanup")
+    force_clean_numbering_suffix_tabs_in_docx(output_docx, logs=summary.numbering_xml_logs)
 
     try:
         summary.heading_suffix_after_records = collect_heading_suffix_records_from_docx(output_docx)

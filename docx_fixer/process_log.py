@@ -33,6 +33,14 @@ def _tab_stop_count(records: list[dict[str, object]]) -> int:
     return sum(1 for record in records if record.get("has_tab_stop") is True)
 
 
+def _effective_suffix_count(records: list[dict[str, object]], suffix: str) -> int:
+    return sum(1 for record in records if record.get("effective_suffix", record.get("suffix")) == suffix)
+
+
+def _lvl_text_trailing_space_count(records: list[dict[str, object]]) -> int:
+    return sum(1 for record in records if record.get("lvlText_has_trailing_space") is True)
+
+
 def _change_type(before_record: dict[str, object], after_record: dict[str, object]) -> str:
     before_suffix = before_record.get("suffix")
     after_suffix = after_record.get("suffix")
@@ -79,6 +87,11 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
     still_space = 0
     still_missing = 0
     still_other = 0
+    after_raw_suffix_missing_count = _suffix_count(after, "missing")
+    after_effective_suffix_tab_count = _effective_suffix_count(after, "tab")
+    after_suffix_space_count = _suffix_count(after, "space")
+    after_tab_stop_remaining_count = _tab_stop_count(after)
+    after_lvl_text_trailing_space_count = _lvl_text_trailing_space_count(after)
     for key in keys:
         before_record = before_by_key.get(key, {})
         after_record = after_by_key.get(key, {})
@@ -119,6 +132,11 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
         f"suffix_missing: {_suffix_count(after, 'missing')}",
         f"suffix_other: {_suffix_count(after, 'other')}",
         f"tab_stop_remaining: {_tab_stop_count(after)}",
+        f"after_raw_suffix_missing_count: {after_raw_suffix_missing_count}",
+        f"after_effective_suffix_tab_count: {after_effective_suffix_tab_count}",
+        f"after_suffix_space_count: {after_suffix_space_count}",
+        f"after_tab_stop_remaining_count: {after_tab_stop_remaining_count}",
+        f"after_lvlText_trailing_space_count: {after_lvl_text_trailing_space_count}",
         "",
         "===== SUMMARY CHANGE =====",
         f"changed_to_nothing: {changed_to_nothing}",
@@ -128,6 +146,29 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
         f"still_other: {still_other}",
         "",
     ]
+    if any(
+        count
+        for count in (
+            after_raw_suffix_missing_count,
+            after_effective_suffix_tab_count,
+            _suffix_count(after, "tab"),
+            after_suffix_space_count,
+            after_tab_stop_remaining_count,
+            after_lvl_text_trailing_space_count,
+        )
+    ):
+        lines.extend(
+            [
+                "WARNING: AFTER_FIX numbering suffix/tab cleanup still has remaining issues.",
+                f"WARNING raw_suffix_after_missing={after_raw_suffix_missing_count}",
+                f"WARNING effective_suffix_after_tab={after_effective_suffix_tab_count}",
+                f"WARNING suffix_after_tab={_suffix_count(after, 'tab')}",
+                f"WARNING suffix_after_space={after_suffix_space_count}",
+                f"WARNING has_tab_stop_after_true={after_tab_stop_remaining_count}",
+                f"WARNING lvlText_after_has_trailing_space={after_lvl_text_trailing_space_count}",
+                "",
+            ]
+        )
 
     if not keys:
         lines.append("No heading suffix records.")
@@ -180,7 +221,7 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
                 lines.append(
                     f"{key_name}_after: {_format_suffix_record_value(after_record, key_name)}"
                 )
-            for key_name in ("numId", "ilvl", "numFmt", "lvlText"):
+            for key_name in ("numId", "ilvl", "numFmt", "lvlText", "lvlText_has_trailing_space"):
                 lines.append(
                     f"{key_name}_before: {_format_suffix_record_value(before_record, key_name)}"
                 )

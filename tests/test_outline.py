@@ -13,7 +13,12 @@ from docx_fixer.constants import (
     validate_template_outline_indents,
 )
 from docx_fixer.models import ProcessSummary
-from docx_fixer.numbering import apply_numbering_outline_format, apply_styles_outline_format_to_root, build_numbering_format_lookup
+from docx_fixer.numbering import (
+    apply_numbering_outline_format,
+    apply_styles_outline_format_to_root,
+    build_numbering_format_lookup,
+    force_clean_numbering_suffix_tabs,
+)
 from docx_fixer.style_resolver import build_style_font_size_lookup
 from docx_fixer.indent_settings import twips_to_cm
 from docx_fixer.outline import (
@@ -1498,6 +1503,64 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertEqual(updated_override_lvl.find("./w:suff", NS).get(qn("val")), "nothing")
         self.assertIsNone(updated_override_lvl.find("./w:pPr/w:tabs", NS))
+
+    def test_force_clean_numbering_suffix_tabs_cleans_all_levels(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "1")
+        for ilvl, suffix, lvl_text_value in (
+            ("0", None, "%1. "),
+            ("1", "tab", "（%1）\t"),
+            ("2", "space", "%3.\u3000"),
+        ):
+            lvl = etree.SubElement(abstract, qn("lvl"))
+            lvl.set(qn("ilvl"), ilvl)
+            lvl_text = etree.SubElement(lvl, qn("lvlText"))
+            lvl_text.set(qn("val"), lvl_text_value)
+            if suffix is not None:
+                suff = etree.SubElement(lvl, qn("suff"))
+                suff.set(qn("val"), suffix)
+            pPr = etree.SubElement(lvl, qn("pPr"))
+            tabs = etree.SubElement(pPr, qn("tabs"))
+            tab = etree.SubElement(tabs, qn("tab"))
+            tab.set(qn("val"), "num")
+            tab.set(qn("pos"), "2061")
+            ind = etree.SubElement(pPr, qn("ind"))
+            ind.set(qn("left"), "2279")
+            ind.set(qn("hanging"), "420")
+
+        num = etree.SubElement(root, qn("num"))
+        num.set(qn("numId"), "42")
+        abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+        abstract_ref.set(qn("val"), "1")
+        override = etree.SubElement(num, qn("lvlOverride"))
+        override.set(qn("ilvl"), "0")
+        override_lvl = etree.SubElement(override, qn("lvl"))
+        override_lvl.set(qn("ilvl"), "0")
+        override_text = etree.SubElement(override_lvl, qn("lvlText"))
+        override_text.set(qn("val"), "%5. ")
+        override_pPr = etree.SubElement(override_lvl, qn("pPr"))
+        override_tabs = etree.SubElement(override_pPr, qn("tabs"))
+        override_tab = etree.SubElement(override_tabs, qn("tab"))
+        override_tab.set(qn("val"), "num")
+        override_tab.set(qn("pos"), "2061")
+
+        logs = []
+        updated = force_clean_numbering_suffix_tabs(etree.tostring(root), logs=logs)
+        updated_root = etree.fromstring(updated)
+
+        for lvl in updated_root.xpath("./w:abstractNum/w:lvl | ./w:num/w:lvlOverride/w:lvl", namespaces=NS):
+            self.assertEqual(lvl.find("w:suff", NS).get(qn("val")), "nothing")
+            self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
+            self.assertFalse(lvl.find("w:lvlText", NS).get(qn("val")).endswith((" ", "\t", "\u3000")))
+        self.assertEqual(
+            [lvl.find("w:lvlText", NS).get(qn("val")) for lvl in updated_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)],
+            ["%1.", "（%1）", "%3."],
+        )
+        self.assertTrue(any("missing_suffix_fixed=2" in log for log in logs))
+        self.assertTrue(any("non_nothing_suffix_fixed=2" in log for log in logs))
+        self.assertTrue(any("tab_stops_removed=4" in log for log in logs))
+        self.assertTrue(any("lvl_text_trimmed=4" in log for log in logs))
 
     def test_numbering_xml_cleans_suffix_tabs_for_excluded_level_without_changing_indent(self):
         root = etree.Element(qn("numbering"), nsmap={"w": W_NS})

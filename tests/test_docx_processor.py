@@ -122,7 +122,14 @@ def make_heading_suffix_document_xml() -> bytes:
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
-def make_heading_suffix_numbering_xml(suffix: str | None = "tab", *, include_tabs: bool = True) -> bytes:
+def make_heading_suffix_numbering_xml(
+    suffix: str | None = "tab",
+    *,
+    include_tabs: bool = True,
+    lvl_text_value: str = "%1.",
+    tab_val: str = "left",
+    tab_pos: str = "2279",
+) -> bytes:
     numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
     abstract = etree.SubElement(numbering, qn("abstractNum"))
     abstract.set(qn("abstractNumId"), "42")
@@ -131,7 +138,7 @@ def make_heading_suffix_numbering_xml(suffix: str | None = "tab", *, include_tab
     num_fmt = etree.SubElement(lvl, qn("numFmt"))
     num_fmt.set(qn("val"), "decimal")
     lvl_text = etree.SubElement(lvl, qn("lvlText"))
-    lvl_text.set(qn("val"), "%1.")
+    lvl_text.set(qn("val"), lvl_text_value)
     if suffix is not None:
         suff = etree.SubElement(lvl, qn("suff"))
         suff.set(qn("val"), suffix)
@@ -139,8 +146,8 @@ def make_heading_suffix_numbering_xml(suffix: str | None = "tab", *, include_tab
     if include_tabs:
         tabs = etree.SubElement(pPr, qn("tabs"))
         tab = etree.SubElement(tabs, qn("tab"))
-        tab.set(qn("val"), "left")
-        tab.set(qn("pos"), "2279")
+        tab.set(qn("val"), tab_val)
+        tab.set(qn("pos"), tab_pos)
     ind = etree.SubElement(pPr, qn("ind"))
     ind.set(qn("left"), "2279")
     ind.set(qn("hanging"), "420")
@@ -588,6 +595,35 @@ def read_part_root(path: Path, part_name: str):
 
 def read_document_root(path: Path):
     return read_part_root(path, "word/document.xml")
+
+
+def dirty_numbering_suffix_tabs_in_docx(path: Path) -> None:
+    temp_path = path.with_suffix(path.suffix + ".dirty_numbering.tmp")
+    with ZipFile(path, "r") as zin, ZipFile(temp_path, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "word/numbering.xml":
+                root = etree.fromstring(data)
+                for lvl in root.xpath("./w:abstractNum/w:lvl | ./w:num/w:lvlOverride/w:lvl", namespaces=NS):
+                    suff = lvl.find("w:suff", NS)
+                    if suff is not None:
+                        lvl.remove(suff)
+                    lvl_text = lvl.find("w:lvlText", NS)
+                    if lvl_text is not None:
+                        lvl_text.set(qn("val"), (lvl_text.get(qn("val")) or "") + " ")
+                    pPr = lvl.find("w:pPr", NS)
+                    if pPr is None:
+                        pPr = etree.SubElement(lvl, qn("pPr"))
+                    tabs = pPr.find("w:tabs", NS)
+                    if tabs is not None:
+                        pPr.remove(tabs)
+                    tabs = etree.SubElement(pPr, qn("tabs"))
+                    tab = etree.SubElement(tabs, qn("tab"))
+                    tab.set(qn("val"), "num")
+                    tab.set(qn("pos"), "2061")
+                data = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            zout.writestr(item, data)
+    temp_path.replace(path)
 
 
 def assert_no_character_indent_attrs(test_case: unittest.TestCase, root) -> None:
@@ -2278,6 +2314,109 @@ class DocxProcessorTests(unittest.TestCase):
                     lvl = numbering_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]
                     self.assertEqual(lvl.find("w:suff", NS).get(qn("val")), "nothing")
                     self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
+
+    def test_heading_suffix_final_cleanup_trims_lvl_text_trailing_space(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_heading_suffix_document_xml(),
+                numbering_xml=make_heading_suffix_numbering_xml(
+                    suffix=None,
+                    include_tabs=True,
+                    lvl_text_value="%5. ",
+                    tab_val="num",
+                    tab_pos="2061",
+                ),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            before_auto = next(
+                record for record in summary.heading_suffix_before_records
+                if record.get("source") == "auto_numbering_xml"
+            )
+            after_auto = next(
+                record for record in summary.heading_suffix_after_records
+                if record.get("source") == "auto_numbering_xml"
+            )
+            self.assertEqual(before_auto["lvlText"], "%5. ")
+            self.assertEqual(before_auto["lvlText_has_trailing_space"], True)
+            self.assertEqual(after_auto["lvlText"], "%5.")
+            self.assertEqual(after_auto["lvlText_has_trailing_space"], False)
+            self.assertEqual(after_auto["raw_suffix"], "nothing")
+            self.assertEqual(after_auto["effective_suffix"], "nothing")
+            self.assertEqual(after_auto["has_tab_stop"], False)
+
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            lvl = numbering_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]
+            self.assertEqual(lvl.find("w:lvlText", NS).get(qn("val")), "%5.")
+            self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
+
+    def test_heading_suffix_final_cleanup_runs_after_word_com_changes_numbering(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_heading_suffix_document_xml(),
+                numbering_xml=make_heading_suffix_numbering_xml(
+                    suffix="nothing",
+                    include_tabs=False,
+                    lvl_text_value="%5.",
+                ),
+            )
+
+            def fake_word_com(docx_path, records, stop=None):
+                del records, stop
+                dirty_numbering_suffix_tabs_in_docx(Path(docx_path))
+                return ["WORD_COM_FAKE_DIRTIED_NUMBERING"]
+
+            with patch(
+                "docx_fixer.docx_processor._filter_word_com_body_indent_records",
+                return_value=[{"paragraph_index": 99}],
+            ), patch(
+                "docx_fixer.docx_processor.verify_and_fix_body_indents_with_word_com",
+                side_effect=fake_word_com,
+            ):
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(
+                        fix_table_layout=False,
+                        fix_color=False,
+                        fix_paragraph=True,
+                        normalize_with_word_com=True,
+                    ),
+                )
+
+            after_auto = next(
+                record for record in summary.heading_suffix_after_records
+                if record.get("source") == "auto_numbering_xml"
+            )
+            self.assertEqual(after_auto["raw_suffix"], "nothing")
+            self.assertEqual(after_auto["effective_suffix"], "nothing")
+            self.assertEqual(after_auto["has_tab_stop"], False)
+            self.assertEqual(after_auto["lvlText"], "%5.")
+            self.assertEqual(after_auto["lvlText_has_trailing_space"], False)
+            self.assertIn("WORD_COM_FAKE_DIRTIED_NUMBERING", summary.word_com_body_indent_logs)
+            self.assertTrue(any("FINAL_NUMBERING_SUFFIX_CLEAN_DOCX changed=true" in log for log in summary.numbering_xml_logs))
+
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            lvl = numbering_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]
+            self.assertEqual(lvl.find("w:suff", NS).get(qn("val")), "nothing")
+            self.assertEqual(lvl.find("w:lvlText", NS).get(qn("val")), "%5.")
+            self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
 
 
 if __name__ == "__main__":

@@ -187,12 +187,47 @@ class ProcessLogTests(unittest.TestCase):
         self.assertIn("suffix_tab: 0", lines[lines.index("===== SUMMARY AFTER_FIX ====="):])
         self.assertIn("suffix_space: 0", lines[lines.index("===== SUMMARY AFTER_FIX ====="):])
         self.assertIn("tab_stop_remaining: 0", lines[lines.index("===== SUMMARY AFTER_FIX ====="):])
+        self.assertIn("after_raw_suffix_missing_count: 0", lines)
+        self.assertIn("after_effective_suffix_tab_count: 0", lines)
+        self.assertIn("after_suffix_space_count: 0", lines)
+        self.assertIn("after_tab_stop_remaining_count: 0", lines)
+        self.assertIn("after_lvlText_trailing_space_count: 0", lines)
         self.assertIn("raw_suffix_before: missing", lines)
         self.assertIn("raw_suffix_after: nothing", lines)
         self.assertIn("effective_suffix_before: tab", lines)
         self.assertIn("effective_suffix_after: nothing", lines)
         self.assertIn("has_tab_stop_after: false", lines)
         self.assertIn("change_type: missing_effective_tab_to_nothing", lines)
+
+    def test_heading_suffix_log_warns_when_after_fix_auto_suffix_is_dirty(self):
+        summary = ProcessSummary()
+        summary.heading_suffix_after_records.append(
+            {
+                "part_name": "word/document.xml",
+                "paragraph_index": 27,
+                "source": "auto_numbering_xml",
+                "outline_level": 4,
+                "heading_text": "自動標題",
+                "number_token": "%5.",
+                "suffix": "missing",
+                "raw_suffix": "missing",
+                "effective_suffix": "tab",
+                "numId": "18",
+                "ilvl": 0,
+                "numFmt": "decimal",
+                "lvlText": "%5. ",
+                "lvlText_has_trailing_space": True,
+                "has_tab_stop": True,
+            }
+        )
+
+        lines = format_heading_suffix_log_lines(summary)
+
+        self.assertIn("WARNING: AFTER_FIX numbering suffix/tab cleanup still has remaining issues.", lines)
+        self.assertIn("WARNING raw_suffix_after_missing=1", lines)
+        self.assertIn("WARNING effective_suffix_after_tab=1", lines)
+        self.assertIn("WARNING has_tab_stop_after_true=1", lines)
+        self.assertIn("WARNING lvlText_after_has_trailing_space=1", lines)
 
     def test_table_log_file_writes_structured_table_records(self):
         summary = ProcessSummary()

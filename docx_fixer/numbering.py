@@ -45,6 +45,88 @@ def sanitize_numbering_level_suffix_tabs_and_text(lvl) -> bool:
     return changed
 
 
+def force_clean_numbering_suffix_tabs(numbering_xml: bytes | None, logs: list[str] | None = None) -> bytes | None:
+    """Force every numbering level to use no suffix separator and no list tab.
+
+    This is intentionally independent of TOC/chapter exclusions and paragraph
+    options. It only touches w:suff, w:pPr/w:tabs, and trailing whitespace in
+    w:lvlText, leaving indentation values intact.
+    """
+    if not numbering_xml:
+        return numbering_xml
+
+    try:
+        root = etree.fromstring(numbering_xml)
+    except Exception as exc:
+        if logs is not None:
+            logs.append(f"FINAL_NUMBERING_SUFFIX_CLEAN_SKIPPED reason=parse_error:{exc!r}")
+        return numbering_xml
+
+    changed = False
+    level_count = 0
+    missing_suffix_fixed = 0
+    non_nothing_suffix_fixed = 0
+    tab_stops_removed = 0
+    lvl_text_trimmed = 0
+
+    for lvl in root.xpath("./w:abstractNum/w:lvl | ./w:num/w:lvlOverride/w:lvl", namespaces=NS):
+        level_count += 1
+
+        suff = lvl.find("w:suff", NS)
+        if suff is None:
+            suff = etree.Element(qn("suff"))
+            lvl.append(suff)
+            missing_suffix_fixed += 1
+            changed = True
+        elif suff.get(qn("val")) != "nothing":
+            non_nothing_suffix_fixed += 1
+            changed = True
+
+        if suff.get(qn("val")) != "nothing":
+            suff.set(qn("val"), "nothing")
+        elif qn("val") not in suff.attrib:
+            suff.set(qn("val"), "nothing")
+            changed = True
+
+        pPr = lvl.find("w:pPr", NS)
+        tabs = pPr.find("w:tabs", NS) if pPr is not None else None
+        if tabs is not None:
+            pPr.remove(tabs)
+            tab_stops_removed += 1
+            changed = True
+
+        lvl_text = lvl.find("w:lvlText", NS)
+        if lvl_text is not None:
+            value = lvl_text.get(qn("val"))
+            if value is not None:
+                stripped = value.rstrip(" \t\u3000")
+                if stripped != value:
+                    lvl_text.set(qn("val"), stripped)
+                    lvl_text_trimmed += 1
+                    changed = True
+
+    if logs is not None:
+        logs.append(
+            "FINAL_NUMBERING_SUFFIX_CLEAN: "
+            f"levels={level_count}; "
+            f"missing_suffix_fixed={missing_suffix_fixed}; "
+            f"non_nothing_suffix_fixed={non_nothing_suffix_fixed}; "
+            f"tab_stops_removed={tab_stops_removed}; "
+            f"lvl_text_trimmed={lvl_text_trimmed}; "
+            f"changed={'true' if changed else 'false'}"
+        )
+
+    if not changed:
+        return numbering_xml
+
+    return etree.tostring(
+        root,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
+
+
 def has_auto_numbering(p) -> bool:
     return p.find("./w:pPr/w:numPr", NS) is not None
 
