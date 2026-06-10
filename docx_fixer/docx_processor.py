@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -395,13 +396,15 @@ def collect_chapter_three_paragraph_ids(
     numbering_format_lookup,
     style_numbering_lookup,
     toc_paragraph_ids=None,
+    paragraphs=None,
 ) -> set[int]:
     """Collect paragraphs from the target chapter 參 title until the next first-level heading."""
     skip_ids: set[int] = set()
     toc_ids = toc_paragraph_ids or set()
     in_chapter_three = False
 
-    for p in root.xpath(".//w:p", namespaces=NS):
+    paragraphs = paragraphs if paragraphs is not None else root.xpath(".//w:p", namespaces=NS)
+    for p in paragraphs:
         paragraph_id = id(p)
         if paragraph_id in toc_ids:
             continue
@@ -635,7 +638,13 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
     return records
 
 
-def force_clean_numbering_suffix_tabs_in_docx(docx_path: str | Path, logs: list[str] | None = None) -> bool:
+def force_clean_numbering_suffix_tabs_in_docx(
+    docx_path: str | Path,
+    logs: list[str] | None = None,
+    excluded_numbering_pairs: set[tuple[str, int]] | None = None,
+    excluded_num_ids: set[str] | None = None,
+    excluded_abstract_ids: set[str] | None = None,
+) -> bool:
     docx_path = Path(docx_path)
     temp_docx = docx_path.with_suffix(docx_path.suffix + ".numbering_suffix_clean.tmp")
     changed = False
@@ -651,7 +660,13 @@ def force_clean_numbering_suffix_tabs_in_docx(docx_path: str | Path, logs: list[
                 for item in zin.infolist():
                     data = zin.read(item.filename)
                     if item.filename == "word/numbering.xml":
-                        cleaned = force_clean_numbering_suffix_tabs(data, logs=logs)
+                        cleaned = force_clean_numbering_suffix_tabs(
+                            data,
+                            logs=logs,
+                            excluded_numbering_pairs=excluded_numbering_pairs,
+                            excluded_num_ids=excluded_num_ids,
+                            excluded_abstract_ids=excluded_abstract_ids,
+                        )
                         if cleaned is not None and cleaned != data:
                             data = cleaned
                             changed = True
@@ -2060,14 +2075,154 @@ def collect_toc_numbering_exclusions(
     return pairs, num_ids, abstract_ids
 
 
-def remove_character_indent_attrs_from_styles_root_excluding_toc(
+@dataclass
+class ProtectedRegionContext:
+    document_toc_paragraph_ids: set[int] = field(default_factory=set)
+    document_chapter_three_paragraph_ids: set[int] = field(default_factory=set)
+    toc_numbering_pairs: set[tuple[str, int]] = field(default_factory=set)
+    toc_num_ids: set[str] = field(default_factory=set)
+    toc_abstract_ids: set[str] = field(default_factory=set)
+    chapter_three_numbering_pairs: set[tuple[str, int]] = field(default_factory=set)
+    chapter_three_num_ids: set[str] = field(default_factory=set)
+    chapter_three_abstract_ids: set[str] = field(default_factory=set)
+    chapter_three_style_ids: set[str] = field(default_factory=set)
+    _document_paragraph_refs: list = field(default_factory=list, repr=False)
+
+    @classmethod
+    def from_document(
+        cls,
+        document_root,
+        *,
+        protect_chapter_three: bool,
+        numbering_level_lookup,
+        numbering_format_lookup,
+        style_numbering_lookup,
+        numbering_xml: bytes | None,
+        summary: ProcessSummary | None = None,
+    ) -> "ProtectedRegionContext":
+        paragraphs = document_root.xpath(".//w:p", namespaces=NS)
+        toc_paragraph_ids = collect_all_toc_paragraph_ids(
+            document_root,
+            numbering_level_lookup=numbering_level_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+            paragraphs=paragraphs,
+        )
+        toc_pairs, toc_num_ids, toc_abstract_ids = collect_toc_numbering_exclusions(
+            document_root,
+            toc_paragraph_ids,
+            style_numbering_lookup,
+            numbering_xml,
+            paragraphs=paragraphs,
+        )
+
+        context = cls(
+            document_toc_paragraph_ids=toc_paragraph_ids,
+            toc_numbering_pairs=toc_pairs,
+            toc_num_ids=toc_num_ids,
+            toc_abstract_ids=toc_abstract_ids,
+            _document_paragraph_refs=list(paragraphs),
+        )
+
+        if not protect_chapter_three:
+            return context
+
+        context.document_chapter_three_paragraph_ids = collect_chapter_three_paragraph_ids(
+            document_root,
+            numbering_level_lookup=numbering_level_lookup,
+            numbering_format_lookup=numbering_format_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+            toc_paragraph_ids=toc_paragraph_ids,
+            paragraphs=paragraphs,
+        )
+        if summary is not None:
+            summary.numbering_xml_logs.append(
+                f"CHAPTER_THREE_SKIP_IDS collected={len(context.document_chapter_three_paragraph_ids)}"
+            )
+
+        (
+            context.chapter_three_numbering_pairs,
+            context.chapter_three_num_ids,
+            context.chapter_three_abstract_ids,
+        ) = collect_toc_numbering_exclusions(
+            document_root,
+            context.document_chapter_three_paragraph_ids,
+            style_numbering_lookup,
+            numbering_xml,
+            paragraphs=paragraphs,
+        )
+        context.chapter_three_style_ids = {
+            style_id
+            for p in paragraphs
+            if id(p) in context.document_chapter_three_paragraph_ids
+            for style_id in [paragraph_style_id(p)]
+            if style_id
+        }
+        return context
+
+    @property
+    def excluded_numbering_pairs(self) -> set[tuple[str, int]]:
+        return set(self.toc_numbering_pairs) | set(self.chapter_three_numbering_pairs)
+
+    @property
+    def excluded_num_ids(self) -> set[str]:
+        return set(self.toc_num_ids) | set(self.chapter_three_num_ids)
+
+    @property
+    def excluded_abstract_ids(self) -> set[str]:
+        return set(self.toc_abstract_ids) | set(self.chapter_three_abstract_ids)
+
+    def chapter_three_paragraph_ids_for_part(self, part_name: str) -> set[int] | None:
+        if part_name != "word/document.xml" or not self.document_chapter_three_paragraph_ids:
+            return None
+        return self.document_chapter_three_paragraph_ids
+
+    def sanitize_excluded_paragraph_ids_for_part(self, part_name: str) -> set[int] | None:
+        if part_name != "word/document.xml":
+            return None
+        ids = set(self.document_toc_paragraph_ids)
+        ids.update(self.document_chapter_three_paragraph_ids)
+        return ids or None
+
+    def is_paragraph_protected(self, p, part_name: str = "word/document.xml") -> bool:
+        return (
+            part_name == "word/document.xml"
+            and id(p) in self.document_chapter_three_paragraph_ids
+        )
+
+    def is_table_protected(self, tbl, part_name: str = "word/document.xml") -> bool:
+        if part_name != "word/document.xml" or not self.document_chapter_three_paragraph_ids:
+            return False
+        return any(
+            self.is_paragraph_protected(p, part_name)
+            for p in tbl.xpath(".//w:p", namespaces=NS)
+        )
+
+    def protected_reason(self, item_type: str = "content") -> str:
+        del item_type
+        return "under chapter 參、價格形成之主要因素分析; all table layout and color fixes skipped"
+
+    @property
+    def log_reason(self) -> str:
+        return "chapter 參、價格形成之主要因素分析 protected region"
+
+
+def remove_character_indent_attrs_from_styles_root_excluding_protected(
     root,
+    excluded_style_ids: set[str] | None = None,
     change_logs: list[str] | None = None,
 ) -> int:
     removed = 0
+    excluded_style_ids = excluded_style_ids or set()
     for style in root.xpath("./w:style[@w:type='paragraph']", namespaces=NS):
         style_id = style.get(qn("styleId")) or ""
         style_name = style_name_value(style)
+        if style_id in excluded_style_ids:
+            if change_logs is not None:
+                change_logs.append(
+                    "CHAR_INDENT_SANITIZE_SKIP_EXCLUDED_STYLE: "
+                    f"styleId={style_id}; reason=used_by_chapter_three"
+                )
+            continue
         if is_toc_style_definition(style_id, style_name):
             continue
         for ind in style.xpath(".//w:ind", namespaces=NS):
@@ -2075,7 +2230,7 @@ def remove_character_indent_attrs_from_styles_root_excluding_toc(
     return removed
 
 
-def remove_character_indent_attrs_from_numbering_root_excluding_toc(
+def remove_character_indent_attrs_from_numbering_root_excluding_protected(
     root,
     excluded_numbering_pairs: set[tuple[str, int]],
     excluded_num_ids: set[str],
@@ -2172,73 +2327,26 @@ def fix_docx_fast(
         style_numbering_lookup = build_style_numbering_lookup(styles_xml)
         style_font_size_lookup = build_style_font_size_lookup(styles_xml)
         document_root_for_toc = None
-        document_toc_paragraph_ids: set[int] = set()
-        document_chapter_three_paragraph_ids: set[int] = set()
-        toc_numbering_pairs: set[tuple[str, int]] = set()
-        toc_num_ids: set[str] = set()
-        toc_abstract_ids: set[str] = set()
-        chapter_three_numbering_pairs: set[tuple[str, int]] = set()
-        chapter_three_num_ids: set[str] = set()
-        chapter_three_abstract_ids: set[str] = set()
-        chapter_three_style_ids: set[str] = set()
+        protected_context = ProtectedRegionContext()
         original_numbering_format_lookup = build_numbering_format_lookup(numbering_xml)
         if "word/document.xml" in zin.namelist():
             try:
                 document_root_for_toc = etree.fromstring(zin.read("word/document.xml"), parser)
-                document_paragraphs_for_toc = document_root_for_toc.xpath(".//w:p", namespaces=NS)
-                document_toc_paragraph_ids = collect_all_toc_paragraph_ids(
+                protected_context = ProtectedRegionContext.from_document(
                     document_root_for_toc,
+                    protect_chapter_three=options.skip_all_under_chapter_three,
                     numbering_level_lookup=numbering_level_lookup,
+                    numbering_format_lookup=original_numbering_format_lookup,
                     style_numbering_lookup=style_numbering_lookup,
-                    paragraphs=document_paragraphs_for_toc,
+                    numbering_xml=numbering_xml,
+                    summary=summary,
                 )
-                toc_numbering_pairs, toc_num_ids, toc_abstract_ids = collect_toc_numbering_exclusions(
-                    document_root_for_toc,
-                    document_toc_paragraph_ids,
-                    style_numbering_lookup,
-                    numbering_xml,
-                    paragraphs=document_paragraphs_for_toc,
-                )
-                if options.skip_all_under_chapter_three:
-                    document_chapter_three_paragraph_ids = collect_chapter_three_paragraph_ids(
-                        document_root_for_toc,
-                        numbering_level_lookup=numbering_level_lookup,
-                        numbering_format_lookup=original_numbering_format_lookup,
-                        style_numbering_lookup=style_numbering_lookup,
-                        toc_paragraph_ids=document_toc_paragraph_ids,
-                    )
-                    summary.numbering_xml_logs.append(
-                        f"CHAPTER_THREE_SKIP_IDS collected={len(document_chapter_three_paragraph_ids)}"
-                    )
-                    (
-                        chapter_three_numbering_pairs,
-                        chapter_three_num_ids,
-                        chapter_three_abstract_ids,
-                    ) = collect_toc_numbering_exclusions(
-                        document_root_for_toc,
-                        document_chapter_three_paragraph_ids,
-                        style_numbering_lookup,
-                        numbering_xml,
-                        paragraphs=document_paragraphs_for_toc,
-                    )
-                    chapter_three_style_ids = {
-                        style_id
-                        for p in document_paragraphs_for_toc
-                        if id(p) in document_chapter_three_paragraph_ids
-                        for style_id in [paragraph_style_id(p)]
-                        if style_id
-                    }
             except Exception:
                 document_root_for_toc = None
-                document_toc_paragraph_ids = set()
-                document_chapter_three_paragraph_ids = set()
-                chapter_three_style_ids = set()
-        excluded_numbering_pairs = set(toc_numbering_pairs)
-        excluded_numbering_pairs.update(chapter_three_numbering_pairs)
-        excluded_num_ids = set(toc_num_ids)
-        excluded_num_ids.update(chapter_three_num_ids)
-        excluded_abstract_ids = set(toc_abstract_ids)
-        excluded_abstract_ids.update(chapter_three_abstract_ids)
+                protected_context = ProtectedRegionContext()
+        excluded_numbering_pairs = protected_context.excluded_numbering_pairs
+        excluded_num_ids = protected_context.excluded_num_ids
+        excluded_abstract_ids = protected_context.excluded_abstract_ids
         formatted_numbering_xml = (
             apply_numbering_outline_format(
                 numbering_xml,
@@ -2269,10 +2377,8 @@ def fix_docx_fast(
             root = None
             if item.filename == "word/document.xml" and document_root_for_toc is not None:
                 root = document_root_for_toc
-            chapter_three_exclude_paragraph_ids = (
-                document_chapter_three_paragraph_ids
-                if item.filename == "word/document.xml" and document_chapter_three_paragraph_ids
-                else None
+            chapter_three_exclude_paragraph_ids = protected_context.chapter_three_paragraph_ids_for_part(
+                item.filename
             )
 
             if options.remove_all_outline_levels and should_remove_outline_part(item.filename):
@@ -2292,8 +2398,7 @@ def fix_docx_fast(
                     )
                 elif (
                     item.filename == "word/numbering.xml"
-                    and options.skip_all_under_chapter_three
-                    and excluded_abstract_ids
+                    and protected_context.chapter_three_abstract_ids
                 ):
                     summary.numbering_xml_logs.append(
                         "WARNING: chapter 參 uses numbering definitions excluded from "
@@ -2321,7 +2426,7 @@ def fix_docx_fast(
                     )
                 data = formatted_numbering_xml or data
                 if options.remove_all_outline_levels:
-                    if options.skip_all_under_chapter_three and excluded_abstract_ids:
+                    if protected_context.chapter_three_abstract_ids:
                         summary.numbering_xml_logs.append(
                             "WARNING: chapter 參 uses numbering definitions excluded from "
                             "remove_all_outline_levels; numbering.xml normalization may still affect shared definitions"
@@ -2347,7 +2452,7 @@ def fix_docx_fast(
                     numbering_level_lookup=numbering_level_lookup,
                     style_numbering_lookup=style_numbering_lookup,
                     change_logs=summary.numbering_xml_logs,
-                    excluded_style_ids=chapter_three_style_ids,
+                    excluded_style_ids=protected_context.chapter_three_style_ids,
                 )
                 data = etree.tostring(
                     root,
@@ -2421,43 +2526,7 @@ def fix_docx_fast(
                                 or "(none)"
                             )
 
-                        skip_all_under_chapter_three = (
-                            options.skip_all_under_chapter_three
-                            and item.filename == "word/document.xml"
-                            and chapter_three_exclude_paragraph_ids
-                            and any(
-                                id(p) in chapter_three_exclude_paragraph_ids
-                                for p in tbl.xpath(".//w:p", namespaces=NS)
-                            )
-                        )
-                        if skip_all_under_chapter_three:
-                            summary.table_log_records.append(
-                                build_table_log_record(
-                                    part_name=item.filename,
-                                    table_index=table_index,
-                                    global_table_index=global_table_index,
-                                    table_name=table_name,
-                                    first_level_heading=first_level_heading,
-                                    cell_count=cell_count,
-                                    column_count=column_count,
-                                    table_type="skipped_chapter_three_table",
-                                    action="skipped",
-                                    reason=(
-                                        "under chapter 參、價格形成之主要因素分析; "
-                                        "all table layout and color fixes skipped"
-                                    ),
-                                    special_layout_used=False,
-                                    layout_fixed=False,
-                                    color_fixed=False,
-                                    changed_to_gray=0,
-                                    cleared_colors=0,
-                                    shading_debug=[],
-                                )
-                            )
-                            continue
-
                         if item.filename == "word/document.xml" and table_index == 1:
-                            summary.skipped_first_page_tables += 1
                             summary.table_log_records.append(
                                 build_table_log_record(
                                     part_name=item.filename,
@@ -2475,6 +2544,30 @@ def fix_docx_fast(
                                     color_fixed=False,
                                     changed_to_gray=0,
                                     cleared_colors=0,
+                                )
+                            )
+                            summary.skipped_first_page_tables += 1
+                            continue
+
+                        if protected_context.is_table_protected(tbl, item.filename):
+                            summary.table_log_records.append(
+                                build_table_log_record(
+                                    part_name=item.filename,
+                                    table_index=table_index,
+                                    global_table_index=global_table_index,
+                                    table_name=table_name,
+                                    first_level_heading=first_level_heading,
+                                    cell_count=cell_count,
+                                    column_count=column_count,
+                                    table_type="skipped_chapter_three_table",
+                                    action="skipped",
+                                    reason=protected_context.protected_reason("table"),
+                                    special_layout_used=False,
+                                    layout_fixed=False,
+                                    color_fixed=False,
+                                    changed_to_gray=0,
+                                    cleared_colors=0,
+                                    shading_debug=[],
                                 )
                             )
                             continue
@@ -2594,23 +2687,21 @@ def fix_docx_fast(
             if should_sanitize_indent_unit_part(item.filename):
                 if root is None:
                     root = etree.fromstring(data, parser)
-                exclude_paragraph_ids = None
-                if item.filename == "word/document.xml":
-                    exclude_set: set[int] = set()
-                    exclude_set.update(document_toc_paragraph_ids)
-                    exclude_set.update(document_chapter_three_paragraph_ids)
-                    exclude_paragraph_ids = exclude_set or None
+                exclude_paragraph_ids = protected_context.sanitize_excluded_paragraph_ids_for_part(
+                    item.filename
+                )
                 if item.filename == "word/styles.xml":
-                    removed_char_indent_attrs = remove_character_indent_attrs_from_styles_root_excluding_toc(
+                    removed_char_indent_attrs = remove_character_indent_attrs_from_styles_root_excluding_protected(
                         root,
+                        excluded_style_ids=protected_context.chapter_three_style_ids,
                         change_logs=summary.numbering_xml_logs,
                     )
                 elif item.filename == "word/numbering.xml":
-                    removed_char_indent_attrs = remove_character_indent_attrs_from_numbering_root_excluding_toc(
+                    removed_char_indent_attrs = remove_character_indent_attrs_from_numbering_root_excluding_protected(
                         root,
-                        toc_numbering_pairs,
-                        toc_num_ids,
-                        toc_abstract_ids,
+                        excluded_numbering_pairs,
+                        excluded_num_ids,
+                        excluded_abstract_ids,
                     )
                 else:
                     removed_char_indent_attrs = remove_character_indent_attrs_from_root(
@@ -2652,7 +2743,13 @@ def fix_docx_fast(
 
     if progress_callback:
         progress_callback(percent=99, message="word/numbering.xml: final suffix cleanup")
-    force_clean_numbering_suffix_tabs_in_docx(output_docx, logs=summary.numbering_xml_logs)
+    force_clean_numbering_suffix_tabs_in_docx(
+        output_docx,
+        logs=summary.numbering_xml_logs,
+        excluded_numbering_pairs=excluded_numbering_pairs,
+        excluded_num_ids=excluded_num_ids,
+        excluded_abstract_ids=excluded_abstract_ids,
+    )
 
     try:
         summary.heading_suffix_after_records = collect_heading_suffix_records_from_docx(output_docx)

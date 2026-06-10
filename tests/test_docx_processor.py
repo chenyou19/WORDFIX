@@ -159,6 +159,48 @@ def make_heading_suffix_numbering_xml(
     return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_chapter_three_shared_numbering_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(
+        body,
+        "\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790",
+        num_id="42",
+        ilvl=0,
+    )
+    add_test_paragraph(body, "\u53c3\u7ae0\u5167\u6587")
+    add_test_paragraph(body, "\u8086\u3001\u7b2c\u56db\u7ae0", num_id="99", ilvl=0)
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_shared_chapter_three_numbering_xml() -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    abstract = etree.SubElement(numbering, qn("abstractNum"))
+    abstract.set(qn("abstractNumId"), "1")
+    lvl = etree.SubElement(abstract, qn("lvl"))
+    lvl.set(qn("ilvl"), "0")
+    num_fmt = etree.SubElement(lvl, qn("numFmt"))
+    num_fmt.set(qn("val"), "ideographLegalTraditional")
+    lvl_text = etree.SubElement(lvl, qn("lvlText"))
+    lvl_text.set(qn("val"), "%1\u3001 ")
+    suff = etree.SubElement(lvl, qn("suff"))
+    suff.set(qn("val"), "tab")
+    pPr = etree.SubElement(lvl, qn("pPr"))
+    tabs = etree.SubElement(pPr, qn("tabs"))
+    tab = etree.SubElement(tabs, qn("tab"))
+    tab.set(qn("val"), "num")
+    tab.set(qn("pos"), "2061")
+
+    for num_id in ("42", "99"):
+        num = etree.SubElement(numbering, qn("num"))
+        num.set(qn("numId"), num_id)
+        abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+        abstract_ref.set(qn("val"), "1")
+
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def make_ind(parent, **attrs):
     ind = etree.SubElement(parent, qn("ind"))
     for name, value in attrs.items():
@@ -742,11 +784,11 @@ class DocxProcessorTests(unittest.TestCase):
 
             tables = root.xpath(".//w:tbl", namespaces=NS)
             self.assertIsNone(tables[0].find("w:tblPr", NS))
-            self.assertEqual(summary.table_log_records[0]["table_type"], "skipped_chapter_three_table")
+            self.assertEqual(summary.table_log_records[0]["table_type"], "skipped_first_table")
             self.assertEqual(summary.table_log_records[0]["action"], "skipped")
             self.assertEqual(
                 summary.table_log_records[0]["reason"],
-                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; all table layout and color fixes skipped",
+                "first table in word/document.xml",
             )
 
             joined_logs = "\n".join(summary.paragraph_logs + summary.numbering_xml_logs)
@@ -757,6 +799,44 @@ class DocxProcessorTests(unittest.TestCase):
                 joined_logs,
             )
             self.assertIn("CHAR_INDENT_SANITIZE_SKIP_EXCLUDED", joined_logs)
+
+    def test_final_numbering_cleanup_skips_shared_chapter_three_definition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            make_docx(
+                input_docx,
+                make_chapter_three_shared_numbering_document_xml(),
+                numbering_xml=make_shared_chapter_three_numbering_xml(),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=False,
+                    normalize_with_word_com=False,
+                    skip_all_under_chapter_three=True,
+                ),
+            )
+
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            protected_lvl = numbering_root.xpath(
+                "./w:abstractNum[@w:abstractNumId='1']/w:lvl",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(protected_lvl.find("w:suff", NS).get(qn("val")), "tab")
+            self.assertIsNotNone(protected_lvl.find("./w:pPr/w:tabs", NS))
+            self.assertEqual(protected_lvl.find("w:lvlText", NS).get(qn("val")), "%1\u3001 ")
+
+            logs = "\n".join(summary.numbering_xml_logs)
+            self.assertIn("CHAPTER_THREE_SKIP_IDS collected=2", logs)
+            self.assertIn("FINAL_NUMBERING_SUFFIX_CLEAN_SKIP_PROTECTED_SHARED_DEFINITION", logs)
+            self.assertIn("protected_numIds=42", logs)
+            self.assertIn("shared_numIds=99", logs)
+            self.assertIn("levels_skipped_protected=1", logs)
 
     def test_special_table_uses_previous_paragraph_text_start_and_page_right_boundary(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})

@@ -1562,6 +1562,89 @@ class OutlineFixTests(unittest.TestCase):
         self.assertTrue(any("tab_stops_removed=4" in log for log in logs))
         self.assertTrue(any("lvl_text_trimmed=4" in log for log in logs))
 
+    def test_force_clean_numbering_suffix_tabs_skips_protected_definitions(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        for abstract_id, num_id in (("1", "42"), ("2", "99")):
+            abstract = etree.SubElement(root, qn("abstractNum"))
+            abstract.set(qn("abstractNumId"), abstract_id)
+            lvl = etree.SubElement(abstract, qn("lvl"))
+            lvl.set(qn("ilvl"), "0")
+            lvl_text = etree.SubElement(lvl, qn("lvlText"))
+            lvl_text.set(qn("val"), f"%{abstract_id}. ")
+            suff = etree.SubElement(lvl, qn("suff"))
+            suff.set(qn("val"), "tab")
+            pPr = etree.SubElement(lvl, qn("pPr"))
+            tabs = etree.SubElement(pPr, qn("tabs"))
+            tab = etree.SubElement(tabs, qn("tab"))
+            tab.set(qn("val"), "num")
+            tab.set(qn("pos"), "2061")
+
+            num = etree.SubElement(root, qn("num"))
+            num.set(qn("numId"), num_id)
+            abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+            abstract_ref.set(qn("val"), abstract_id)
+
+        logs = []
+        updated = force_clean_numbering_suffix_tabs(
+            etree.tostring(root),
+            logs=logs,
+            excluded_num_ids={"42"},
+            excluded_abstract_ids={"1"},
+        )
+        updated_root = etree.fromstring(updated)
+        protected_lvl = updated_root.xpath("./w:abstractNum[@w:abstractNumId='1']/w:lvl", namespaces=NS)[0]
+        cleaned_lvl = updated_root.xpath("./w:abstractNum[@w:abstractNumId='2']/w:lvl", namespaces=NS)[0]
+
+        self.assertEqual(protected_lvl.find("w:suff", NS).get(qn("val")), "tab")
+        self.assertIsNotNone(protected_lvl.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(protected_lvl.find("w:lvlText", NS).get(qn("val")), "%1. ")
+        self.assertEqual(cleaned_lvl.find("w:suff", NS).get(qn("val")), "nothing")
+        self.assertIsNone(cleaned_lvl.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(cleaned_lvl.find("w:lvlText", NS).get(qn("val")), "%2.")
+        self.assertTrue(any("levels_total=2" in log for log in logs))
+        self.assertTrue(any("levels_cleaned=1" in log for log in logs))
+        self.assertTrue(any("levels_skipped_protected=1" in log for log in logs))
+
+    def test_force_clean_numbering_suffix_tabs_warns_and_protects_shared_definition(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "1")
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1. ")
+        suff = etree.SubElement(lvl, qn("suff"))
+        suff.set(qn("val"), "tab")
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "num")
+        tab.set(qn("pos"), "2061")
+
+        for num_id in ("42", "99"):
+            num = etree.SubElement(root, qn("num"))
+            num.set(qn("numId"), num_id)
+            abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+            abstract_ref.set(qn("val"), "1")
+
+        logs = []
+        updated = force_clean_numbering_suffix_tabs(
+            etree.tostring(root),
+            logs=logs,
+            excluded_num_ids={"42"},
+        )
+        updated_root = etree.fromstring(updated)
+        protected_lvl = updated_root.xpath("./w:abstractNum[@w:abstractNumId='1']/w:lvl", namespaces=NS)[0]
+
+        self.assertEqual(protected_lvl.find("w:suff", NS).get(qn("val")), "tab")
+        self.assertIsNotNone(protected_lvl.find("./w:pPr/w:tabs", NS))
+        self.assertTrue(any(
+            "FINAL_NUMBERING_SUFFIX_CLEAN_SKIP_PROTECTED_SHARED_DEFINITION" in log
+            and "protected_numIds=42" in log
+            and "shared_numIds=99" in log
+            for log in logs
+        ))
+
     def test_numbering_xml_cleans_suffix_tabs_for_excluded_level_without_changing_indent(self):
         root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
         abstract = etree.SubElement(root, qn("abstractNum"))

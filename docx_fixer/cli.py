@@ -11,6 +11,24 @@ from .process_log import write_heading_suffix_log_file, write_process_log, write
 from .stop_controller import StopController
 
 
+def _chapter_three_protection_from_args(args) -> bool:
+    return args.skip_all_under_chapter_three or args.skip_special_layout_under_chapter_three
+
+
+def _build_process_options(args, *, enable_default_actions: bool = False) -> ProcessOptions:
+    return ProcessOptions(
+        fix_table_layout=True if enable_default_actions else args.table,
+        fix_color=True if enable_default_actions else args.color,
+        fix_paragraph=True if enable_default_actions else args.paragraph,
+        remove_all_outline_levels=False if enable_default_actions else args.remove_all_outline,
+        indent_preface_paragraphs=False if enable_default_actions else args.indent_preface,
+        outline_preface_paragraphs=False if enable_default_actions else args.outline_preface,
+        enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
+        word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
+        skip_all_under_chapter_three=_chapter_three_protection_from_args(args),
+    )
+
+
 def _configure_stdio_utf8() -> None:
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name, None)
@@ -25,21 +43,7 @@ def run_cli(args) -> int:
     _configure_stdio_utf8()
     load_saved_indent_settings()
 
-    options = ProcessOptions(
-        fix_table_layout=args.table,
-        fix_color=args.color,
-        fix_paragraph=args.paragraph,
-        remove_all_outline_levels=args.remove_all_outline,
-        indent_preface_paragraphs=args.indent_preface,
-        outline_preface_paragraphs=args.outline_preface,
-        enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
-        word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
-        skip_all_under_chapter_three=(
-            args.skip_all_under_chapter_three
-            or args.skip_special_layout_under_chapter_three
-        ),
-        skip_special_table_layout_under_chapter_three=args.skip_special_layout_under_chapter_three,
-    )
+    options = _build_process_options(args)
 
     if not (
         options.fix_table_layout
@@ -49,21 +53,7 @@ def run_cli(args) -> int:
         or options.indent_preface_paragraphs
         or options.outline_preface_paragraphs
     ):
-        options = ProcessOptions(
-            fix_table_layout=True,
-            fix_color=True,
-            fix_paragraph=True,
-            remove_all_outline_levels=False,
-            indent_preface_paragraphs=False,
-            outline_preface_paragraphs=False,
-            enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
-            word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
-            skip_all_under_chapter_three=(
-                args.skip_all_under_chapter_three
-                or args.skip_special_layout_under_chapter_three
-            ),
-            skip_special_table_layout_under_chapter_three=args.skip_special_layout_under_chapter_three,
-        )
+        options = _build_process_options(args, enable_default_actions=True)
 
     stop = StopController()
 
@@ -137,12 +127,20 @@ def parse_args(argv: list[str]):
     parser.add_argument(
         "--skip-special-layout-under-chapter-three",
         action="store_true",
-        help="Backward-compatible alias for --skip-all-under-chapter-three",
+        help="Deprecated alias: protect the whole chapter 參、價格形成之主要因素分析 region",
     )
     parser.add_argument(
         "--skip-all-under-chapter-three",
         action="store_true",
+        default=True,
+        dest="skip_all_under_chapter_three",
         help="Do not modify any content under chapter 參、價格形成之主要因素分析 until the next first-level heading",
+    )
+    parser.add_argument(
+        "--no-skip-all-under-chapter-three",
+        action="store_false",
+        dest="skip_all_under_chapter_three",
+        help="Allow formatting changes inside chapter 參、價格形成之主要因素分析",
     )
     parser.add_argument("--quiet", action="store_true", help="Do not print progress")
     return parser.parse_args(argv)

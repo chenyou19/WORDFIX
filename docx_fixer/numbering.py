@@ -45,12 +45,18 @@ def sanitize_numbering_level_suffix_tabs_and_text(lvl) -> bool:
     return changed
 
 
-def force_clean_numbering_suffix_tabs(numbering_xml: bytes | None, logs: list[str] | None = None) -> bytes | None:
+def force_clean_numbering_suffix_tabs(
+    numbering_xml: bytes | None,
+    logs: list[str] | None = None,
+    excluded_numbering_pairs: set[tuple[str, int]] | None = None,
+    excluded_num_ids: set[str] | None = None,
+    excluded_abstract_ids: set[str] | None = None,
+) -> bytes | None:
     """Force every numbering level to use no suffix separator and no list tab.
 
-    This is intentionally independent of TOC/chapter exclusions and paragraph
-    options. It only touches w:suff, w:pPr/w:tabs, and trailing whitespace in
-    w:lvlText, leaving indentation values intact.
+    It only touches w:suff, w:pPr/w:tabs, and trailing whitespace in w:lvlText,
+    leaving indentation values intact. Excluded TOC or protected chapter
+    numbering definitions are left untouched.
     """
     if not numbering_xml:
         return numbering_xml
@@ -63,14 +69,66 @@ def force_clean_numbering_suffix_tabs(numbering_xml: bytes | None, logs: list[st
         return numbering_xml
 
     changed = False
-    level_count = 0
+    levels_total = 0
+    levels_cleaned = 0
+    levels_skipped_protected = 0
     missing_suffix_fixed = 0
     non_nothing_suffix_fixed = 0
     tab_stops_removed = 0
     lvl_text_trimmed = 0
+    excluded_numbering_pairs = excluded_numbering_pairs or set()
+    excluded_num_ids = excluded_num_ids or set()
+    excluded_abstract_ids = excluded_abstract_ids or set()
 
-    for lvl in root.xpath("./w:abstractNum/w:lvl | ./w:num/w:lvlOverride/w:lvl", namespaces=NS):
-        level_count += 1
+    num_to_abstract_id: dict[str, str] = {}
+    abstract_to_num_ids: dict[str, set[str]] = {}
+    for num in root.xpath("./w:num", namespaces=NS):
+        num_id = num.get(qn("numId"))
+        abstract_el = num.find("w:abstractNumId", NS)
+        abstract_id = abstract_el.get(qn("val")) if abstract_el is not None else None
+        if num_id is None or abstract_id is None:
+            continue
+        num_to_abstract_id[num_id] = abstract_id
+        abstract_to_num_ids.setdefault(abstract_id, set()).add(num_id)
+
+    protected_abstract_levels: set[tuple[str, int]] = set()
+    protected_abstract_ids = set(excluded_abstract_ids)
+    for num_id in excluded_num_ids:
+        abstract_id = num_to_abstract_id.get(num_id)
+        if abstract_id is not None:
+            protected_abstract_ids.add(abstract_id)
+    for num_id, ilvl in excluded_numbering_pairs:
+        abstract_id = num_to_abstract_id.get(num_id)
+        if abstract_id is not None:
+            protected_abstract_levels.add((abstract_id, ilvl))
+
+    if logs is not None:
+        for abstract_id in sorted(protected_abstract_ids):
+            num_ids = abstract_to_num_ids.get(abstract_id, set())
+            protected_num_ids = sorted(num_id for num_id in num_ids if num_id in excluded_num_ids)
+            shared_num_ids = sorted(num_id for num_id in num_ids if num_id not in excluded_num_ids)
+            if protected_num_ids and shared_num_ids:
+                logs.append(
+                    "FINAL_NUMBERING_SUFFIX_CLEAN_SKIP_PROTECTED_SHARED_DEFINITION: "
+                    f"abstractNumId={abstract_id}; "
+                    f"protected_numIds={','.join(protected_num_ids)}; "
+                    f"shared_numIds={','.join(shared_num_ids)}"
+                )
+
+    def should_skip_level(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
+        if abstract_id is not None and abstract_id in protected_abstract_ids:
+            return True
+        if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in protected_abstract_levels:
+            return True
+        if num_id is not None and num_id in excluded_num_ids:
+            return True
+        if num_id is not None and ilvl is not None and (num_id, ilvl) in excluded_numbering_pairs:
+            return True
+        return False
+
+    def clean_level(lvl) -> bool:
+        nonlocal changed, missing_suffix_fixed, non_nothing_suffix_fixed, tab_stops_removed, lvl_text_trimmed
+        level_changed = False
 
         suff = lvl.find("w:suff", NS)
         if suff is None:
@@ -78,15 +136,18 @@ def force_clean_numbering_suffix_tabs(numbering_xml: bytes | None, logs: list[st
             lvl.append(suff)
             missing_suffix_fixed += 1
             changed = True
+            level_changed = True
         elif suff.get(qn("val")) != "nothing":
             non_nothing_suffix_fixed += 1
             changed = True
+            level_changed = True
 
         if suff.get(qn("val")) != "nothing":
             suff.set(qn("val"), "nothing")
         elif qn("val") not in suff.attrib:
             suff.set(qn("val"), "nothing")
             changed = True
+            level_changed = True
 
         pPr = lvl.find("w:pPr", NS)
         tabs = pPr.find("w:tabs", NS) if pPr is not None else None
@@ -94,6 +155,7 @@ def force_clean_numbering_suffix_tabs(numbering_xml: bytes | None, logs: list[st
             pPr.remove(tabs)
             tab_stops_removed += 1
             changed = True
+            level_changed = True
 
         lvl_text = lvl.find("w:lvlText", NS)
         if lvl_text is not None:
@@ -104,11 +166,46 @@ def force_clean_numbering_suffix_tabs(numbering_xml: bytes | None, logs: list[st
                     lvl_text.set(qn("val"), stripped)
                     lvl_text_trimmed += 1
                     changed = True
+                    level_changed = True
+
+        return level_changed
+
+    for lvl in root.xpath("./w:abstractNum/w:lvl", namespaces=NS):
+        levels_total += 1
+        abstract_num = lvl.getparent()
+        abstract_id = abstract_num.get(qn("abstractNumId")) if abstract_num is not None else None
+        try:
+            ilvl = int(lvl.get(qn("ilvl")))
+        except Exception:
+            ilvl = None
+        if should_skip_level(None, ilvl, abstract_id):
+            levels_skipped_protected += 1
+            continue
+        if clean_level(lvl):
+            levels_cleaned += 1
+
+    for lvl in root.xpath("./w:num/w:lvlOverride/w:lvl", namespaces=NS):
+        levels_total += 1
+        override = lvl.getparent()
+        num = override.getparent() if override is not None else None
+        num_id = num.get(qn("numId")) if num is not None else None
+        abstract_id = num_to_abstract_id.get(num_id or "")
+        try:
+            ilvl = int(override.get(qn("ilvl"))) if override is not None else None
+        except Exception:
+            ilvl = None
+        if should_skip_level(num_id, ilvl, abstract_id):
+            levels_skipped_protected += 1
+            continue
+        if clean_level(lvl):
+            levels_cleaned += 1
 
     if logs is not None:
         logs.append(
             "FINAL_NUMBERING_SUFFIX_CLEAN: "
-            f"levels={level_count}; "
+            f"levels_total={levels_total}; "
+            f"levels_cleaned={levels_cleaned}; "
+            f"levels_skipped_protected={levels_skipped_protected}; "
             f"missing_suffix_fixed={missing_suffix_fixed}; "
             f"non_nothing_suffix_fixed={non_nothing_suffix_fixed}; "
             f"tab_stops_removed={tab_stops_removed}; "

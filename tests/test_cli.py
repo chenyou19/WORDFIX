@@ -2,10 +2,12 @@
 
 import unittest
 from contextlib import redirect_stderr
+from dataclasses import fields
 from io import StringIO
 from pathlib import Path
 
-from docx_fixer.cli import parse_args
+from docx_fixer.cli import _build_process_options, parse_args
+from docx_fixer.models import ProcessOptions
 
 
 class CliOptionTests(unittest.TestCase):
@@ -19,6 +21,11 @@ class CliOptionTests(unittest.TestCase):
 
         self.assertTrue(args.indent_preface)
         self.assertTrue(args.outline_preface)
+
+    def test_process_options_do_not_keep_old_special_table_flag(self):
+        field_names = {field.name for field in fields(ProcessOptions)}
+
+        self.assertNotIn("skip_special_table_layout_under_chapter_three", field_names)
 
     def test_new_body_indent_arguments_are_supported(self):
         args = parse_args([
@@ -34,6 +41,32 @@ class CliOptionTests(unittest.TestCase):
         self.assertTrue(args.word_com_check_body_font)
         self.assertTrue(args.skip_special_layout_under_chapter_three)
         self.assertTrue(args.skip_all_under_chapter_three)
+
+    def test_chapter_three_protection_is_enabled_by_default(self):
+        args = parse_args(["input.docx", "output.docx"])
+        options = _build_process_options(args)
+
+        self.assertTrue(args.skip_all_under_chapter_three)
+        self.assertTrue(options.skip_all_under_chapter_three)
+
+    def test_no_skip_all_under_chapter_three_disables_protection(self):
+        args = parse_args(["input.docx", "output.docx", "--no-skip-all-under-chapter-three"])
+        options = _build_process_options(args)
+
+        self.assertFalse(args.skip_all_under_chapter_three)
+        self.assertFalse(options.skip_all_under_chapter_three)
+
+    def test_old_special_layout_alias_maps_to_chapter_three_protection(self):
+        args = parse_args([
+            "input.docx",
+            "output.docx",
+            "--no-skip-all-under-chapter-three",
+            "--skip-special-layout-under-chapter-three",
+        ])
+        options = _build_process_options(args)
+
+        self.assertTrue(args.skip_special_layout_under_chapter_three)
+        self.assertTrue(options.skip_all_under_chapter_three)
 
     def test_old_level_two_body_indent_argument_is_kept_as_alias(self):
         args = parse_args(["input.docx", "output.docx", "--level2-body-first-line-indent"])

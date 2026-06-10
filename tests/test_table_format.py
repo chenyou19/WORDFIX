@@ -306,7 +306,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_special_table_layout_under_chapter_three=True,
+                skip_all_under_chapter_three=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -406,7 +406,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_special_table_layout_under_chapter_three=True,
+                skip_all_under_chapter_three=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -461,7 +461,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_special_table_layout_under_chapter_three=True,
+                skip_all_under_chapter_three=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -511,7 +511,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_special_table_layout_under_chapter_three=True,
+                skip_all_under_chapter_three=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -718,7 +718,7 @@ class TableFormatTests(unittest.TestCase):
                     False,
                     False,
                     normalize_with_word_com=False,
-                    skip_special_table_layout_under_chapter_three=True,
+                    skip_all_under_chapter_three=True,
                 ),
             )
 
