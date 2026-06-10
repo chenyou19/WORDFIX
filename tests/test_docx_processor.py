@@ -12,14 +12,19 @@ from zipfile import ZipFile
 from lxml import etree
 
 from docx_fixer.constants import NS, TEMPLATE_OUTLINE_INDENTS, W_NS
-from docx_fixer.docx_processor import (
+from docx_fixer.docx_processor import fix_docx_fast
+from docx_fixer.protected_region import ProtectedRegionContext, collect_chapter_three_paragraph_ids
+from docx_fixer.numbering import (
+    build_numbering_format_lookup,
+    build_numbering_level_lookup,
+    build_style_numbering_lookup,
+)
+from docx_fixer.word_com_indent import (
     WORD_COM_TIMEOUT_SECONDS,
     _filter_word_com_body_indent_records,
     _verify_and_fix_body_indents_with_word_com_in_process,
     apply_word_com_approved_body_indents_to_docx_xml,
-    collect_chapter_three_paragraph_ids,
     find_word_paragraph_index_for_record,
-    fix_docx_fast,
     verify_and_fix_body_indents_with_word_com,
 )
 from docx_fixer.models import ProcessOptions
@@ -735,6 +740,78 @@ class DocxProcessorTests(unittest.TestCase):
         self.assertIn(id(protected_body), skip_ids)
         self.assertNotIn(id(after), skip_ids)
 
+    def test_protected_region_context_collects_toc_chapter_numbering_and_styles(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        toc = add_test_paragraph(body, "目錄項目", style="TOC1", num_id="1", ilvl=0)
+        before = add_test_paragraph(body, "壹、序言")
+        chapter = add_test_paragraph(
+            body,
+            "價格形成之主要因素分析",
+            style="ChapterHeading",
+        )
+        protected_body = add_test_paragraph(body, "參章內文", style="ChapterBody")
+        after = add_test_paragraph(body, "肆、第四章")
+
+        styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
+        for style_id, name, num_id in (
+            ("TOC1", "Table of Contents 1", "1"),
+            ("ChapterHeading", "Chapter Heading", "2"),
+            ("ChapterBody", "Chapter Body", None),
+        ):
+            style = etree.SubElement(styles, qn("style"))
+            style.set(qn("type"), "paragraph")
+            style.set(qn("styleId"), style_id)
+            name_el = etree.SubElement(style, qn("name"))
+            name_el.set(qn("val"), name)
+            if num_id is not None:
+                p_pr = etree.SubElement(style, qn("pPr"))
+                num_pr = etree.SubElement(p_pr, qn("numPr"))
+                ilvl_el = etree.SubElement(num_pr, qn("ilvl"))
+                ilvl_el.set(qn("val"), "0")
+                num_id_el = etree.SubElement(num_pr, qn("numId"))
+                num_id_el.set(qn("val"), num_id)
+
+        numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        for abstract_id, num_id in (("1", "1"), ("2", "2")):
+            abstract = etree.SubElement(numbering, qn("abstractNum"))
+            abstract.set(qn("abstractNumId"), abstract_id)
+            lvl = etree.SubElement(abstract, qn("lvl"))
+            lvl.set(qn("ilvl"), "0")
+            num_fmt = etree.SubElement(lvl, qn("numFmt"))
+            num_fmt.set(qn("val"), "ideographLegalTraditional")
+            lvl_text = etree.SubElement(lvl, qn("lvlText"))
+            lvl_text.set(qn("val"), "%1、")
+            num = etree.SubElement(numbering, qn("num"))
+            num.set(qn("numId"), num_id)
+            abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+            abstract_ref.set(qn("val"), abstract_id)
+
+        styles_xml = etree.tostring(styles)
+        numbering_xml = etree.tostring(numbering)
+        style_numbering_lookup = build_style_numbering_lookup(styles_xml)
+        context = ProtectedRegionContext.from_document(
+            document,
+            protect_chapter_three=True,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+            style_numbering_lookup=style_numbering_lookup,
+            numbering_xml=numbering_xml,
+        )
+
+        self.assertIn(id(toc), context.document_toc_paragraph_ids)
+        self.assertNotIn(id(before), context.document_chapter_three_paragraph_ids)
+        self.assertIn(id(chapter), context.document_chapter_three_paragraph_ids)
+        self.assertIn(id(protected_body), context.document_chapter_three_paragraph_ids)
+        self.assertNotIn(id(after), context.document_chapter_three_paragraph_ids)
+        self.assertIn(("1", 0), context.toc_numbering_pairs)
+        self.assertIn("1", context.toc_num_ids)
+        self.assertIn("1", context.toc_abstract_ids)
+        self.assertIn(("2", 0), context.chapter_three_numbering_pairs)
+        self.assertIn("2", context.chapter_three_num_ids)
+        self.assertIn("2", context.chapter_three_abstract_ids)
+        self.assertEqual(context.chapter_three_style_ids, {"ChapterHeading", "ChapterBody"})
+
     def test_skip_all_under_chapter_three_preserves_paragraphs_tables_and_char_indents(self):
         with tempfile.TemporaryDirectory() as tmp:
             input_docx = Path(tmp) / "input.docx"
@@ -1300,7 +1377,7 @@ class DocxProcessorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_docx = Path(temp_dir) / "output.docx"
             output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
-            with patch("docx_fixer.docx_processor.run_powershell_file", side_effect=fake_run) as runner:
+            with patch("docx_fixer.word_com_indent.run_powershell_file", side_effect=fake_run) as runner:
                 logs = verify_and_fix_body_indents_with_word_com(output_docx, records)
 
         self.assertIn("WORD_COM_BODY_INDENT_FIX_STARTED", logs)
@@ -1422,7 +1499,7 @@ class DocxProcessorTests(unittest.TestCase):
                 return types.SimpleNamespace(stdout="", stderr="", returncode=0)
 
             with patch(
-                "docx_fixer.docx_processor.run_powershell_file",
+                "docx_fixer.word_com_indent.run_powershell_file",
                 side_effect=fake_run,
             ):
                 logs = verify_and_fix_body_indents_with_word_com(
@@ -1439,7 +1516,7 @@ class DocxProcessorTests(unittest.TestCase):
             output_docx = Path(temp_dir) / "output.docx"
             output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
             with patch(
-                "docx_fixer.docx_processor.run_powershell_file",
+                "docx_fixer.word_com_indent.run_powershell_file",
                 return_value=types.SimpleNamespace(stdout="", stderr="boom on stderr", returncode=1),
             ):
                 logs = verify_and_fix_body_indents_with_word_com(
@@ -1472,7 +1549,7 @@ class DocxProcessorTests(unittest.TestCase):
                 return types.SimpleNamespace(stdout="", stderr="", returncode=1)
 
             with patch(
-                "docx_fixer.docx_processor.run_powershell_file",
+                "docx_fixer.word_com_indent.run_powershell_file",
                 side_effect=fake_run,
             ):
                 logs = verify_and_fix_body_indents_with_word_com(
@@ -1506,7 +1583,7 @@ class DocxProcessorTests(unittest.TestCase):
                 return types.SimpleNamespace(stdout="", stderr="partial failure", returncode=0)
 
             with patch(
-                "docx_fixer.docx_processor.run_powershell_file",
+                "docx_fixer.word_com_indent.run_powershell_file",
                 side_effect=fake_run,
             ):
                 logs = verify_and_fix_body_indents_with_word_com(
@@ -1545,7 +1622,7 @@ class DocxProcessorTests(unittest.TestCase):
                 return types.SimpleNamespace(stdout="", stderr="", returncode=1)
 
             with patch(
-                "docx_fixer.docx_processor.run_powershell_file",
+                "docx_fixer.word_com_indent.run_powershell_file",
                 side_effect=fake_run,
             ):
                 logs = verify_and_fix_body_indents_with_word_com(
@@ -1634,7 +1711,7 @@ class DocxProcessorTests(unittest.TestCase):
                 )
                 return types.SimpleNamespace(stdout="", stderr="", returncode=0)
 
-            with patch("docx_fixer.docx_processor.run_powershell_file", side_effect=fake_run):
+            with patch("docx_fixer.word_com_indent.run_powershell_file", side_effect=fake_run):
                 logs = verify_and_fix_body_indents_with_word_com(
                     output_docx,
                     [
@@ -1696,7 +1773,7 @@ class DocxProcessorTests(unittest.TestCase):
             output_docx = long_dir / "very_long_output_name.docx"
             output_docx.write_text("docx-bytes-placeholder", encoding="utf-8")
 
-            with patch("docx_fixer.docx_processor.run_powershell_file", side_effect=fake_run):
+            with patch("docx_fixer.word_com_indent.run_powershell_file", side_effect=fake_run):
                 logs = verify_and_fix_body_indents_with_word_com(output_docx, records)
 
         command_length_line = next(line for line in logs if line.startswith("command_length="))
@@ -1898,7 +1975,7 @@ class DocxProcessorTests(unittest.TestCase):
                 return ["WORD_COM_FAKE_VERIFIED"]
 
             with patch(
-                "docx_fixer.docx_processor.verify_and_fix_body_indents_with_word_com",
+                "docx_fixer.word_com_indent.verify_and_fix_body_indents_with_word_com",
                 side_effect=fake_verify,
             ) as verifier:
                 summary = fix_docx_fast(
@@ -1943,7 +2020,7 @@ class DocxProcessorTests(unittest.TestCase):
                 numbering_xml=make_level_four_numbering_with_old_indents(),
             )
 
-            with patch("docx_fixer.docx_processor.verify_and_fix_body_indents_with_word_com") as verifier:
+            with patch("docx_fixer.word_com_indent.verify_and_fix_body_indents_with_word_com") as verifier:
                 summary = fix_docx_fast(
                     input_docx,
                     output_docx,
@@ -1978,7 +2055,7 @@ class DocxProcessorTests(unittest.TestCase):
                 numbering_xml=make_level_four_numbering_with_old_indents(),
             )
 
-            with patch("docx_fixer.docx_processor.verify_and_fix_body_indents_with_word_com") as verifier:
+            with patch("docx_fixer.word_com_indent.verify_and_fix_body_indents_with_word_com") as verifier:
                 summary = fix_docx_fast(
                     input_docx,
                     output_docx,
@@ -2463,10 +2540,10 @@ class DocxProcessorTests(unittest.TestCase):
                 return ["WORD_COM_FAKE_DIRTIED_NUMBERING"]
 
             with patch(
-                "docx_fixer.docx_processor._filter_word_com_body_indent_records",
+                "docx_fixer.word_com_indent.filter_word_com_body_indent_records",
                 return_value=[{"paragraph_index": 99}],
             ), patch(
-                "docx_fixer.docx_processor.verify_and_fix_body_indents_with_word_com",
+                "docx_fixer.word_com_indent.verify_and_fix_body_indents_with_word_com",
                 side_effect=fake_word_com,
             ):
                 summary = fix_docx_fast(
