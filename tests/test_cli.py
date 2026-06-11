@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import fields
 from io import StringIO
 from pathlib import Path
@@ -43,6 +43,42 @@ class CliOptionTests(unittest.TestCase):
         self.assertTrue(args.skip_special_layout_under_chapter_three)
         self.assertTrue(args.skip_chapter_three_tables)
         self.assertTrue(args.skip_chapter_three_indents)
+
+    def test_body_style_normalization_hidden_argument_can_enable_internal_option(self):
+        args = parse_args([
+            "input.docx",
+            "output.docx",
+            "--normalize-body-style-to-none",
+        ])
+        options = _build_process_options(args)
+
+        self.assertTrue(args.normalize_body_style_to_none)
+        self.assertTrue(options.normalize_body_style_to_none)
+
+    def test_body_style_normalization_is_disabled_by_default_and_old_disable_alias_is_supported(self):
+        default_args = parse_args(["input.docx", "output.docx"])
+        default_options = _build_process_options(default_args)
+        self.assertFalse(default_args.normalize_body_style_to_none)
+        self.assertFalse(default_options.normalize_body_style_to_none)
+
+        args = parse_args([
+            "input.docx",
+            "output.docx",
+            "--no-normalize-body-style-to-default-text",
+        ])
+        options = _build_process_options(args)
+
+        self.assertFalse(args.normalize_body_style_to_none)
+        self.assertFalse(options.normalize_body_style_to_none)
+
+    def test_body_style_normalization_argument_is_hidden_from_help(self):
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaises(SystemExit):
+                parse_args(["--help"])
+
+        self.assertNotIn("normalize-body-style-to-none", stdout.getvalue())
+        self.assertNotIn("normalize-body-style-to-default-text", stdout.getvalue())
 
     def test_chapter_three_table_and_indent_skips_are_enabled_by_default(self):
         args = parse_args(["input.docx", "output.docx"])

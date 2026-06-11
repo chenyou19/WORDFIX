@@ -733,6 +733,26 @@ def assert_no_character_indent_attrs(test_case: unittest.TestCase, root) -> None
             test_case.assertIsNone(ind.get(qn(attr)), attr)
 
 
+def assert_body_indent_hard_override(
+    test_case: unittest.TestCase,
+    paragraph,
+    expected_left: str,
+    expected_first_line: str = "0",
+) -> None:
+    ind = paragraph.find("./w:pPr/w:ind", NS)
+    test_case.assertIsNotNone(ind)
+    test_case.assertEqual(ind.get(qn("left")), expected_left)
+    test_case.assertEqual(ind.get(qn("start")), expected_left)
+    test_case.assertEqual(ind.get(qn("firstLine")), expected_first_line)
+    test_case.assertEqual(ind.get(qn("hanging")), "0")
+    test_case.assertEqual(ind.get(qn("leftChars")), "0")
+    test_case.assertEqual(ind.get(qn("startChars")), "0")
+    test_case.assertEqual(ind.get(qn("firstLineChars")), "0")
+    test_case.assertEqual(ind.get(qn("hangingChars")), "0")
+    test_case.assertIsNone(paragraph.find("./w:pPr/w:tabs", NS))
+    test_case.assertIsNone(paragraph.find("./w:pPr/w:numPr", NS))
+
+
 def assert_docx_has_no_character_indent_attrs(test_case: unittest.TestCase, path: Path) -> None:
     with ZipFile(path, "r") as zf:
         for name in zf.namelist():
@@ -741,7 +761,7 @@ def assert_docx_has_no_character_indent_attrs(test_case: unittest.TestCase, path
             root = etree.fromstring(zf.read(name))
             for ind in root.xpath(".//w:ind", namespaces=NS):
                 for attr in FORBIDDEN_ATTRS:
-                    test_case.assertIsNone(ind.get(qn(attr)), f"{name}: {attr}")
+                    test_case.assertIn(ind.get(qn(attr)), (None, "0"), f"{name}: {attr}")
 
 
 def part_outline_count(path: Path, part_name: str) -> int:
@@ -907,8 +927,8 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(chapter_body_ind.get(qn("firstLineChars")), "666")
 
             self.assertEqual(paragraphs[5].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "0")
-            self.assertIsNone(after_chapter_body_ind.get(qn("leftChars")))
-            self.assertIsNone(after_chapter_body_ind.get(qn("firstLineChars")))
+            self.assertEqual(after_chapter_body_ind.get(qn("leftChars")), "0")
+            self.assertEqual(after_chapter_body_ind.get(qn("firstLineChars")), "0")
             self.assertTrue(any(
                 record.get("text_preview") == "\u8086\u7ae0\u666e\u901a\u5167\u6587"
                 for record in summary.body_indent_records
@@ -1058,7 +1078,7 @@ class DocxProcessorTests(unittest.TestCase):
                         self.assertEqual(chapter_child_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["left"])
                         self.assertEqual(chapter_body_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
                         self.assertIsNone(chapter_heading_ind.get(qn("leftChars")))
-                        self.assertIsNone(chapter_body_ind.get(qn("firstLineChars")))
+                        self.assertEqual(chapter_body_ind.get(qn("firstLineChars")), "0")
                         self.assertTrue(any(
                             "\u53c3\u7ae0" in str(record.get("text_preview"))
                             for record in summary.body_indent_records
@@ -1638,9 +1658,15 @@ class DocxProcessorTests(unittest.TestCase):
         self.assertIn("decision=approved_for_xml_body_indent", captured["script_text"])
         self.assertIn("decision=skipped_word_font_not_14", captured["script_text"])
         self.assertIn("$status = 'approved'", captured["script_text"])
-        self.assertIn("word_opened_left_cm=not_read", captured["script_text"])
+        self.assertIn("function Get-ParagraphDiagnostic", captured["script_text"])
+        self.assertIn("$diag = Get-ParagraphDiagnostic $paragraph", captured["script_text"])
+        self.assertIn("word_com_LeftIndent_cm=", captured["script_text"])
+        self.assertIn("word_com_CharacterUnitLeftIndent=", captured["script_text"])
+        self.assertIn("word_com_TabStops_Count=", captured["script_text"])
+        self.assertIn("word_com_Style_NameLocal=", captured["script_text"])
+        self.assertIn("section_left_margin_cm=", captured["script_text"])
+        self.assertIn("absolute_text_start_cm=", captured["script_text"])
         self.assertIn("final_left_cm=not_read", captured["script_text"])
-        self.assertNotIn("$paragraph.Format", captured["script_text"])
         self.assertNotIn("WORD_COM_RECORD_BEFORE_GET_FORMAT", captured["script_text"])
         self.assertNotIn("WORD_COM_RECORD_AFTER_GET_FORMAT", captured["script_text"])
         self.assertNotIn("WORD_COM_RECORD_CHAR_UNIT_CLEAR_SKIPPED", captured["script_text"])
@@ -1859,10 +1885,13 @@ class DocxProcessorTests(unittest.TestCase):
             root = read_document_root(output_docx)
             ind = root.find(".//w:ind", NS)
             self.assertEqual(ind.get(qn("left")), "1440")
+            self.assertEqual(ind.get(qn("start")), "1440")
             self.assertEqual(ind.get(qn("firstLine")), "560")
-            self.assertIsNone(ind.get(qn("hanging")))
-            self.assertIsNone(ind.get(qn("start")))
-            assert_no_character_indent_attrs(self, root)
+            self.assertEqual(ind.get(qn("hanging")), "0")
+            self.assertEqual(ind.get(qn("leftChars")), "0")
+            self.assertEqual(ind.get(qn("startChars")), "0")
+            self.assertEqual(ind.get(qn("firstLineChars")), "0")
+            self.assertEqual(ind.get(qn("hangingChars")), "0")
             joined_logs = "\n".join(logs)
             self.assertIn("WORD_COM_XML_APPLY_STARTED approved_records=1", joined_logs)
             self.assertIn("WORD_COM_XML_APPLY_RECORD paragraph_index=1 status=applied", joined_logs)
@@ -1919,8 +1948,13 @@ class DocxProcessorTests(unittest.TestCase):
             root = read_document_root(output_docx)
             ind = root.find(".//w:ind", NS)
             self.assertEqual(ind.get(qn("left")), "1720")
-            self.assertIsNone(ind.get(qn("firstLine")))
-            assert_no_character_indent_attrs(self, root)
+            self.assertEqual(ind.get(qn("start")), "1720")
+            self.assertEqual(ind.get(qn("firstLine")), "0")
+            self.assertEqual(ind.get(qn("hanging")), "0")
+            self.assertEqual(ind.get(qn("leftChars")), "0")
+            self.assertEqual(ind.get(qn("startChars")), "0")
+            self.assertEqual(ind.get(qn("firstLineChars")), "0")
+            self.assertEqual(ind.get(qn("hangingChars")), "0")
             joined_logs = "\n".join(logs)
             self.assertIn("WORD_COM_FONT_CHECK_APPROVED_COUNT=1", joined_logs)
             self.assertIn("WORD_COM_XML_APPLY_RECORD paragraph_index=1 status=applied", joined_logs)
@@ -1995,11 +2029,7 @@ class DocxProcessorTests(unittest.TestCase):
 
             root = read_document_root(output_docx)
             body_paragraph = root.xpath(".//w:p", namespaces=NS)[3]
-            ind = body_paragraph.find("./w:pPr/w:ind", NS)
-            self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
-            self.assertIsNone(ind.get(qn("start")))
-            self.assertIsNone(ind.get(qn("hanging")))
-            self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
+            assert_body_indent_hard_override(self, body_paragraph, TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
             debug = "\n".join(summary.body_indent_debug_logs)
             self.assertIn("font_size_source=paragraph_style:DefaultText", debug)
             self.assertTrue(any(int(record["paragraph_index"]) == 4 for record in summary.body_indent_records))
@@ -2028,15 +2058,16 @@ class DocxProcessorTests(unittest.TestCase):
 
             root = read_document_root(output_docx)
             body_paragraph = root.xpath(".//w:p", namespaces=NS)[3]
-            ind = body_paragraph.find("./w:pPr/w:ind", NS)
-            self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
-            self.assertEqual(ind.get(qn("firstLine")), "560")
-            self.assertIsNone(ind.get(qn("hanging")))
-            self.assertIsNone(ind.get(qn("start")))
-            self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
+            assert_body_indent_hard_override(
+                self,
+                body_paragraph,
+                TEMPLATE_OUTLINE_INDENTS[1]["body_left"],
+                expected_first_line="560",
+            )
             debug = "\n".join(summary.body_indent_debug_logs)
             self.assertIn("spec_firstLine_twips=560", debug)
-            self.assertIn("written_firstLine=560", debug)
+            self.assertIn("written_firstLine_twips=560", debug)
+            self.assertIn("written_firstLineChars=0", debug)
             records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
             self.assertEqual(records_by_kind["body"]["expected_first_line_twips"], "560")
             self.assertEqual(records_by_kind["body"]["expected_firstline_points"], 28.0)
@@ -2063,12 +2094,9 @@ class DocxProcessorTests(unittest.TestCase):
 
             root = read_document_root(output_docx)
             body_paragraph = root.xpath(".//w:p", namespaces=NS)[3]
-            ind = body_paragraph.find("./w:pPr/w:ind", NS)
-            self.assertEqual(ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
-            self.assertIsNone(ind.get(qn("start")))
-            self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
+            assert_body_indent_hard_override(self, body_paragraph, TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
             debug = "\n".join(summary.body_indent_debug_logs)
-            self.assertIn("written_start_twips=None", debug)
+            self.assertIn(f"written_start_twips={TEMPLATE_OUTLINE_INDENTS[3]['body_left']}", debug)
             self.assertIn("validation=ok", debug)
 
     def test_level_four_indents_are_normalized_in_document_numbering_and_styles(self):
@@ -2102,11 +2130,7 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(heading_ind.get(qn("hanging")), spec["hanging"])
             self.assertAlmostEqual(int(heading_ind.get(qn("left"))) / 20 / 28.3464567, 3.46, places=2)
             self.assertAlmostEqual(int(heading_ind.get(qn("hanging"))) / 20 / 28.3464567, 0.50, places=2)
-            self.assertEqual(body_ind.get(qn("left")), spec["body_left"])
-            self.assertIsNone(body_ind.get(qn("hanging")))
-            self.assertIsNone(body_ind.get(qn("firstLine")))
-            self.assertIsNone(body_ind.get(qn("start")))
-            self.assertIsNone(paragraphs[3].find("./w:pPr/w:tabs", NS))
+            assert_body_indent_hard_override(self, paragraphs[3], spec["body_left"])
 
             numbering_root = read_part_root(output_docx, "word/numbering.xml")
             numbering_lvl = numbering_root.find(".//w:lvl", NS)
@@ -2466,7 +2490,7 @@ class DocxProcessorTests(unittest.TestCase):
             body_paragraph = output_paragraphs[4]
             self.assertEqual(body_marker.find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "0")
             self.assertIsNotNone(body_paragraph.find("./w:pPr/w:ind", NS))
-            self.assertIsNone(body_paragraph.find("./w:pPr/w:ind", NS).get(qn("leftChars")))
+            self.assertEqual(body_paragraph.find("./w:pPr/w:ind", NS).get(qn("leftChars")), "0")
             self.assertIsNone(body_paragraph.find("./w:pPr/w:tabs", NS))
 
             non_toc_numbering_ind = output_numbering_root.xpath(

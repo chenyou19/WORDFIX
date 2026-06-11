@@ -594,6 +594,7 @@ def fix_docx_fast(
                         outline_preface_paragraphs=options.outline_preface_paragraphs,
                         enable_level1_level2_body_first_line_indent=options.enable_level1_level2_body_first_line_indent,
                         word_com_check_body_font_when_xml_not_14=options.word_com_check_body_font_when_xml_not_14,
+                        normalize_body_style_to_none=options.normalize_body_style_to_none,
                         skip_paragraph_ids=indent_skip_paragraph_ids,
                     )
                     summary.paragraphs += changed_paragraphs

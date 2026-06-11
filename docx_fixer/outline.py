@@ -355,6 +355,10 @@ def remove_paragraph_numPr(p) -> bool:
     pPr = p.find("./w:pPr", NS)
     if pPr is None:
         return False
+    return remove_paragraph_numPr_from_pPr(pPr)
+
+
+def remove_paragraph_numPr_from_pPr(pPr) -> bool:
     numPr = pPr.find("w:numPr", NS)
     if numPr is None:
         return False
@@ -377,11 +381,14 @@ def apply_indent_spec_to_pPr(
     text left = number_start + hanging, first line hangs back by hanging.
     It removes tab stops unless use_tab_stop=True.
 
-    body_plain writes only the body text left indent. It removes hanging,
-    firstLine, tabs, bidi start/end, right/end, and character-unit indents.
+    body_plain hard-overrides the body text indent. It writes twips-based left
+    and start indents, explicitly zeroes first-line/hanging and character-unit
+    indents, and removes tabs and numbering.
     """
     ind = get_or_add(pPr, "ind")
     clear_indent_attrs(ind)
+    removed_tabs = False
+    removed_numPr = False
 
     if mode == "heading_numbered":
         ind.set(qn("left"), spec["left"])
@@ -389,23 +396,41 @@ def apply_indent_spec_to_pPr(
         if use_tab_stop:
             normalize_tabs_to_text_position(pPr, spec["left"])
         else:
+            removed_tabs = pPr.find("w:tabs", NS) is not None
             remove_paragraph_tabs(pPr)
     elif mode == "body_plain":
         body_left = spec.get("body_left", spec["left"])
         ind.set(qn("left"), body_left)
+        ind.set(qn("start"), body_left)
         if body_first_line_twips is not None:
             ind.set(qn("firstLine"), body_first_line_twips)
+        else:
+            ind.set(qn("firstLine"), "0")
+        ind.set(qn("hanging"), "0")
+        ind.set(qn("leftChars"), "0")
+        ind.set(qn("startChars"), "0")
+        ind.set(qn("firstLineChars"), "0")
+        ind.set(qn("hangingChars"), "0")
+        removed_tabs = pPr.find("w:tabs", NS) is not None
         remove_paragraph_tabs(pPr)
+        removed_numPr = remove_paragraph_numPr_from_pPr(pPr)
     else:
         raise ValueError(f"Unknown indent mode: {mode}")
 
     return {
         "left": ind.get(qn("left")),
+        "start": ind.get(qn("start")),
         "hanging": ind.get(qn("hanging")),
         "firstLine": ind.get(qn("firstLine")),
+        "leftChars": ind.get(qn("leftChars")),
+        "startChars": ind.get(qn("startChars")),
+        "firstLineChars": ind.get(qn("firstLineChars")),
+        "hangingChars": ind.get(qn("hangingChars")),
         "tab_pos": pPr.find("./w:tabs/w:tab", NS).get(qn("pos"))
         if pPr.find("./w:tabs/w:tab", NS) is not None
         else None,
+        "removed_tabs": "True" if removed_tabs else "False",
+        "removed_numPr": "True" if removed_numPr else "False",
     }
 
 
@@ -1085,28 +1110,31 @@ def body_indent_validation_errors(
 
     if ind.get(qn("left")) != expected_left:
         errors.append(f"left={ind.get(qn('left'))}")
+    if ind.get(qn("start")) != expected_left:
+        errors.append(f"start={ind.get(qn('start'))}")
     actual_first_line = ind.get(qn("firstLine"))
     if expected_first_line is None:
-        if actual_first_line is not None:
+        if actual_first_line != "0":
             errors.append(f"firstLine={actual_first_line}")
     elif actual_first_line != expected_first_line:
         errors.append(f"firstLine={actual_first_line}")
     for attr in (
-        "start",
-        "right",
-        "end",
-        "hanging",
         "leftChars",
         "startChars",
-        "rightChars",
-        "endChars",
         "hangingChars",
         "firstLineChars",
     ):
+        if ind.get(qn(attr)) != "0":
+            errors.append(f"{attr}={ind.get(qn(attr))}")
+    if ind.get(qn("hanging")) != "0":
+        errors.append(f"hanging={ind.get(qn('hanging'))}")
+    for attr in ("right", "end", "rightChars", "endChars"):
         if ind.get(qn(attr)) is not None:
             errors.append(f"{attr}={ind.get(qn(attr))}")
     if tabs is not None:
         errors.append("tabs_present")
+    if pPr is not None and pPr.find("w:numPr", NS) is not None:
+        errors.append("numPr_present")
 
     return errors
 
@@ -1120,6 +1148,11 @@ def append_body_indent_record(
     expected_left_twips: str,
     expected_first_line_twips: str | None,
     paragraph_style_id_value: str | None,
+    paragraph_style_id_before: str | None = None,
+    paragraph_style_id_after: str | None = None,
+    normalize_body_style_to_none: bool = False,
+    body_style_normalized: bool = False,
+    indent_result: dict[str, str | None] | None = None,
     heading_uses_outline: bool = True,
 ) -> None:
     if summary is None:
@@ -1152,8 +1185,18 @@ def append_body_indent_record(
             "expected_firstline_cm": twips_to_cm(expected_first_line_twips) if expected_first_line_twips else 0.0,
             "expected_firstline_points": int(expected_first_line_twips) / 20 if expected_first_line_twips else 0.0,
             "xml_written_left_cm": twips_to_cm(expected_left_twips),
-            "xml_written_hanging_cm": None,
+            "xml_written_start_cm": twips_to_cm(indent_result.get("start")) if indent_result and indent_result.get("start") else None,
+            "xml_written_hanging_cm": twips_to_cm(indent_result.get("hanging")) if indent_result and indent_result.get("hanging") else None,
+            "xml_written_firstline_cm": twips_to_cm(indent_result.get("firstLine")) if indent_result and indent_result.get("firstLine") else None,
             "paragraph_style_id": paragraph_style_id_value,
+            "paragraph_style_id_before": paragraph_style_id_before,
+            "paragraph_style_id_after": paragraph_style_id_after,
+            "normalize_body_style_to_none": normalize_body_style_to_none,
+            "body_style_normalized": body_style_normalized,
+            "force_body_indent_hard_override": True,
+            "body_first_line_twips_applied": expected_first_line_twips is not None,
+            "removed_tabs": (indent_result or {}).get("removed_tabs") == "True",
+            "removed_numPr": (indent_result or {}).get("removed_numPr") == "True",
         }
     )
 
@@ -1270,6 +1313,17 @@ def append_body_indent_debug_log(
     heading_uses_outline: bool,
     style_font_size_lookup=None,
     enable_level1_level2_body_first_line_indent: bool = False,
+    normalize_body_style_to_none: bool = False,
+    paragraph_style_id_before: str | None = None,
+    paragraph_style_id_after: str | None = None,
+    body_style_normalized: bool = False,
+    first_font_size_pt_for_log: float | None = None,
+    first_font_size_source_for_log: str | None = None,
+    dominant_font_size_pt_for_log: float | None = None,
+    dominant_font_size_source_for_log: str | None = None,
+    paragraph_style_for_log: str | None = None,
+    run_style_for_log: str | None = None,
+    indent_result: dict[str, str | None] | None = None,
 ) -> None:
     if summary is None:
         return
@@ -1291,6 +1345,14 @@ def append_body_indent_debug_log(
         p,
         style_font_size_lookup,
     )
+    if first_font_size_source_for_log is not None:
+        first_font_size_pt = first_font_size_pt_for_log
+        first_font_size_source = first_font_size_source_for_log
+        paragraph_style = paragraph_style_for_log
+        run_style = run_style_for_log
+    if dominant_font_size_source_for_log is not None:
+        dominant_font_size_pt = dominant_font_size_pt_for_log
+        dominant_font_size_source = dominant_font_size_source_for_log
     body_left_twips = spec.get("body_left", spec["left"])
     validation_errors = body_indent_validation_errors(p, body_left_twips, expected_first_line_twips)
     preview = summarize_paragraph_text(text)
@@ -1314,12 +1376,28 @@ def append_body_indent_debug_log(
         f"first_font_size_source={first_font_size_source}; "
         f"dominant_font_size={format_font_size_for_log(dominant_font_size_pt)}; "
         f"dominant_font_size_source={dominant_font_size_source}; "
+        f"normalize_body_style_to_none={normalize_body_style_to_none}; "
+        f"paragraph_style_id_before={paragraph_style_id_before or 'none'}; "
+        f"paragraph_style_id_after={paragraph_style_id_after or 'none'}; "
+        f"body_style_normalized={body_style_normalized}; "
         f"paragraph_style_id={paragraph_style}; "
         f"run_style_id={run_style}; "
+        f"force_body_indent_hard_override=True; "
         f"written_left_twips={paragraph_format.get('left')}; "
         f"written_left_cm={format_twips_cm(paragraph_format.get('left'))}; "
         f"written_start_twips={paragraph_format.get('start')}; "
         f"written_start_cm={format_twips_cm(paragraph_format.get('start'))}; "
+        f"written_firstLine_twips={paragraph_format.get('firstLine')}; "
+        f"written_firstLine_cm={format_twips_cm(paragraph_format.get('firstLine'))}; "
+        f"written_hanging_twips={paragraph_format.get('hanging')}; "
+        f"written_hanging_cm={format_twips_cm(paragraph_format.get('hanging'))}; "
+        f"written_leftChars={paragraph_format.get('leftChars')}; "
+        f"written_startChars={paragraph_format.get('startChars')}; "
+        f"written_firstLineChars={paragraph_format.get('firstLineChars')}; "
+        f"written_hangingChars={paragraph_format.get('hangingChars')}; "
+        f"body_first_line_twips_applied={expected_first_line_twips is not None}; "
+        f"removed_tabs={(indent_result or {}).get('removed_tabs', 'False')}; "
+        f"removed_numPr={(indent_result or {}).get('removed_numPr', 'False')}; "
         f"written_hanging={paragraph_format.get('hanging')}; "
         f"written_firstLine={paragraph_format.get('firstLine')}; "
         f"leftChars={paragraph_format.get('leftChars')}; "
@@ -1417,27 +1495,42 @@ def apply_body_indent_from_heading(
     heading_uses_outline: bool,
     style_font_size_lookup=None,
     enable_level1_level2_body_first_line_indent: bool = False,
-) -> bool:
+) -> dict[str, str | None] | None:
     """Apply plain body indentation from the current heading context."""
     if not is_body_indent_font_size_allowed(p, style_font_size_lookup):
-        return False
+        return None
 
     spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
     if spec is None:
-        return False
+        return None
 
     pPr = get_or_add(p, "pPr", first=True)
     body_first_line_twips = body_first_line_twips_for_heading(
         heading_level,
         enable_level1_level2_body_first_line_indent,
     )
-    apply_indent_spec_to_pPr(
+    return apply_indent_spec_to_pPr(
         pPr,
         spec,
         "body_plain",
         body_first_line_twips=body_first_line_twips,
     )
-    return True
+
+
+def normalize_paragraph_style_to_none(p) -> tuple[str | None, str | None, bool]:
+    """Remove the paragraph style and report before/after ids."""
+    style_before = paragraph_style_id(p)
+    if style_before is None:
+        return None, None, False
+
+    pPr = p.find("./w:pPr", NS)
+    if pPr is None:
+        return style_before, None, False
+    style_el = pPr.find("w:pStyle", NS)
+    if style_el is None:
+        return style_before, None, False
+    pPr.remove(style_el)
+    return style_before, None, True
 
 
 def get_paragraph_style_value(p) -> str:
@@ -1623,6 +1716,7 @@ def fix_outline_paragraphs(
     outline_preface_paragraphs: bool = False,
     enable_level1_level2_body_first_line_indent: bool = False,
     word_com_check_body_font_when_xml_not_14: bool = False,
+    normalize_body_style_to_none: bool = False,
     skip_paragraph_ids: set[int] | None = None,
 ) -> int:
     paragraphs = root.xpath(".//w:p", namespaces=NS)
@@ -1794,7 +1888,7 @@ def fix_outline_paragraphs(
             if level is None:
                 if current_heading_indent is not None:
                     heading_level, heading_uses_outline = current_heading_indent
-                    first_body_font_size_pt, first_body_font_size_source, _, _ = effective_text_run_font_size_pt(
+                    first_body_font_size_pt, first_body_font_size_source, body_paragraph_style, body_run_style = effective_text_run_font_size_pt(
                         p,
                         style_font_size_lookup,
                     )
@@ -1858,13 +1952,23 @@ def fix_outline_paragraphs(
                             f"source={dominant_body_font_size_source}",
                         )
                         continue
-                    if apply_body_indent_from_heading(
+                    paragraph_style_id_before = paragraph_style_id(p)
+                    indent_result = apply_body_indent_from_heading(
                         p,
                         heading_level,
                         heading_uses_outline,
                         style_font_size_lookup,
                         enable_level1_level2_body_first_line_indent=enable_level1_level2_body_first_line_indent,
-                    ):
+                    )
+                    if indent_result is not None:
+                        paragraph_style_id_after = paragraph_style_id_before
+                        body_style_normalized = False
+                        if normalize_body_style_to_none:
+                            (
+                                paragraph_style_id_before,
+                                paragraph_style_id_after,
+                                body_style_normalized,
+                            ) = normalize_paragraph_style_to_none(p)
                         changed_count += 1
                         if spec is not None:
                             append_body_indent_record(
@@ -1874,7 +1978,12 @@ def fix_outline_paragraphs(
                                 heading_level=heading_level,
                                 expected_left_twips=spec.get("body_left", spec["left"]),
                                 expected_first_line_twips=expected_first_line_twips,
-                                paragraph_style_id_value=paragraph_style_id(p),
+                                paragraph_style_id_value=paragraph_style_id_after,
+                                paragraph_style_id_before=paragraph_style_id_before,
+                                paragraph_style_id_after=paragraph_style_id_after,
+                                normalize_body_style_to_none=normalize_body_style_to_none,
+                                body_style_normalized=body_style_normalized,
+                                indent_result=indent_result,
                                 heading_uses_outline=heading_uses_outline,
                             )
                         append_body_indent_debug_log(
@@ -1887,6 +1996,17 @@ def fix_outline_paragraphs(
                             heading_uses_outline=heading_uses_outline,
                             style_font_size_lookup=style_font_size_lookup,
                             enable_level1_level2_body_first_line_indent=enable_level1_level2_body_first_line_indent,
+                            normalize_body_style_to_none=normalize_body_style_to_none,
+                            paragraph_style_id_before=paragraph_style_id_before,
+                            paragraph_style_id_after=paragraph_style_id_after,
+                            body_style_normalized=body_style_normalized,
+                            first_font_size_pt_for_log=first_body_font_size_pt,
+                            first_font_size_source_for_log=first_body_font_size_source,
+                            dominant_font_size_pt_for_log=dominant_body_font_size_pt,
+                            dominant_font_size_source_for_log=dominant_body_font_size_source,
+                            paragraph_style_for_log=body_paragraph_style,
+                            run_style_for_log=body_run_style,
+                            indent_result=indent_result,
                         )
                         append_paragraph_change_log(
                             change_logs,
@@ -1897,7 +2017,11 @@ def fix_outline_paragraphs(
                             before_outline,
                             f"Body indent applied: left={spec.get('body_left', spec['left'])}; "
                             f"{'firstLine=560 twips' if expected_first_line_twips else 'firstLine cleared'}; "
-                            f"enable_level1_level2_body_first_line_indent={enable_level1_level2_body_first_line_indent}",
+                            f"enable_level1_level2_body_first_line_indent={enable_level1_level2_body_first_line_indent}; "
+                            f"normalize_body_style_to_none={normalize_body_style_to_none}; "
+                            f"paragraph_style_id_before={paragraph_style_id_before or 'none'}; "
+                            f"paragraph_style_id_after={paragraph_style_id_after or 'none'}; "
+                            f"body_style_normalized={body_style_normalized}",
                         )
                         continue
 

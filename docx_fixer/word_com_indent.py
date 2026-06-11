@@ -238,6 +238,49 @@ def _format_optional_cm(value: float | None) -> str:
     return f"{value:.2f}"
 
 
+def _safe_tab_stops_count(pf):
+    try:
+        return pf.TabStops.Count
+    except Exception:
+        return None
+
+
+def _safe_clear_tab_stops(pf) -> bool:
+    try:
+        pf.TabStops.ClearAll()
+        return True
+    except Exception:
+        return False
+
+
+def _safe_paragraph_style_name(paragraph):
+    try:
+        style = paragraph.Style
+        return getattr(style, "NameLocal", str(style))
+    except Exception:
+        return None
+
+
+def _safe_section_diagnostics(paragraph):
+    try:
+        section = paragraph.Range.Sections(1)
+    except Exception:
+        try:
+            section = paragraph.Range.Sections.Item(1)
+        except Exception:
+            return None, None, None
+
+    try:
+        section_number = section.Index
+    except Exception:
+        section_number = None
+
+    page_setup = getattr(section, "PageSetup", None)
+    left_margin_cm = _points_to_cm(_safe_com_attr(page_setup, "LeftMargin")) if page_setup is not None else None
+    right_margin_cm = _points_to_cm(_safe_com_attr(page_setup, "RightMargin")) if page_setup is not None else None
+    return section_number, left_margin_cm, right_margin_cm
+
+
 def _format_optional_pt(value: float | None) -> str:
     if value is None:
         return "None"
@@ -373,6 +416,10 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
             before_first_line_cm = _points_to_cm(before_first_line_pt)
             before_char_left = _safe_com_attr(pf, "CharacterUnitLeftIndent")
             before_char_first = _safe_com_attr(pf, "CharacterUnitFirstLineIndent")
+            before_char_right = _safe_com_attr(pf, "CharacterUnitRightIndent")
+            before_tab_count = _safe_tab_stops_count(pf)
+            style_name_local = _safe_paragraph_style_name(paragraph)
+            section_number, section_left_margin_cm, section_right_margin_cm = _safe_section_diagnostics(paragraph)
             word_range_font_size, word_dominant_font_size = (
                 _word_paragraph_font_sizes(paragraph)
                 if apply_only_if_word_font_size_is_14
@@ -418,6 +465,11 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
                 pf.CharacterUnitFirstLineIndent = 0
             except Exception:
                 pass
+            try:
+                pf.CharacterUnitRightIndent = 0
+            except Exception:
+                pass
+            tabs_cleared = _safe_clear_tab_stops(pf)
 
             pf.LeftIndent = expected_left_points
             pf.FirstLineIndent = expected_firstline_points
@@ -427,7 +479,14 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
             actual_first_line_pt = _safe_com_attr(pf, "FirstLineIndent")
             actual_char_left = _safe_com_attr(pf, "CharacterUnitLeftIndent")
             actual_char_first = _safe_com_attr(pf, "CharacterUnitFirstLineIndent")
+            actual_char_right = _safe_com_attr(pf, "CharacterUnitRightIndent")
+            actual_tab_count = _safe_tab_stops_count(pf)
             first_line_indent_cm = _points_to_cm(actual_first_line_pt)
+            absolute_text_start_cm = (
+                section_left_margin_cm + actual_left_cm
+                if section_left_margin_cm is not None and actual_left_cm is not None
+                else None
+            )
             status = (
                 "ok"
                 if actual_left_cm is not None and abs(actual_left_cm - expected_left_cm) <= 0.02
@@ -460,6 +519,19 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
                 f"word_opened_firstline_cm={_format_optional_cm(before_first_line_cm)}; "
                 f"final_left_cm={_format_optional_cm(actual_left_cm)}; "
                 f"final_firstline_cm={_format_optional_cm(first_line_indent_cm)}; "
+                f"word_com_LeftIndent_cm={_format_optional_cm(actual_left_cm)}; "
+                f"word_com_FirstLineIndent_cm={_format_optional_cm(first_line_indent_cm)}; "
+                f"word_com_CharacterUnitLeftIndent={actual_char_left}; "
+                f"word_com_CharacterUnitFirstLineIndent={actual_char_first}; "
+                f"word_com_CharacterUnitRightIndent={actual_char_right}; "
+                f"word_com_TabStops_Count={actual_tab_count}; "
+                f"word_com_Style_NameLocal={style_name_local}; "
+                f"word_com_Section_Number={section_number}; "
+                f"section_index={section_number}; "
+                f"section_left_margin_cm={_format_optional_cm(section_left_margin_cm)}; "
+                f"section_right_margin_cm={_format_optional_cm(section_right_margin_cm)}; "
+                f"paragraph_left_indent_cm={_format_optional_cm(actual_left_cm)}; "
+                f"absolute_text_start_cm={_format_optional_cm(absolute_text_start_cm)}; "
                 f"second_fix=yes; "
                 f"status={status}"
             )
@@ -475,6 +547,11 @@ def _verify_and_fix_body_indents_with_word_com_in_process(
                 f"after_char_left={actual_char_left}; "
                 f"before_char_first={before_char_first}; "
                 f"after_char_first={actual_char_first}; "
+                f"before_char_right={before_char_right}; "
+                f"after_char_right={actual_char_right}; "
+                f"before_tab_count={before_tab_count}; "
+                f"after_tab_count={actual_tab_count}; "
+                f"tabs_cleared={tabs_cleared}; "
                 f"first_line_indent_cm={_format_optional_cm(first_line_indent_cm)}; "
                 f"status={status}"
             )
@@ -589,6 +666,9 @@ def _apply_body_indent_record_to_paragraph(p, record: dict[str, object]) -> str:
     tabs = p_pr.find("w:tabs", NS)
     if tabs is not None:
         p_pr.remove(tabs)
+    num_pr = p_pr.find("w:numPr", NS)
+    if num_pr is not None:
+        p_pr.remove(num_pr)
 
     ind = _get_or_add_indent(p_pr)
     for attr in (
@@ -608,9 +688,17 @@ def _apply_body_indent_record_to_paragraph(p, record: dict[str, object]) -> str:
         ind.attrib.pop(qn(attr), None)
 
     ind.set(qn("left"), str(expected_left_twips))
+    ind.set(qn("start"), str(expected_left_twips))
     expected_first_line_twips = record.get("expected_first_line_twips")
     if expected_first_line_twips is not None and str(expected_first_line_twips).strip():
         ind.set(qn("firstLine"), str(expected_first_line_twips))
+    else:
+        ind.set(qn("firstLine"), "0")
+    ind.set(qn("hanging"), "0")
+    ind.set(qn("leftChars"), "0")
+    ind.set(qn("startChars"), "0")
+    ind.set(qn("firstLineChars"), "0")
+    ind.set(qn("hangingChars"), "0")
     return "applied"
 
 
@@ -771,6 +859,59 @@ function Paragraph-TextMatchesPreview([string]$actual, [string]$preview) {{
 function Format-OptionalCm($value) {{
     if ($null -eq $value) {{ return 'None' }}
     return ('{{0:F2}}' -f [double]$value)
+}}
+
+function Get-SafeProperty($obj, [string]$name) {{
+    try {{
+        if ($null -eq $obj) {{ return $null }}
+        return $obj.$name
+    }} catch {{
+        return $null
+    }}
+}}
+
+function Get-ParagraphDiagnostic($paragraph) {{
+    $pf = $null
+    try {{ $pf = $paragraph.Format }} catch {{}}
+    $leftPt = Get-SafeProperty $pf 'LeftIndent'
+    $firstLinePt = Get-SafeProperty $pf 'FirstLineIndent'
+    $leftCm = $null
+    $firstLineCm = $null
+    if ($null -ne $leftPt) {{ try {{ $leftCm = [double]$leftPt / $pointPerCm }} catch {{}} }}
+    if ($null -ne $firstLinePt) {{ try {{ $firstLineCm = [double]$firstLinePt / $pointPerCm }} catch {{}} }}
+    $charLeft = Get-SafeProperty $pf 'CharacterUnitLeftIndent'
+    $charFirst = Get-SafeProperty $pf 'CharacterUnitFirstLineIndent'
+    $charRight = Get-SafeProperty $pf 'CharacterUnitRightIndent'
+    $tabCount = $null
+    try {{ $tabCount = $pf.TabStops.Count }} catch {{}}
+    $styleName = $null
+    try {{ $styleName = $paragraph.Style.NameLocal }} catch {{}}
+    $sectionNumber = $null
+    $sectionLeftMarginCm = $null
+    $sectionRightMarginCm = $null
+    try {{
+        $section = $paragraph.Range.Sections.Item(1)
+        try {{ $sectionNumber = $section.Index }} catch {{}}
+        try {{ $sectionLeftMarginCm = [double]$section.PageSetup.LeftMargin / $pointPerCm }} catch {{}}
+        try {{ $sectionRightMarginCm = [double]$section.PageSetup.RightMargin / $pointPerCm }} catch {{}}
+    }} catch {{}}
+    $absoluteTextStartCm = $null
+    if ($null -ne $sectionLeftMarginCm -and $null -ne $leftCm) {{
+        $absoluteTextStartCm = [double]$sectionLeftMarginCm + [double]$leftCm
+    }}
+    return [ordered]@{{
+        left_cm = Format-OptionalCm $leftCm
+        firstline_cm = Format-OptionalCm $firstLineCm
+        char_left = $charLeft
+        char_first = $charFirst
+        char_right = $charRight
+        tab_count = $tabCount
+        style_name = $styleName
+        section_number = $sectionNumber
+        section_left_margin_cm = Format-OptionalCm $sectionLeftMarginCm
+        section_right_margin_cm = Format-OptionalCm $sectionRightMarginCm
+        absolute_text_start_cm = Format-OptionalCm $absoluteTextStartCm
+    }}
 }}
 
 function Get-RecordDouble($record, [string]$name, [double]$defaultValue) {{
@@ -1030,6 +1171,7 @@ try {{
             Add-Log(("WORD_COM_RECORD_MATCHED i={{0}} word_index={{1}} source={{2}}" -f $processed, $matchIndex, $matchSource))
             Add-Log(("WORD_COM_RECORD_BEFORE_GET_PARAGRAPH i={{0}} word_index={{1}}" -f $processed, $matchIndex))
             $paragraph = $doc.Paragraphs.Item([int]$matchIndex)
+            $diag = Get-ParagraphDiagnostic $paragraph
             Add-Log(("WORD_COM_RECORD_AFTER_GET_PARAGRAPH i={{0}}" -f $processed))
             $wordRangeFontSize = $null
             $wordDominantFontSize = $null
@@ -1065,7 +1207,7 @@ try {{
                 text_match_prefix = $matchPrefix
             }}
             Add-Log(("WORD_COM_APPROVED_RECORD_JSON " + ($approvedRecord | ConvertTo-Json -Compress)))
-            Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; expected_number_start_cm={{5}}; expected_hanging_cm={{6}}; expected_heading_left_cm={{7}}; expected_body_left_cm={{8}}; expected_first_line_twips={{9}}; xml_font_size={{10}}; xml_font_size_source={{11}}; word_range_font_size={{12}}; word_dominant_font_size={{13}}; word_font_check_pass={{14}}; decision=approved_for_xml_body_indent; word_opened_left_cm=not_read; word_opened_firstline_cm=not_read; final_left_cm=not_read; final_firstline_cm=not_read; second_fix=python_xml; status={{15}}" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.expected_number_start_cm, $record.expected_hanging_cm, $record.expected_heading_left_cm, $record.expected_body_left_cm, $record.expected_first_line_twips, $record.xml_font_size, $record.xml_font_size_source, $wordRangeFontSize, $wordDominantFontSize, $wordFontCheckPass, $status))
+            Add-Log(("WORD_COM_INDENT_VERIFY: paragraph_index={{0}}; matched_paragraph_index={{1}}; text_preview={{2}}; kind={{3}}; level={{4}}; expected_number_start_cm={{5}}; expected_hanging_cm={{6}}; expected_heading_left_cm={{7}}; expected_body_left_cm={{8}}; expected_first_line_twips={{9}}; xml_font_size={{10}}; xml_font_size_source={{11}}; word_range_font_size={{12}}; word_dominant_font_size={{13}}; word_font_check_pass={{14}}; decision=approved_for_xml_body_indent; word_opened_left_cm={{15}}; word_opened_firstline_cm={{16}}; final_left_cm=not_read; final_firstline_cm=not_read; word_com_LeftIndent_cm={{17}}; word_com_FirstLineIndent_cm={{18}}; word_com_CharacterUnitLeftIndent={{19}}; word_com_CharacterUnitFirstLineIndent={{20}}; word_com_CharacterUnitRightIndent={{21}}; word_com_TabStops_Count={{22}}; word_com_Style_NameLocal={{23}}; word_com_Section_Number={{24}}; section_index={{25}}; section_left_margin_cm={{26}}; section_right_margin_cm={{27}}; paragraph_left_indent_cm={{28}}; absolute_text_start_cm={{29}}; second_fix=python_xml; status={{30}}" -f $record.paragraph_index, $matchIndex, $preview, $kind, $record.level, $record.expected_number_start_cm, $record.expected_hanging_cm, $record.expected_heading_left_cm, $record.expected_body_left_cm, $record.expected_first_line_twips, $record.xml_font_size, $record.xml_font_size_source, $wordRangeFontSize, $wordDominantFontSize, $wordFontCheckPass, $diag.left_cm, $diag.firstline_cm, $diag.left_cm, $diag.firstline_cm, $diag.char_left, $diag.char_first, $diag.char_right, $diag.tab_count, $diag.style_name, $diag.section_number, $diag.section_number, $diag.section_left_margin_cm, $diag.section_right_margin_cm, $diag.left_cm, $diag.absolute_text_start_cm, $status))
             Add-Log(("WORD_COM_BODY_INDENT_FIX: i={{0}} paragraph_index={{1}} expected_left_cm={{2}} before_left_cm=not_read after_left_cm=not_read status={{3}}" -f $processed, $record.paragraph_index, $record.expected_left_cm, $status))
         }} catch {{
             $errors += 1

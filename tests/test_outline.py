@@ -22,6 +22,7 @@ from docx_fixer.numbering import (
 from docx_fixer.style_resolver import build_style_font_size_lookup
 from docx_fixer.indent_settings import twips_to_cm
 from docx_fixer.outline import (
+    apply_indent_spec_to_pPr,
     detect_outline_level,
     fix_outline_paragraphs,
     force_all_paragraphs_to_body_outline_level,
@@ -131,6 +132,21 @@ def paragraph_first_line_indent(p):
     return ind.get(qn("firstLine"))
 
 
+def assert_body_indent_hard_override(testcase, p, expected_left: str, expected_first_line: str = "0"):
+    ind = p.find("./w:pPr/w:ind", NS)
+    testcase.assertIsNotNone(ind)
+    testcase.assertEqual(ind.get(qn("left")), expected_left)
+    testcase.assertEqual(ind.get(qn("start")), expected_left)
+    testcase.assertEqual(ind.get(qn("firstLine")), expected_first_line)
+    testcase.assertEqual(ind.get(qn("hanging")), "0")
+    testcase.assertEqual(ind.get(qn("leftChars")), "0")
+    testcase.assertEqual(ind.get(qn("startChars")), "0")
+    testcase.assertEqual(ind.get(qn("firstLineChars")), "0")
+    testcase.assertEqual(ind.get(qn("hangingChars")), "0")
+    testcase.assertIsNone(p.find("./w:pPr/w:tabs", NS))
+    testcase.assertIsNone(p.find("./w:pPr/w:numPr", NS))
+
+
 def expected_body_left(level: int, set_outline: bool = True):
     spec = TEMPLATE_OUTLINE_INDENTS[level] if set_outline else PREFACE_OUTLINE_INDENTS[level]
     return spec["body_left"]
@@ -141,6 +157,13 @@ def paragraph_outline(p):
     if outline is None:
         return None
     return outline.get(qn("val"))
+
+
+def paragraph_style(p):
+    style = p.find("./w:pPr/w:pStyle", NS)
+    if style is None:
+        return None
+    return style.get(qn("val"))
 
 
 def paragraph_text_run_sizes(p):
@@ -165,6 +188,20 @@ def add_ind_with_char_attrs(p):
     for attr in ("leftChars", "startChars", "hangingChars", "firstLineChars"):
         ind.set(qn(attr), "99")
     return ind
+
+
+def add_num_pr(p, num_id: str = "99", ilvl: str = "0"):
+    pPr = p.find("./w:pPr", NS)
+    if pPr is None:
+        pPr = etree.SubElement(p, qn("pPr"))
+    num_pr = pPr.find("w:numPr", NS)
+    if num_pr is None:
+        num_pr = etree.SubElement(pPr, qn("numPr"))
+    ilvl_el = etree.SubElement(num_pr, qn("ilvl"))
+    ilvl_el.set(qn("val"), ilvl)
+    num_id_el = etree.SubElement(num_pr, qn("numId"))
+    num_id_el.set(qn("val"), num_id)
+    return num_pr
 
 
 def add_tab_stop(p, pos="999"):
@@ -665,10 +702,8 @@ class OutlineFixTests(unittest.TestCase):
 
         fix_outline_paragraphs(root, include_tables=True, summary=summary)
 
-        self.assertEqual(paragraph_left_indent(body), expected_body_left(1))
-        self.assertIsNone(paragraph_indent(body)[1])
-        self.assertEqual(paragraph_left_indent(nested_body), expected_body_left(2))
-        self.assertIsNone(paragraph_indent(nested_body)[1])
+        assert_body_indent_hard_override(self, body, expected_body_left(1))
+        assert_body_indent_hard_override(self, nested_body, expected_body_left(2))
         self.assertIsNone(paragraph_outline(body))
         self.assertIsNone(paragraph_outline(nested_body))
         self.assertTrue(
@@ -687,9 +722,7 @@ class OutlineFixTests(unittest.TestCase):
         fix_outline_paragraphs(root, include_tables=True)
 
         self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[1]["left"])
-        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
-        self.assertIsNone(paragraph_first_line_indent(body))
-        self.assertIsNone(paragraph_indent(body)[1])
+        assert_body_indent_hard_override(self, body, TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
         self.assertIsNone(paragraph_outline(body))
 
     def test_body_after_level_two_heading_aligns_to_heading_text_start_only(self):
@@ -702,13 +735,10 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[2]["left"])
         self.assertIsNone(paragraph_start_indent(heading))
-        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[2]["body_left"])
-        self.assertIsNone(paragraph_first_line_indent(body))
-        self.assertIsNone(paragraph_start_indent(body))
-        self.assertIsNone(paragraph_indent(body)[1])
+        assert_body_indent_hard_override(self, body, TEMPLATE_OUTLINE_INDENTS[2]["body_left"])
         self.assertIsNone(paragraph_outline(body))
 
-    def test_level_three_body_indent_writes_left_only_and_clears_old_indent_attrs(self):
+    def test_level_three_body_indent_hard_overrides_old_indent_attrs(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\uff08\u4e00\uff09\u7b2c\u4e09\u968e\u6a19\u984c")
         body = make_paragraph("\u968e\u5c643\u5167\u6587", font_size_pt=14)
@@ -729,21 +759,22 @@ class OutlineFixTests(unittest.TestCase):
 
         expected = TEMPLATE_OUTLINE_INDENTS[2]["body_left"]
         body_ind = body.find("./w:pPr/w:ind", NS)
-        self.assertEqual(body_ind.get(qn("left")), expected)
-        self.assertIsNone(body_ind.get(qn("start")))
+        assert_body_indent_hard_override(self, body, expected)
         self.assertAlmostEqual(twips_to_cm(expected), 2.96, places=2)
-        self.assertIsNone(body_ind.get(qn("hanging")))
-        self.assertIsNone(body_ind.get(qn("firstLine")))
-        self.assertIsNone(body_ind.get(qn("leftChars")))
-        self.assertIsNone(body_ind.get(qn("startChars")))
-        self.assertIsNone(body_ind.get(qn("hangingChars")))
-        self.assertIsNone(body_ind.get(qn("firstLineChars")))
-        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=2", debug)
         self.assertIn("spec_body_left_cm=2.96", debug)
         self.assertIn(f"written_left_twips={expected}", debug)
-        self.assertIn("written_start_twips=None", debug)
+        self.assertIn(f"written_start_twips={expected}", debug)
+        self.assertIn("written_firstLine_twips=0", debug)
+        self.assertIn("written_hanging_twips=0", debug)
+        self.assertIn("written_leftChars=0", debug)
+        self.assertIn("written_startChars=0", debug)
+        self.assertIn("written_firstLineChars=0", debug)
+        self.assertIn("written_hangingChars=0", debug)
+        self.assertIn("force_body_indent_hard_override=True", debug)
+        self.assertIn("body_first_line_twips_applied=False", debug)
+        self.assertIn("removed_tabs=True", debug)
         self.assertIn("validation=ok", debug)
 
     def test_level_two_body_indent_uses_body_left_and_first_line_560_twips(self):
@@ -767,20 +798,15 @@ class OutlineFixTests(unittest.TestCase):
         )
 
         expected_left = TEMPLATE_OUTLINE_INDENTS[1]["body_left"]
-        body_ind = body.find("./w:pPr/w:ind", NS)
-        self.assertEqual(body_ind.get(qn("left")), expected_left)
-        self.assertEqual(body_ind.get(qn("firstLine")), "560")
+        assert_body_indent_hard_override(self, body, expected_left, expected_first_line="560")
         self.assertAlmostEqual(twips_to_cm(expected_left), 1.83, places=2)
-        self.assertIsNone(body_ind.get(qn("hanging")))
-        self.assertIsNone(body_ind.get(qn("start")))
-        self.assertIsNone(body_ind.get(qn("firstLineChars")))
-        assert_no_char_indent_attrs(self, body_ind)
-        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=1", debug)
         self.assertIn("spec_body_left_cm=1.83", debug)
         self.assertIn("spec_firstLine_twips=560", debug)
-        self.assertIn("written_firstLine=560", debug)
+        self.assertIn("written_firstLine_twips=560", debug)
+        self.assertIn("written_firstLineChars=0", debug)
+        self.assertIn("body_first_line_twips_applied=True", debug)
         self.assertIn("validation=ok", debug)
         self.assertTrue(any("Body indent applied: left=" in line and "firstLine=560 twips" in line for line in summary.paragraph_logs))
 
@@ -805,18 +831,11 @@ class OutlineFixTests(unittest.TestCase):
         )
 
         expected_left = TEMPLATE_OUTLINE_INDENTS[0]["body_left"]
-        body_ind = body.find("./w:pPr/w:ind", NS)
-        self.assertEqual(body_ind.get(qn("left")), expected_left)
-        self.assertEqual(body_ind.get(qn("firstLine")), "560")
-        self.assertIsNone(body_ind.get(qn("hanging")))
-        self.assertIsNone(body_ind.get(qn("start")))
-        self.assertIsNone(body_ind.get(qn("firstLineChars")))
-        assert_no_char_indent_attrs(self, body_ind)
-        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
+        assert_body_indent_hard_override(self, body, expected_left, expected_first_line="560")
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=0", debug)
         self.assertIn("spec_firstLine_twips=560", debug)
-        self.assertIn("written_firstLine=560", debug)
+        self.assertIn("written_firstLine_twips=560", debug)
 
     def test_level_four_body_indent_uses_body_left_and_removes_hanging_and_tabs(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
@@ -830,14 +849,9 @@ class OutlineFixTests(unittest.TestCase):
 
         fix_outline_paragraphs(root, include_tables=True, summary=summary)
 
-        body_ind = body.find("./w:pPr/w:ind", NS)
         expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
-        self.assertEqual(body_ind.get(qn("left")), expected_left)
+        assert_body_indent_hard_override(self, body, expected_left)
         self.assertAlmostEqual(twips_to_cm(expected_left), 3.45, places=2)
-        self.assertIsNone(body_ind.get(qn("hanging")))
-        self.assertIsNone(body_ind.get(qn("firstLine")))
-        assert_no_char_indent_attrs(self, body_ind)
-        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=3", debug)
         self.assertIn("spec_body_left_cm=3.45", debug)
@@ -845,6 +859,161 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIn(f"written_left_twips={expected_left}", debug)
         self.assertIn("tab_pos=None", debug)
         self.assertTrue(any("Body indent applied: left=" in line and "firstLine cleared" in line for line in summary.paragraph_logs))
+
+    def test_body_indent_hard_override_removes_numPr_and_makes_char_indent_paragraphs_identical(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body_a = make_paragraph("\u6709\u5b57\u5143\u55ae\u4f4d\u7e2e\u6392\u7684 14 pt \u5167\u6587", font_size_pt=14)
+        body_b = make_paragraph("\u6c92\u6709\u5b57\u5143\u55ae\u4f4d\u7e2e\u6392\u7684 14 pt \u5167\u6587", font_size_pt=14)
+        ind_a = add_ind_with_char_attrs(body_a)
+        ind_a.set(qn("leftChars"), "100")
+        ind_a.set(qn("firstLineChars"), "100")
+        add_tab_stop(body_a, pos="1990")
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body_a, body_b)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary)
+
+        expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
+        assert_body_indent_hard_override(self, body_a, expected_left)
+        assert_body_indent_hard_override(self, body_b, expected_left)
+        attrs = [
+            "left",
+            "start",
+            "firstLine",
+            "hanging",
+            "leftChars",
+            "startChars",
+            "firstLineChars",
+            "hangingChars",
+        ]
+        ind_a = body_a.find("./w:pPr/w:ind", NS)
+        ind_b = body_b.find("./w:pPr/w:ind", NS)
+        self.assertEqual(
+            {attr: ind_a.get(qn(attr)) for attr in attrs},
+            {attr: ind_b.get(qn(attr)) for attr in attrs},
+        )
+        self.assertIsNone(body_a.find("./w:pPr/w:tabs", NS))
+        self.assertIsNone(body_b.find("./w:pPr/w:tabs", NS))
+        self.assertIsNone(body_a.find("./w:pPr/w:numPr", NS))
+        self.assertIsNone(body_b.find("./w:pPr/w:numPr", NS))
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("removed_tabs=True", debug)
+        self.assertIn("removed_tabs=True", debug)
+
+    def test_body_plain_indent_spec_removes_numPr_when_hard_overriding(self):
+        p = make_paragraph("\u666e\u901a\u5167\u6587", font_size_pt=14)
+        pPr = p.find("./w:pPr", NS)
+        add_num_pr(p)
+
+        result = apply_indent_spec_to_pPr(pPr, TEMPLATE_OUTLINE_INDENTS[3], "body_plain")
+
+        expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
+        assert_body_indent_hard_override(self, p, expected_left)
+        self.assertEqual(result["removed_numPr"], "True")
+
+    def test_body_indent_keeps_matching_body_style_by_default(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph("\u9019\u662f affe \u6a23\u5f0f 14 pt \u5167\u6587", style="affe", font_size_pt=14)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary)
+
+        self.assertEqual(paragraph_style(body), "affe")
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("normalize_body_style_to_none=False", debug)
+        self.assertIn("paragraph_style_id_before=affe", debug)
+        self.assertIn("paragraph_style_id_after=affe", debug)
+        self.assertIn("body_style_normalized=False", debug)
+
+    def test_body_indent_can_normalize_body_style_to_none_when_enabled(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph("\u9019\u662f affe \u6a23\u5f0f 14 pt \u5167\u6587", style="affe", font_size_pt=14)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            normalize_body_style_to_none=True,
+        )
+
+        self.assertIsNone(paragraph_style(body))
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("normalize_body_style_to_none=True", debug)
+        self.assertIn("paragraph_style_id_after=none", debug)
+        self.assertIn("body_style_normalized=True", debug)
+
+    def test_body_indent_can_keep_original_body_style_when_normalization_is_disabled(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph("\u9019\u662f affe \u6a23\u5f0f 14 pt \u5167\u6587", style="affe", font_size_pt=14)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            normalize_body_style_to_none=False,
+        )
+
+        self.assertEqual(paragraph_style(body), "affe")
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[3]["body_left"])
+        debug = "\n".join(summary.body_indent_debug_logs)
+        self.assertIn("normalize_body_style_to_none=False", debug)
+        self.assertIn("paragraph_style_id_before=affe", debug)
+        self.assertIn("paragraph_style_id_after=affe", debug)
+        self.assertIn("body_style_normalized=False", debug)
+
+    def test_heading_is_not_normalized_to_default_text(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c", style="affe")
+        body = make_paragraph("\u9019\u662f 14 pt \u5167\u6587", style="affe", font_size_pt=14)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
+
+        fix_outline_paragraphs(root, include_tables=True, normalize_body_style_to_none=True)
+
+        self.assertEqual(paragraph_style(heading), "affe")
+        self.assertIsNone(paragraph_style(body))
+
+    def test_toc_and_table_paragraphs_are_not_normalized_to_default_text(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        toc = make_paragraph("\u76ee\u9304\u9805\u76ee", style="TOC1", font_size_pt=14)
+        tbl, table_body = make_table_paragraph("\u8868\u683c\u5167 affe \u5167\u6587")
+        pPr = table_body.find("./w:pPr", NS)
+        p_style = etree.SubElement(pPr, qn("pStyle"))
+        p_style.set(qn("val"), "affe")
+        body = make_paragraph("\u9019\u662f 14 pt \u5167\u6587", style="affe", font_size_pt=14)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, toc, tbl, body)
+
+        fix_outline_paragraphs(root, include_tables=True, normalize_body_style_to_none=True)
+
+        self.assertEqual(paragraph_style(toc), "TOC1")
+        self.assertEqual(paragraph_style(table_body), "affe")
+        self.assertIsNone(paragraph_style(body))
+
+    def test_skipped_chapter_three_body_indent_is_not_normalized_to_default_text(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("1. \u7b2c\u56db\u968e\u6a19\u984c")
+        body = make_paragraph("\u7ae0\u53c3\u5167 affe \u5167\u6587", style="affe", font_size_pt=14)
+        root = make_root(make_paragraph("\u58f9\u3001\u5e8f\u8a00"), marker, heading, body)
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            normalize_body_style_to_none=True,
+            skip_paragraph_ids={id(body)},
+        )
+
+        self.assertEqual(paragraph_style(body), "affe")
+        self.assertIsNone(paragraph_left_indent(body))
 
     def test_manual_numbering_prefix_suffix_spaces_are_removed(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
@@ -886,9 +1055,7 @@ class OutlineFixTests(unittest.TestCase):
         )
 
         expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
-        self.assertEqual(paragraph_left_indent(body), expected_left)
-        self.assertIsNone(paragraph_indent(body)[1])
-        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
+        assert_body_indent_hard_override(self, body, expected_left)
         self.assertIn("font_size_source=paragraph_style:DefaultText", "\n".join(summary.body_indent_debug_logs))
 
     def test_body_indent_direct_format_overrides_style_start_indent(self):
@@ -914,11 +1081,10 @@ class OutlineFixTests(unittest.TestCase):
         )
 
         expected = TEMPLATE_OUTLINE_INDENTS[2]["body_left"]
-        self.assertEqual(paragraph_left_indent(body), expected)
-        self.assertIsNone(paragraph_start_indent(body))
+        assert_body_indent_hard_override(self, body, expected)
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("paragraph_style_id=DefaultText", debug)
-        self.assertIn("written_start_twips=None", debug)
+        self.assertIn(f"written_start_twips={expected}", debug)
         self.assertIn("validation=ok", debug)
 
     def test_body_indent_uses_based_on_paragraph_style_font_size(self):
@@ -1162,9 +1328,7 @@ class OutlineFixTests(unittest.TestCase):
 
         body_14_ind = body_14.find("./w:pPr/w:ind", NS)
         body_12_ind = body_12.find("./w:pPr/w:ind", NS)
-        self.assertEqual(body_14_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
-        self.assertIsNone(body_14_ind.get(qn("hanging")))
-        assert_no_char_indent_attrs(self, body_14_ind)
+        assert_body_indent_hard_override(self, body_14, TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
         self.assertEqual(body_12_ind.get(qn("left")), "123")
         self.assertEqual(body_12_ind.get(qn("leftChars")), "99")
 
@@ -1182,8 +1346,7 @@ class OutlineFixTests(unittest.TestCase):
             indent_preface_paragraphs=True,
         )
 
-        self.assertEqual(paragraph_left_indent(body), PREFACE_OUTLINE_INDENTS[0]["body_left"])
-        self.assertIsNone(paragraph_indent(body)[1])
+        assert_body_indent_hard_override(self, body, PREFACE_OUTLINE_INDENTS[0]["body_left"])
         self.assertEqual(paragraph_outline(body), "2")
         self.assertEqual(summary.indented_preface_paragraphs, 2)
 
@@ -1199,8 +1362,7 @@ class OutlineFixTests(unittest.TestCase):
             indent_preface_paragraphs=True,
         )
 
-        self.assertEqual(paragraph_left_indent(body), PREFACE_OUTLINE_INDENTS[0]["body_left"])
-        self.assertIsNone(paragraph_indent(body)[1])
+        assert_body_indent_hard_override(self, body, PREFACE_OUTLINE_INDENTS[0]["body_left"])
         self.assertIsNone(paragraph_outline(body))
 
     def test_preface_body_does_not_align_when_only_preface_outline_is_enabled(self):

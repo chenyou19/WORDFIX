@@ -13,6 +13,7 @@ class ProcessOptions:
     normalize_with_word_com: bool = True
     enable_level1_level2_body_first_line_indent: bool = False
     word_com_check_body_font_when_xml_not_14: bool = False
+    normalize_body_style_to_none: bool = False
     skip_chapter_three_tables: bool = False
     skip_chapter_three_indents: bool = False
     skip_all_under_chapter_three: bool = False

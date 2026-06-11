@@ -37,6 +37,7 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         outline_preface_paragraphs=False if enable_default_actions else args.outline_preface,
         enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
         word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
+        normalize_body_style_to_none=args.normalize_body_style_to_none,
         skip_chapter_three_tables=skip_chapter_three_tables,
         skip_chapter_three_indents=skip_chapter_three_indents,
     )
@@ -137,6 +138,20 @@ def parse_args(argv: list[str]):
         help="Apply 560 twips first-line indent to plain body text under level 1 and level 2 headings",
     )
     parser.add_argument("--word-com-check-body-font", action="store_true", help="XML body font is not 14pt: ask Word COM to verify before applying body indent")
+    parser.add_argument(
+        "--normalize-body-style-to-none",
+        action="store_true",
+        dest="normalize_body_style_to_none",
+        default=False,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-normalize-body-style-to-none",
+        "--no-normalize-body-style-to-default-text",
+        action="store_false",
+        dest="normalize_body_style_to_none",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument(
         "--skip-special-layout-under-chapter-three",
         action="store_true",

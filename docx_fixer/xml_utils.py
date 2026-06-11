@@ -43,7 +43,7 @@ def remove_character_indent_attrs(ind) -> int:
     removed = 0
     for attr in CHAR_INDENT_ATTRS:
         attr_name = qn(attr)
-        if attr_name in ind.attrib:
+        if attr_name in ind.attrib and ind.get(attr_name) != "0":
             ind.attrib.pop(attr_name, None)
             removed += 1
     return removed
