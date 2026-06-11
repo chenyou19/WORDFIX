@@ -280,7 +280,10 @@ def process_tables_in_part(
             summary.skipped_first_page_tables += 1
             continue
 
-        if protected_context.is_table_protected(tbl, part_name):
+        if (
+            getattr(options, "skip_chapter_three_tables", False)
+            and protected_context.is_table_protected(tbl, part_name)
+        ):
             summary.table_log_records.append(
                 build_table_log_record(
                     part_name=part_name,

@@ -25,7 +25,7 @@ python main.py
 - 開啟縮排設定視窗，調整各層級的縮排預設值。
 - 視需要啟用序言處理、Word COM 字號確認等選項。
 
-`gui_app.py` 目前介面文字已正常，這次不特別更動 GUI 顯示內容。
+GUI 預設勾選 `參、價格形成之主要因素分析：表格不調整` 與 `參、價格形成之主要因素分析：縮排不調整`，兩者可獨立切換。
 
 ## CLI 使用方式
 
@@ -46,9 +46,9 @@ python main.py input.docx output.docx --table --color --paragraph
 - `--level1-level2-body-first-line-indent`：在第 1、2 層標題下的內文，額外套用首行縮排。
 - `--level2-body-first-line-indent`：相容舊參數名稱，作用同上。
 - `--word-com-check-body-font`：當 XML 判斷內文字號不是 14pt 時，改用 Word COM 再確認。
-- `--skip-all-under-chapter-three`：預設啟用；從 `參、價格形成之主要因素分析` 標題本身開始，到下一個同級第一層標題前，完全不調整該區段內容。
-- `--no-skip-all-under-chapter-three`：關閉上述參章保護，允許處理該區段內容。
-- `--skip-special-layout-under-chapter-three`：相容舊參數名稱，作用同 `--skip-all-under-chapter-three`，但語意上已不再只代表特殊表格版面。
+- `--skip-chapter-three-tables` / `--no-skip-chapter-three-tables`：控制 `參、價格形成之主要因素分析` 區段表格版面與底色是否跳過，預設跳過。
+- `--skip-chapter-three-indents` / `--no-skip-chapter-three-indents`：控制該區段段落縮排、tabs、首行縮排與 Word COM 內文縮排補救是否跳過，預設跳過。
+- `--skip-all-under-chapter-three`、`--no-skip-all-under-chapter-three`、`--skip-special-layout-under-chapter-three`：相容舊參數名稱，會映射到上述兩個新選項。
 - `--quiet`：減少終端輸出訊息。
 
 ## 主要處理選項說明
@@ -63,7 +63,7 @@ python main.py input.docx output.docx --table --color --paragraph
 - 第一個本文表格會依現有邏輯略過，不直接套用一般修正。
 - 儲存格數量過少的表格會依既有規則略過。
 - 欄數較少的表格會使用專案既有的特殊版面處理。
-- `參、價格形成之主要因素分析` 區段預設會完全跳過處理；從該標題本身開始，到下一個同級第一層標題前，段落、表格、底色、縮排、大綱、Word COM 補救與字元縮排清理都不會套用。CLI 需明確加上 `--no-skip-all-under-chapter-three` 才會處理該區段。
+- `參、價格形成之主要因素分析` 區段的表格與縮排保護可獨立控制。表格保護只跳過表格版面與底色修正；縮排保護只跳過段落縮排、firstLine、hanging、tabs、字元縮排清理與 Word COM 內文縮排補救，真正標題的 outline level 仍會恢復。
 
 ## 段落 / 大綱 / 縮排處理規則
 

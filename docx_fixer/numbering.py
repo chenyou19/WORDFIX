@@ -51,6 +51,9 @@ def force_clean_numbering_suffix_tabs(
     excluded_numbering_pairs: set[tuple[str, int]] | None = None,
     excluded_num_ids: set[str] | None = None,
     excluded_abstract_ids: set[str] | None = None,
+    included_numbering_pairs: set[tuple[str, int]] | None = None,
+    included_num_ids: set[str] | None = None,
+    included_abstract_ids: set[str] | None = None,
 ) -> bytes | None:
     """Force every numbering level to use no suffix separator and no list tab.
 
@@ -79,6 +82,9 @@ def force_clean_numbering_suffix_tabs(
     excluded_numbering_pairs = excluded_numbering_pairs or set()
     excluded_num_ids = excluded_num_ids or set()
     excluded_abstract_ids = excluded_abstract_ids or set()
+    included_numbering_pairs = included_numbering_pairs or set()
+    included_num_ids = included_num_ids or set()
+    included_abstract_ids = included_abstract_ids or set()
 
     num_to_abstract_id: dict[str, str] = {}
     abstract_to_num_ids: dict[str, set[str]] = {}
@@ -102,6 +108,17 @@ def force_clean_numbering_suffix_tabs(
         if abstract_id is not None:
             protected_abstract_levels.add((abstract_id, ilvl))
 
+    included_abstract_levels: set[tuple[str, int]] = set()
+    included_abstract_ids = set(included_abstract_ids)
+    for num_id in included_num_ids:
+        abstract_id = num_to_abstract_id.get(num_id)
+        if abstract_id is not None:
+            included_abstract_ids.add(abstract_id)
+    for num_id, ilvl in included_numbering_pairs:
+        abstract_id = num_to_abstract_id.get(num_id)
+        if abstract_id is not None:
+            included_abstract_levels.add((abstract_id, ilvl))
+
     if logs is not None:
         for abstract_id in sorted(protected_abstract_ids):
             num_ids = abstract_to_num_ids.get(abstract_id, set())
@@ -114,8 +131,25 @@ def force_clean_numbering_suffix_tabs(
                     f"protected_numIds={','.join(protected_num_ids)}; "
                     f"shared_numIds={','.join(shared_num_ids)}"
                 )
+            if abstract_id in included_abstract_ids:
+                included_num_ids_for_abstract = sorted(num_ids & included_num_ids)
+                logs.append(
+                    "FINAL_NUMBERING_SUFFIX_CLEAN_SHARED_BODY_HEADING_WINS: "
+                    f"abstractNumId={abstract_id}; "
+                    f"excluded_numIds={','.join(protected_num_ids) or 'none'}; "
+                    f"body_heading_numIds={','.join(included_num_ids_for_abstract) or 'unknown'}; "
+                    "reason=body_heading_numbering_must_not_keep_w:suff=tab"
+                )
 
     def should_skip_level(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
+        if abstract_id is not None and abstract_id in included_abstract_ids:
+            return False
+        if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in included_abstract_levels:
+            return False
+        if num_id is not None and num_id in included_num_ids:
+            return False
+        if num_id is not None and ilvl is not None and (num_id, ilvl) in included_numbering_pairs:
+            return False
         if abstract_id is not None and abstract_id in protected_abstract_ids:
             return True
         if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in protected_abstract_levels:

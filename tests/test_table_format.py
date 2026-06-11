@@ -306,7 +306,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_all_under_chapter_three=True,
+                skip_chapter_three_tables=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -319,7 +319,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; all table layout and color fixes skipped",
+                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; table layout and color fixes skipped by option skip_chapter_three_tables",
             )
             self.assertEqual(summary.table_log_records[2]["table_type"], "special_table")
             self.assertEqual(summary.table_log_records[2]["special_layout_used"], True)
@@ -361,7 +361,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_all_under_chapter_three=True,
+                skip_chapter_three_tables=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -406,7 +406,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_all_under_chapter_three=True,
+                skip_chapter_three_tables=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -419,7 +419,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; all table layout and color fixes skipped",
+                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; table layout and color fixes skipped by option skip_chapter_three_tables",
             )
 
             with ZipFile(output_docx) as zin:
@@ -461,7 +461,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_all_under_chapter_three=True,
+                skip_chapter_three_tables=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -474,7 +474,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; all table layout and color fixes skipped",
+                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; table layout and color fixes skipped by option skip_chapter_three_tables",
             )
 
             with ZipFile(output_docx) as zin:
@@ -511,7 +511,7 @@ class TableFormatTests(unittest.TestCase):
                 fix_color=False,
                 fix_paragraph=False,
                 normalize_with_word_com=False,
-                skip_all_under_chapter_three=True,
+                skip_chapter_three_tables=True,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
@@ -718,7 +718,7 @@ class TableFormatTests(unittest.TestCase):
                     False,
                     False,
                     normalize_with_word_com=False,
-                    skip_all_under_chapter_three=True,
+                    skip_chapter_three_tables=True,
                 ),
             )
 

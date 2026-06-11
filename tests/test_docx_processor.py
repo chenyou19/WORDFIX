@@ -635,6 +635,60 @@ def make_chapter_three_skip_document_xml() -> bytes:
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_chapter_three_options_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    body.append(make_table([5, 5]))
+    add_test_paragraph(
+        body,
+        "\u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790",
+        outline=4,
+        ind_attrs={"left": "321", "leftChars": "111", "firstLineChars": "222"},
+        font_size_pt=14,
+    )
+    add_test_paragraph(
+        body,
+        "\u4e00\u3001\u53c3\u7ae0\u5b50\u6a19",
+        outline=5,
+        ind_attrs={"left": "654", "leftChars": "333", "firstLineChars": "444"},
+        font_size_pt=14,
+    )
+    add_test_paragraph(
+        body,
+        "\u53c3\u7ae0\u666e\u901a\u5167\u6587",
+        outline=6,
+        ind_attrs={"left": "777", "leftChars": "555", "firstLineChars": "666"},
+        font_size_pt=14,
+    )
+    body.append(make_table([3, 3]))
+    add_test_paragraph(body, "\u8086\u3001\u7b2c\u56db\u7ae0")
+    add_test_paragraph(
+        body,
+        "\u8086\u7ae0\u666e\u901a\u5167\u6587",
+        ind_attrs={"left": "999", "leftChars": "888", "firstLineChars": "777"},
+        font_size_pt=14,
+    )
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_manual_heading_with_numpr_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(
+        body,
+        "\u58f9\u3001\u5e8f\u8a0037",
+        num_id="42",
+        ilvl=0,
+        ind_attrs={"left": "2279", "hanging": "420"},
+        tab_pos="1200",
+    )
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def read_part_root(path: Path, part_name: str):
     with ZipFile(path, "r") as zf:
         return etree.fromstring(zf.read(part_name))
@@ -812,7 +866,7 @@ class DocxProcessorTests(unittest.TestCase):
         self.assertIn("2", context.chapter_three_abstract_ids)
         self.assertEqual(context.chapter_three_style_ids, {"ChapterHeading", "ChapterBody"})
 
-    def test_skip_all_under_chapter_three_preserves_paragraphs_tables_and_char_indents(self):
+    def test_skip_chapter_three_indents_restores_heading_outline_but_skips_formatting_and_word_com(self):
         with tempfile.TemporaryDirectory() as tmp:
             input_docx = Path(tmp) / "input.docx"
             output_docx = Path(tmp) / "output.docx"
@@ -827,7 +881,8 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_paragraph=True,
                     remove_all_outline_levels=True,
                     normalize_with_word_com=False,
-                    skip_all_under_chapter_three=True,
+                    skip_chapter_three_tables=True,
+                    skip_chapter_three_indents=True,
                 ),
             )
 
@@ -838,14 +893,18 @@ class DocxProcessorTests(unittest.TestCase):
             chapter_body_ind = paragraphs[4].find("./w:pPr/w:ind", NS)
             after_chapter_body_ind = paragraphs[6].find("./w:pPr/w:ind", NS)
 
-            self.assertEqual(paragraphs[2].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "4")
-            self.assertEqual(paragraphs[3].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "5")
-            self.assertEqual(paragraphs[4].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "6")
+            self.assertEqual(paragraphs[2].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "0")
+            self.assertEqual(paragraphs[3].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "1")
+            self.assertEqual(paragraphs[4].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "9")
             self.assertEqual(chapter_heading_ind.get(qn("left")), "321")
+            self.assertEqual(chapter_child_ind.get(qn("left")), "654")
+            self.assertEqual(chapter_body_ind.get(qn("left")), "777")
             self.assertEqual(chapter_heading_ind.get(qn("leftChars")), "111")
+            self.assertEqual(chapter_heading_ind.get(qn("firstLineChars")), "222")
             self.assertEqual(chapter_child_ind.get(qn("leftChars")), "333")
+            self.assertEqual(chapter_child_ind.get(qn("firstLineChars")), "444")
             self.assertEqual(chapter_body_ind.get(qn("leftChars")), "555")
-            self.assertIsNotNone(chapter_body_ind.get(qn("firstLineChars")))
+            self.assertEqual(chapter_body_ind.get(qn("firstLineChars")), "666")
 
             self.assertEqual(paragraphs[5].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "0")
             self.assertIsNone(after_chapter_body_ind.get(qn("leftChars")))
@@ -875,9 +934,137 @@ class DocxProcessorTests(unittest.TestCase):
                 "skipped chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790 content; no formatting applied",
                 joined_logs,
             )
+            self.assertIn("restored protected chapter outline level only", joined_logs)
             self.assertIn("CHAR_INDENT_SANITIZE_SKIP_EXCLUDED", joined_logs)
 
-    def test_final_numbering_cleanup_skips_shared_chapter_three_definition(self):
+    def test_manual_heading_with_existing_numpr_removes_list_numbering_tabs_and_keeps_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            make_docx(
+                input_docx,
+                make_manual_heading_with_numpr_document_xml(),
+                numbering_xml=make_heading_suffix_numbering_xml(
+                    suffix="tab",
+                    include_tabs=True,
+                    lvl_text_value="%1. \t",
+                    tab_pos="1200",
+                ),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            root = read_document_root(output_docx)
+            paragraphs = root.xpath(".//w:p[not(ancestor::w:tbl)]", namespaces=NS)
+            target = paragraphs[2]
+            self.assertEqual("".join(target.xpath(".//w:t/text()", namespaces=NS)), "\u58f9\u3001\u5e8f\u8a0037")
+            self.assertIsNone(target.find("./w:pPr/w:numPr", NS))
+            self.assertIsNone(target.find("./w:pPr/w:tabs", NS))
+
+            before_record = next(
+                record for record in summary.heading_suffix_before_records
+                if record.get("heading_text") == "\u58f9\u3001\u5e8f\u8a0037"
+            )
+            after_record = next(
+                record for record in summary.heading_suffix_after_records
+                if record.get("heading_text") == "\u58f9\u3001\u5e8f\u8a0037"
+            )
+            self.assertEqual(before_record["source"], "manual_text")
+            self.assertTrue(before_record["paragraph_has_numPr"])
+            self.assertNotEqual(before_record["paragraph_tabs"], "none")
+            self.assertEqual(before_record["numbering_suff"], "tab")
+            self.assertEqual(after_record["source"], "manual_text")
+            self.assertFalse(after_record["paragraph_has_numPr"])
+            self.assertEqual(after_record["paragraph_tabs"], "none")
+            self.assertEqual(after_record["raw_separator_repr"], "''")
+            self.assertEqual(after_record["tab_count"], 0)
+
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            for lvl in numbering_root.xpath("./w:abstractNum/w:lvl | ./w:num/w:lvlOverride/w:lvl", namespaces=NS):
+                self.assertEqual(lvl.find("w:suff", NS).get(qn("val")), "nothing")
+                self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
+                self.assertFalse(lvl.find("w:lvlText", NS).get(qn("val")).endswith((" ", "\t", "\u3000")))
+
+    def test_chapter_three_table_and_indent_options_are_independent(self):
+        cases = [
+            (True, True, "skipped_chapter_three_table", True),
+            (True, False, "skipped_chapter_three_table", False),
+            (False, True, "special_table", True),
+            (False, False, "special_table", False),
+        ]
+
+        for skip_tables, skip_indents, expected_table_type, expect_indent_skipped in cases:
+            with self.subTest(skip_tables=skip_tables, skip_indents=skip_indents):
+                with tempfile.TemporaryDirectory() as tmp:
+                    input_docx = Path(tmp) / "input.docx"
+                    output_docx = Path(tmp) / "output.docx"
+                    make_docx(input_docx, make_chapter_three_options_document_xml())
+
+                    summary = fix_docx_fast(
+                        input_docx,
+                        output_docx,
+                        ProcessOptions(
+                            fix_table_layout=True,
+                            fix_color=False,
+                            fix_paragraph=True,
+                            remove_all_outline_levels=True,
+                            normalize_with_word_com=False,
+                            skip_chapter_three_tables=skip_tables,
+                            skip_chapter_three_indents=skip_indents,
+                        ),
+                    )
+
+                    root = read_document_root(output_docx)
+                    paragraphs = root.xpath(".//w:p[not(ancestor::w:tbl)]", namespaces=NS)
+                    tables = root.xpath(".//w:tbl", namespaces=NS)
+                    chapter_heading_ind = paragraphs[2].find("./w:pPr/w:ind", NS)
+                    chapter_child_ind = paragraphs[3].find("./w:pPr/w:ind", NS)
+                    chapter_body_ind = paragraphs[4].find("./w:pPr/w:ind", NS)
+
+                    self.assertEqual(summary.table_log_records[1]["table_type"], expected_table_type)
+                    self.assertNotIn(
+                        "all table layout and color fixes skipped",
+                        "\n".join(str(record.get("reason")) for record in summary.table_log_records),
+                    )
+                    if skip_tables:
+                        self.assertIsNone(tables[1].find("w:tblPr", NS))
+                    else:
+                        self.assertIsNotNone(tables[1].find("w:tblPr", NS))
+
+                    self.assertEqual(paragraphs[2].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "0")
+                    self.assertEqual(paragraphs[3].find("./w:pPr/w:outlineLvl", NS).get(qn("val")), "1")
+
+                    if expect_indent_skipped:
+                        self.assertEqual(chapter_heading_ind.get(qn("left")), "321")
+                        self.assertEqual(chapter_child_ind.get(qn("left")), "654")
+                        self.assertEqual(chapter_body_ind.get(qn("left")), "777")
+                        self.assertEqual(chapter_heading_ind.get(qn("leftChars")), "111")
+                        self.assertEqual(chapter_body_ind.get(qn("firstLineChars")), "666")
+                        self.assertFalse(any(
+                            "\u53c3\u7ae0" in str(record.get("text_preview"))
+                            for record in summary.body_indent_records
+                        ))
+                    else:
+                        self.assertEqual(chapter_heading_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[0]["left"])
+                        self.assertEqual(chapter_child_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["left"])
+                        self.assertEqual(chapter_body_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
+                        self.assertIsNone(chapter_heading_ind.get(qn("leftChars")))
+                        self.assertIsNone(chapter_body_ind.get(qn("firstLineChars")))
+                        self.assertTrue(any(
+                            "\u53c3\u7ae0" in str(record.get("text_preview"))
+                            for record in summary.body_indent_records
+                        ))
+
+    def test_final_numbering_cleanup_cleans_shared_chapter_three_body_heading_definition(self):
         with tempfile.TemporaryDirectory() as tmp:
             input_docx = Path(tmp) / "input.docx"
             output_docx = Path(tmp) / "output.docx"
@@ -895,7 +1082,7 @@ class DocxProcessorTests(unittest.TestCase):
                     fix_color=False,
                     fix_paragraph=False,
                     normalize_with_word_com=False,
-                    skip_all_under_chapter_three=True,
+                    skip_chapter_three_indents=True,
                 ),
             )
 
@@ -904,16 +1091,17 @@ class DocxProcessorTests(unittest.TestCase):
                 "./w:abstractNum[@w:abstractNumId='1']/w:lvl",
                 namespaces=NS,
             )[0]
-            self.assertEqual(protected_lvl.find("w:suff", NS).get(qn("val")), "tab")
-            self.assertIsNotNone(protected_lvl.find("./w:pPr/w:tabs", NS))
-            self.assertEqual(protected_lvl.find("w:lvlText", NS).get(qn("val")), "%1\u3001 ")
+            self.assertEqual(protected_lvl.find("w:suff", NS).get(qn("val")), "nothing")
+            self.assertIsNone(protected_lvl.find("./w:pPr/w:tabs", NS))
+            self.assertEqual(protected_lvl.find("w:lvlText", NS).get(qn("val")), "%1\u3001")
 
             logs = "\n".join(summary.numbering_xml_logs)
             self.assertIn("CHAPTER_THREE_SKIP_IDS collected=2", logs)
             self.assertIn("FINAL_NUMBERING_SUFFIX_CLEAN_SKIP_PROTECTED_SHARED_DEFINITION", logs)
+            self.assertIn("FINAL_NUMBERING_SUFFIX_CLEAN_SHARED_BODY_HEADING_WINS", logs)
             self.assertIn("protected_numIds=42", logs)
             self.assertIn("shared_numIds=99", logs)
-            self.assertIn("levels_skipped_protected=1", logs)
+            self.assertIn("levels_skipped_protected=0", logs)
 
     def test_special_table_uses_previous_paragraph_text_start_and_page_right_boundary(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})

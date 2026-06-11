@@ -210,6 +210,22 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
                 f"number_token_after: {_format_suffix_record_value(after_record, 'number_token')}",
                 f"suffix_before: {_format_suffix_record_value(before_record, 'suffix')}",
                 f"suffix_after: {_format_suffix_record_value(after_record, 'suffix')}",
+                f"paragraph_has_numPr_before: {_format_suffix_record_value(before_record, 'paragraph_has_numPr')}",
+                f"paragraph_has_numPr_after: {_format_suffix_record_value(after_record, 'paragraph_has_numPr')}",
+                f"paragraph_tabs_before: {_format_suffix_record_value(before_record, 'paragraph_tabs')}",
+                f"paragraph_tabs_after: {_format_suffix_record_value(after_record, 'paragraph_tabs')}",
+                f"numId_before: {_format_suffix_record_value(before_record, 'numId')}",
+                f"numId_after: {_format_suffix_record_value(after_record, 'numId')}",
+                f"ilvl_before: {_format_suffix_record_value(before_record, 'ilvl')}",
+                f"ilvl_after: {_format_suffix_record_value(after_record, 'ilvl')}",
+                f"numbering_suff_before: {_format_suffix_record_value(before_record, 'numbering_suff')}",
+                f"numbering_suff_after: {_format_suffix_record_value(after_record, 'numbering_suff')}",
+                f"numbering_tab_pos_before: {_format_suffix_record_value(before_record, 'numbering_tab_pos')}",
+                f"numbering_tab_pos_after: {_format_suffix_record_value(after_record, 'numbering_tab_pos')}",
+                f"style_numPr_before: {_format_suffix_record_value(before_record, 'style_numPr')}",
+                f"style_numPr_after: {_format_suffix_record_value(after_record, 'style_numPr')}",
+                f"style_tabs_before: {_format_suffix_record_value(before_record, 'style_tabs')}",
+                f"style_tabs_after: {_format_suffix_record_value(after_record, 'style_tabs')}",
             ]
         )
 

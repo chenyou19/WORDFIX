@@ -34,29 +34,45 @@ class CliOptionTests(unittest.TestCase):
             "--level1-level2-body-first-line-indent",
             "--word-com-check-body-font",
             "--skip-special-layout-under-chapter-three",
-            "--skip-all-under-chapter-three",
+            "--skip-chapter-three-tables",
+            "--skip-chapter-three-indents",
         ])
 
         self.assertTrue(args.level1_level2_body_first_line_indent)
         self.assertTrue(args.word_com_check_body_font)
         self.assertTrue(args.skip_special_layout_under_chapter_three)
-        self.assertTrue(args.skip_all_under_chapter_three)
+        self.assertTrue(args.skip_chapter_three_tables)
+        self.assertTrue(args.skip_chapter_three_indents)
 
-    def test_chapter_three_protection_is_enabled_by_default(self):
+    def test_chapter_three_table_and_indent_skips_are_enabled_by_default(self):
         args = parse_args(["input.docx", "output.docx"])
         options = _build_process_options(args)
 
-        self.assertTrue(args.skip_all_under_chapter_three)
-        self.assertTrue(options.skip_all_under_chapter_three)
+        self.assertTrue(args.skip_chapter_three_tables)
+        self.assertTrue(args.skip_chapter_three_indents)
+        self.assertTrue(options.skip_chapter_three_tables)
+        self.assertTrue(options.skip_chapter_three_indents)
 
-    def test_no_skip_all_under_chapter_three_disables_protection(self):
+    def test_new_chapter_three_options_can_be_disabled_independently(self):
+        args = parse_args([
+            "input.docx",
+            "output.docx",
+            "--no-skip-chapter-three-tables",
+        ])
+        options = _build_process_options(args)
+
+        self.assertFalse(options.skip_chapter_three_tables)
+        self.assertTrue(options.skip_chapter_three_indents)
+
+    def test_no_skip_all_under_chapter_three_disables_both_legacy_protections(self):
         args = parse_args(["input.docx", "output.docx", "--no-skip-all-under-chapter-three"])
         options = _build_process_options(args)
 
         self.assertFalse(args.skip_all_under_chapter_three)
-        self.assertFalse(options.skip_all_under_chapter_three)
+        self.assertFalse(options.skip_chapter_three_tables)
+        self.assertFalse(options.skip_chapter_three_indents)
 
-    def test_old_special_layout_alias_maps_to_chapter_three_protection(self):
+    def test_old_special_layout_alias_maps_to_both_chapter_three_options(self):
         args = parse_args([
             "input.docx",
             "output.docx",
@@ -66,7 +82,8 @@ class CliOptionTests(unittest.TestCase):
         options = _build_process_options(args)
 
         self.assertTrue(args.skip_special_layout_under_chapter_three)
-        self.assertTrue(options.skip_all_under_chapter_three)
+        self.assertTrue(options.skip_chapter_three_tables)
+        self.assertTrue(options.skip_chapter_three_indents)
 
     def test_old_level_two_body_indent_argument_is_kept_as_alias(self):
         args = parse_args(["input.docx", "output.docx", "--level2-body-first-line-indent"])

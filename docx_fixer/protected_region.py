@@ -349,10 +349,46 @@ def collect_toc_numbering_exclusions(
     return pairs, num_ids, abstract_ids
 
 
+def collect_body_heading_paragraph_ids(
+    document_root,
+    toc_paragraph_ids: set[int],
+    *,
+    numbering_level_lookup,
+    style_numbering_lookup,
+    paragraphs=None,
+) -> set[int]:
+    del document_root
+    heading_ids: set[int] = set()
+    toc_ids = toc_paragraph_ids or set()
+    paragraphs = paragraphs or []
+
+    for p in paragraphs:
+        paragraph_id = id(p)
+        if paragraph_id in toc_ids:
+            continue
+        if p.xpath("ancestor::w:tbl", namespaces=NS):
+            continue
+
+        text = paragraph_text(p)
+        num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
+        level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
+
+        if level is None:
+            manual = detect_manual_numbering_prefix(text.strip())
+            if manual is not None:
+                level = manual[0]
+
+        if level is not None and 0 <= level <= 8:
+            heading_ids.add(paragraph_id)
+
+    return heading_ids
+
+
 @dataclass
 class ProtectedRegionContext:
     document_toc_paragraph_ids: set[int] = field(default_factory=set)
     document_chapter_three_paragraph_ids: set[int] = field(default_factory=set)
+    document_body_heading_paragraph_ids: set[int] = field(default_factory=set)
     toc_numbering_pairs: set[tuple[str, int]] = field(default_factory=set)
     toc_num_ids: set[str] = field(default_factory=set)
     toc_abstract_ids: set[str] = field(default_factory=set)
@@ -360,6 +396,9 @@ class ProtectedRegionContext:
     chapter_three_num_ids: set[str] = field(default_factory=set)
     chapter_three_abstract_ids: set[str] = field(default_factory=set)
     chapter_three_style_ids: set[str] = field(default_factory=set)
+    body_heading_numbering_pairs: set[tuple[str, int]] = field(default_factory=set)
+    body_heading_num_ids: set[str] = field(default_factory=set)
+    body_heading_abstract_ids: set[str] = field(default_factory=set)
     _document_paragraph_refs: list = field(default_factory=list, repr=False)
 
     @classmethod
@@ -395,6 +434,25 @@ class ProtectedRegionContext:
             toc_num_ids=toc_num_ids,
             toc_abstract_ids=toc_abstract_ids,
             _document_paragraph_refs=list(paragraphs),
+        )
+
+        context.document_body_heading_paragraph_ids = collect_body_heading_paragraph_ids(
+            document_root,
+            toc_paragraph_ids,
+            numbering_level_lookup=numbering_level_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+            paragraphs=paragraphs,
+        )
+        (
+            context.body_heading_numbering_pairs,
+            context.body_heading_num_ids,
+            context.body_heading_abstract_ids,
+        ) = collect_toc_numbering_exclusions(
+            document_root,
+            context.document_body_heading_paragraph_ids,
+            style_numbering_lookup,
+            numbering_xml,
+            paragraphs=paragraphs,
         )
 
         if not protect_chapter_three:
@@ -450,6 +508,11 @@ class ProtectedRegionContext:
             return None
         return self.document_chapter_three_paragraph_ids
 
+    def toc_paragraph_ids_for_part(self, part_name: str) -> set[int] | None:
+        if part_name != "word/document.xml" or not self.document_toc_paragraph_ids:
+            return None
+        return self.document_toc_paragraph_ids
+
     def sanitize_excluded_paragraph_ids_for_part(self, part_name: str) -> set[int] | None:
         if part_name != "word/document.xml":
             return None
@@ -473,7 +536,10 @@ class ProtectedRegionContext:
 
     def protected_reason(self, item_type: str = "content") -> str:
         del item_type
-        return "under chapter 參、價格形成之主要因素分析; all table layout and color fixes skipped"
+        return (
+            "under chapter 參、價格形成之主要因素分析; "
+            "table layout and color fixes skipped by option skip_chapter_three_tables"
+        )
 
     @property
     def log_reason(self) -> str:

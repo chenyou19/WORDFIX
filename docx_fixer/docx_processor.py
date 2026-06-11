@@ -27,6 +27,7 @@ from .outline import (
     force_all_paragraphs_to_body_outline_level,
     get_auto_number_identity,
     remove_all_outline_levels_from_any_root,
+    restore_outline_levels_for_protected_paragraphs,
     should_skip_style_numbering,
 )
 from .path_utils import is_same_file_path
@@ -39,7 +40,7 @@ from .stop_controller import StopController
 from .style_resolver import build_style_font_size_lookup
 from .table_pipeline import process_tables_in_part
 from . import word_com_indent
-from .xml_utils import paragraph_text, remove_character_indent_attrs_from_root
+from .xml_utils import paragraph_text, qn, remove_character_indent_attrs_from_root
 
 
 
@@ -110,6 +111,80 @@ def _twips_to_log_cm(value: object) -> float | None:
         return None
 
 
+def _tabs_summary_from_pPr(pPr) -> str:
+    if pPr is None:
+        return "none"
+    tabs = pPr.findall("./w:tabs/w:tab", NS)
+    if not tabs:
+        return "none"
+    values = []
+    for tab in tabs:
+        pos = tab.get(qn("pos")) or "unknown"
+        val = tab.get(qn("val")) or "unknown"
+        values.append(f"{val}@{pos}")
+    return ",".join(values)
+
+
+def _style_tabs_lookup(styles_xml: bytes | None) -> dict[str, str]:
+    if not styles_xml:
+        return {}
+    try:
+        root = etree.fromstring(styles_xml)
+    except Exception:
+        return {}
+    lookup: dict[str, str] = {}
+    for style in root.xpath("./w:style[@w:type='paragraph']", namespaces=NS):
+        style_id = style.get(qn("styleId"))
+        if not style_id:
+            continue
+        lookup[style_id] = _tabs_summary_from_pPr(style.find("./w:pPr", NS))
+    return lookup
+
+
+def _numbering_context_details(
+    p,
+    *,
+    numbering_format_lookup,
+    style_numbering_lookup,
+    style_tabs_lookup,
+) -> dict[str, object]:
+    pPr = p.find("./w:pPr", NS)
+    paragraph_num_pr = pPr.find("w:numPr", NS) if pPr is not None else None
+    paragraph_num_id, paragraph_ilvl = get_auto_number_identity(p)
+    style_id = None
+    style_el = p.find("./w:pPr/w:pStyle", NS)
+    if style_el is not None:
+        style_id = style_el.get(qn("val"))
+
+    style_num_id = None
+    style_ilvl = None
+    if style_id and style_numbering_lookup:
+        style_num_id, style_ilvl = style_numbering_lookup.get(style_id, (None, None))
+
+    effective_num_id = paragraph_num_id if paragraph_num_id is not None else style_num_id
+    effective_ilvl = paragraph_ilvl if paragraph_num_id is not None else style_ilvl
+    level_format = (
+        numbering_format_lookup.get((effective_num_id, effective_ilvl), {})
+        if effective_num_id is not None and effective_ilvl is not None
+        else {}
+    )
+    style_num_pr = (
+        f"{style_num_id}:{style_ilvl}"
+        if style_num_id is not None and style_ilvl is not None
+        else "none"
+    )
+    return {
+        "paragraph_has_numPr": paragraph_num_pr is not None,
+        "paragraph_tabs": _tabs_summary_from_pPr(pPr),
+        "numId": effective_num_id,
+        "ilvl": effective_ilvl,
+        "numbering_suff": level_format.get("suff"),
+        "numbering_tab_pos": level_format.get("tab_pos"),
+        "style_numPr": style_num_pr,
+        "style_tabs": style_tabs_lookup.get(style_id or "", "none"),
+    }
+
+
 def _manual_suffix_details(text: str, prefix: str) -> dict[str, object]:
     stripped = text.lstrip()
     prefix_start = len(text) - len(stripped)
@@ -162,6 +237,8 @@ def _auto_suffix_details(
         "effective_suffix": effective_suffix,
         "numId": num_id,
         "ilvl": ilvl,
+        "numbering_suff": suffix,
+        "numbering_tab_pos": tab_pos,
         "numFmt": level_format.get("numFmt"),
         "lvlText": lvl_text,
         "lvlText_has_trailing_space": isinstance(lvl_text, str) and lvl_text.endswith((" ", "\t", "\u3000")),
@@ -187,6 +264,7 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
         numbering_level_lookup = build_numbering_level_lookup(numbering_xml)
         numbering_format_lookup = build_numbering_format_lookup(numbering_xml)
         style_numbering_lookup = build_style_numbering_lookup(styles_xml)
+        style_tabs_lookup = _style_tabs_lookup(styles_xml)
 
         for part_name in sorted(name for name in names if should_process_part(name)):
             try:
@@ -208,8 +286,20 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
                 source = None
                 number_token = None
                 details: dict[str, object] | None = None
+                context_details = _numbering_context_details(
+                    p,
+                    numbering_format_lookup=numbering_format_lookup,
+                    style_numbering_lookup=style_numbering_lookup,
+                    style_tabs_lookup=style_tabs_lookup,
+                )
 
-                if has_auto_numbering(p):
+                manual = detect_manual_numbering_prefix(text)
+                if manual is not None:
+                    level, number_token = manual
+                    source = "manual_text"
+                    details = _manual_suffix_details(text, number_token)
+
+                if level is None and has_auto_numbering(p):
                     num_id, ilvl = get_auto_number_identity(p)
                     level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
                     if level is not None:
@@ -222,13 +312,6 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
                     if level is not None:
                         source = "auto_numbering_xml"
                         details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup)
-
-                if level is None:
-                    manual = detect_manual_numbering_prefix(text)
-                    if manual is not None:
-                        level, number_token = manual
-                        source = "manual_text"
-                        details = _manual_suffix_details(text, number_token)
 
                 if level is None or source is None or details is None:
                     continue
@@ -246,6 +329,7 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
                         "outline_level": level,
                         "heading_text": text,
                         "number_token": number_token,
+                        **context_details,
                         **details,
                     }
                 )
@@ -308,9 +392,13 @@ def fix_docx_fast(
         if "word/document.xml" in zin.namelist():
             try:
                 document_root_for_toc = etree.fromstring(zin.read("word/document.xml"), parser)
+                protect_chapter_three = (
+                    options.skip_chapter_three_tables
+                    or options.skip_chapter_three_indents
+                )
                 protected_context = ProtectedRegionContext.from_document(
                     document_root_for_toc,
-                    protect_chapter_three=options.skip_all_under_chapter_three,
+                    protect_chapter_three=protect_chapter_three,
                     numbering_level_lookup=numbering_level_lookup,
                     numbering_format_lookup=original_numbering_format_lookup,
                     style_numbering_lookup=style_numbering_lookup,
@@ -320,16 +408,26 @@ def fix_docx_fast(
             except Exception:
                 document_root_for_toc = None
                 protected_context = ProtectedRegionContext()
-        excluded_numbering_pairs = protected_context.excluded_numbering_pairs
-        excluded_num_ids = protected_context.excluded_num_ids
-        excluded_abstract_ids = protected_context.excluded_abstract_ids
+        indent_excluded_numbering_pairs = set(protected_context.toc_numbering_pairs)
+        indent_excluded_num_ids = set(protected_context.toc_num_ids)
+        indent_excluded_abstract_ids = set(protected_context.toc_abstract_ids)
+        indent_excluded_style_ids: set[str] = set()
+        if options.skip_chapter_three_indents:
+            indent_excluded_numbering_pairs.update(protected_context.chapter_three_numbering_pairs)
+            indent_excluded_num_ids.update(protected_context.chapter_three_num_ids)
+            indent_excluded_abstract_ids.update(protected_context.chapter_three_abstract_ids)
+            indent_excluded_style_ids.update(protected_context.chapter_three_style_ids)
+
+        final_suffix_excluded_numbering_pairs = protected_context.excluded_numbering_pairs
+        final_suffix_excluded_num_ids = protected_context.excluded_num_ids
+        final_suffix_excluded_abstract_ids = protected_context.excluded_abstract_ids
         formatted_numbering_xml = (
             apply_numbering_outline_format(
                 numbering_xml,
                 change_logs=summary.numbering_xml_logs,
-                excluded_numbering_pairs=excluded_numbering_pairs,
-                excluded_num_ids=excluded_num_ids,
-                excluded_abstract_ids=excluded_abstract_ids,
+                excluded_numbering_pairs=indent_excluded_numbering_pairs,
+                excluded_num_ids=indent_excluded_num_ids,
+                excluded_abstract_ids=indent_excluded_abstract_ids,
             )
             if options.fix_paragraph
             else numbering_xml
@@ -353,9 +451,20 @@ def fix_docx_fast(
             root = None
             if item.filename == "word/document.xml" and document_root_for_toc is not None:
                 root = document_root_for_toc
-            chapter_three_exclude_paragraph_ids = protected_context.chapter_three_paragraph_ids_for_part(
+            outline_clear_exclude_paragraph_ids = protected_context.toc_paragraph_ids_for_part(item.filename)
+            chapter_three_paragraph_ids = protected_context.chapter_three_paragraph_ids_for_part(
                 item.filename
             )
+            indent_skip_paragraph_ids = (
+                chapter_three_paragraph_ids
+                if options.skip_chapter_three_indents
+                else None
+            )
+            sanitize_exclude_paragraph_ids = outline_clear_exclude_paragraph_ids
+            if options.skip_chapter_three_indents and chapter_three_paragraph_ids:
+                sanitize_ids = set(sanitize_exclude_paragraph_ids or set())
+                sanitize_ids.update(chapter_three_paragraph_ids)
+                sanitize_exclude_paragraph_ids = sanitize_ids
 
             if options.remove_all_outline_levels and should_remove_outline_part(item.filename):
                 if progress_callback:
@@ -370,10 +479,21 @@ def fix_docx_fast(
                         root,
                         stop=stop,
                         summary=summary,
-                        exclude_paragraph_ids=chapter_three_exclude_paragraph_ids,
+                        exclude_paragraph_ids=outline_clear_exclude_paragraph_ids,
+                    )
+                    restore_outline_levels_for_protected_paragraphs(
+                        root,
+                        indent_skip_paragraph_ids,
+                        toc_paragraph_ids=outline_clear_exclude_paragraph_ids,
+                        stop=stop,
+                        numbering_level_lookup=numbering_level_lookup,
+                        style_numbering_lookup=style_numbering_lookup,
+                        change_logs=summary.paragraph_logs,
+                        part_name=item.filename,
                     )
                 elif (
                     item.filename == "word/numbering.xml"
+                    and options.skip_chapter_three_indents
                     and protected_context.chapter_three_abstract_ids
                 ):
                     summary.numbering_xml_logs.append(
@@ -402,7 +522,7 @@ def fix_docx_fast(
                     )
                 data = formatted_numbering_xml or data
                 if options.remove_all_outline_levels:
-                    if protected_context.chapter_three_abstract_ids:
+                    if options.skip_chapter_three_indents and protected_context.chapter_three_abstract_ids:
                         summary.numbering_xml_logs.append(
                             "WARNING: chapter 參 uses numbering definitions excluded from "
                             "remove_all_outline_levels; numbering.xml normalization may still affect shared definitions"
@@ -428,7 +548,7 @@ def fix_docx_fast(
                     numbering_level_lookup=numbering_level_lookup,
                     style_numbering_lookup=style_numbering_lookup,
                     change_logs=summary.numbering_xml_logs,
-                    excluded_style_ids=protected_context.chapter_three_style_ids,
+                    excluded_style_ids=indent_excluded_style_ids,
                 )
                 data = etree.tostring(
                     root,
@@ -474,7 +594,7 @@ def fix_docx_fast(
                         outline_preface_paragraphs=options.outline_preface_paragraphs,
                         enable_level1_level2_body_first_line_indent=options.enable_level1_level2_body_first_line_indent,
                         word_com_check_body_font_when_xml_not_14=options.word_com_check_body_font_when_xml_not_14,
-                        skip_paragraph_ids=chapter_three_exclude_paragraph_ids,
+                        skip_paragraph_ids=indent_skip_paragraph_ids,
                     )
                     summary.paragraphs += changed_paragraphs
 
@@ -505,26 +625,23 @@ def fix_docx_fast(
             if should_sanitize_indent_unit_part(item.filename):
                 if root is None:
                     root = etree.fromstring(data, parser)
-                exclude_paragraph_ids = protected_context.sanitize_excluded_paragraph_ids_for_part(
-                    item.filename
-                )
                 if item.filename == "word/styles.xml":
                     removed_char_indent_attrs = remove_character_indent_attrs_from_styles_root_excluding_protected(
                         root,
-                        excluded_style_ids=protected_context.chapter_three_style_ids,
+                        excluded_style_ids=indent_excluded_style_ids,
                         change_logs=summary.numbering_xml_logs,
                     )
                 elif item.filename == "word/numbering.xml":
                     removed_char_indent_attrs = remove_character_indent_attrs_from_numbering_root_excluding_protected(
                         root,
-                        excluded_numbering_pairs,
-                        excluded_num_ids,
-                        excluded_abstract_ids,
+                        indent_excluded_numbering_pairs,
+                        indent_excluded_num_ids,
+                        indent_excluded_abstract_ids,
                     )
                 else:
                     removed_char_indent_attrs = remove_character_indent_attrs_from_root(
                         root,
-                        exclude_paragraph_ids=exclude_paragraph_ids,
+                        exclude_paragraph_ids=sanitize_exclude_paragraph_ids,
                         change_logs=summary.numbering_xml_logs,
                         part_name=item.filename,
                     )
@@ -568,9 +685,12 @@ def fix_docx_fast(
     force_clean_numbering_suffix_tabs_in_docx(
         output_docx,
         logs=summary.numbering_xml_logs,
-        excluded_numbering_pairs=excluded_numbering_pairs,
-        excluded_num_ids=excluded_num_ids,
-        excluded_abstract_ids=excluded_abstract_ids,
+        excluded_numbering_pairs=final_suffix_excluded_numbering_pairs,
+        excluded_num_ids=final_suffix_excluded_num_ids,
+        excluded_abstract_ids=final_suffix_excluded_abstract_ids,
+        included_numbering_pairs=protected_context.body_heading_numbering_pairs,
+        included_num_ids=protected_context.body_heading_num_ids,
+        included_abstract_ids=protected_context.body_heading_abstract_ids,
     )
 
     try:

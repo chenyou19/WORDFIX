@@ -351,6 +351,17 @@ def remove_paragraph_tabs(pPr) -> None:
         pPr.remove(tabs)
 
 
+def remove_paragraph_numPr(p) -> bool:
+    pPr = p.find("./w:pPr", NS)
+    if pPr is None:
+        return False
+    numPr = pPr.find("w:numPr", NS)
+    if numPr is None:
+        return False
+    pPr.remove(numPr)
+    return True
+
+
 def apply_indent_spec_to_pPr(
     pPr,
     spec: dict[str, str],
@@ -497,6 +508,96 @@ def force_all_paragraphs_to_body_outline_level(
 
     if summary is not None:
         summary.removed_all_outline_paragraphs += changed_count
+
+    return changed_count
+
+
+def restore_outline_levels_for_protected_paragraphs(
+    root,
+    protected_paragraph_ids: set[int] | None,
+    *,
+    toc_paragraph_ids: set[int] | None = None,
+    stop: StopController | None = None,
+    numbering_level_lookup=None,
+    style_numbering_lookup=None,
+    change_logs: list[str] | None = None,
+    part_name: str = "word/document.xml",
+) -> int:
+    """Restore heading outline levels in a protected region without formatting.
+
+    This intentionally only writes w:pPr/w:outlineLvl for paragraphs that are
+    recognized as headings. Indents, tabs, numbering, fonts, and spacing remain
+    untouched.
+    """
+    if not protected_paragraph_ids:
+        return 0
+
+    toc_paragraph_ids = toc_paragraph_ids or set()
+    changed_count = 0
+    paragraphs = root.xpath(".//w:p", namespaces=NS)
+    for paragraph_index, p in enumerate(paragraphs, start=1):
+        if stop:
+            stop.check()
+        if id(p) not in protected_paragraph_ids:
+            continue
+        if id(p) in toc_paragraph_ids:
+            continue
+        if is_table_paragraph(p):
+            continue
+
+        text = paragraph_text(p)
+        if not text or not text.strip():
+            continue
+
+        level = None
+        reason = None
+        if has_auto_numbering(p):
+            level = detect_auto_number_level(
+                p,
+                numbering_level_lookup=numbering_level_lookup,
+                style_numbering_lookup=style_numbering_lookup,
+            )
+            if level is not None:
+                reason = "auto numbering"
+
+        if level is None and not should_skip_style_numbering(text):
+            level = detect_style_number_level(
+                p,
+                numbering_level_lookup=numbering_level_lookup,
+                style_numbering_lookup=style_numbering_lookup,
+            )
+            if level is not None:
+                reason = "style numbering"
+
+        if level is None:
+            manual = detect_manual_numbering_prefix(text)
+            if manual is not None:
+                level = manual[0]
+                reason = "manual numbering"
+
+        if level is None:
+            level = detect_outline_level(text)
+            if level is not None:
+                reason = "manual numbering"
+
+        if level is None or not (0 <= level <= 8):
+            continue
+
+        pPr = get_or_add(p, "pPr", first=True)
+        before_outline = get_paragraph_outline_level_value(p)
+        apply_paragraph_outline_level(pPr, level)
+        after_outline = str(level)
+        if before_outline != after_outline:
+            changed_count += 1
+        append_paragraph_change_log(
+            change_logs,
+            part_name,
+            paragraph_index,
+            text,
+            before_outline,
+            after_outline,
+            f"restored protected chapter outline level only; {reason or 'numbering'}; no formatting applied",
+        )
 
     return changed_count
 
@@ -910,13 +1011,13 @@ def numbering_identity_for_debug(p, style_numbering_lookup=None) -> tuple[str | 
 
 
 def paragraph_numbering_kind(text: str, p, style_numbering_lookup=None) -> str:
+    if detect_manual_numbering_prefix(text) is not None:
+        return "manual"
     if has_auto_numbering(p):
         return "auto"
     style_id = paragraph_style_id(p)
     if style_id and style_numbering_lookup and style_id in style_numbering_lookup:
         return "auto(style)"
-    if detect_manual_numbering_prefix(text) is not None:
-        return "manual"
     return "body"
 
 
@@ -939,10 +1040,10 @@ def append_numbering_debug_log(
         p,
         style_numbering_lookup=style_numbering_lookup,
     )
-    if num_id is not None:
-        numbering_kind = "auto" if has_auto_numbering(p) else "auto(style)"
-    elif detect_manual_numbering_prefix(text) is not None:
+    if detect_manual_numbering_prefix(text) is not None:
         numbering_kind = "manual"
+    elif num_id is not None:
+        numbering_kind = "auto" if has_auto_numbering(p) else "auto(style)"
 
     paragraph_format = paragraph_indent_debug_format(p)
     level_format = None
@@ -1605,6 +1706,18 @@ def fix_outline_paragraphs(
                 )
                 continue
 
+            manual_numbering = detect_manual_numbering_prefix(text)
+            if manual_numbering is not None and remove_paragraph_numPr(p):
+                append_paragraph_change_log(
+                    change_logs,
+                    part_name,
+                    paragraph_index,
+                    text,
+                    before_outline,
+                    before_outline,
+                    "Manual heading paragraph numPr removed",
+                )
+
             if not main_outline_started and is_processing_start_marker(
                 p,
                 text,
@@ -1648,7 +1761,12 @@ def fix_outline_paragraphs(
             reason = None
             numbering_kind = "manual"
 
-            if has_auto_numbering(p):
+            if manual_numbering is not None:
+                level = manual_numbering[0]
+                reason = "manual numbering"
+                numbering_kind = "manual"
+
+            if level is None and has_auto_numbering(p):
                 num_id, ilvl = get_auto_number_identity(p)
                 style_id = paragraph_style_id(p)
                 level = detect_auto_number_level(

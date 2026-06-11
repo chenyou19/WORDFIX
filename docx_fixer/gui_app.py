@@ -29,6 +29,8 @@ from .stop_controller import StopController
 
 DEFAULT_WINDOW_GEOMETRY = "1080x760"
 MIN_WINDOW_SIZE = (980, 680)
+DEFAULT_SKIP_CHAPTER_THREE_TABLES = True
+DEFAULT_SKIP_CHAPTER_THREE_INDENTS = True
 
 
 class DocxFixerApp:
@@ -64,7 +66,8 @@ class DocxFixerApp:
         self.outline_preface_var = tk.BooleanVar(value=False)
         self.level1_level2_body_first_line_indent_var = tk.BooleanVar(value=True)
         self.word_com_check_body_font_var = tk.BooleanVar(value=False)
-        self.skip_all_under_chapter_three_var = tk.BooleanVar(value=True)
+        self.skip_chapter_three_tables_var = tk.BooleanVar(value=DEFAULT_SKIP_CHAPTER_THREE_TABLES)
+        self.skip_chapter_three_indents_var = tk.BooleanVar(value=DEFAULT_SKIP_CHAPTER_THREE_INDENTS)
 
         self.status_var = tk.StringVar(value="請先選擇 .docx 檔案")
         self.progress_var = tk.DoubleVar(value=0)
@@ -164,15 +167,21 @@ class DocxFixerApp:
 
         ttk.Checkbutton(
             advanced_option_frame,
-            text="參、價格形成之主要因素分析區段全部不調整",
-            variable=self.skip_all_under_chapter_three_var,
+            text="參、價格形成之主要因素分析：表格不調整",
+            variable=self.skip_chapter_three_tables_var,
         ).grid(row=1, column=0, pady=4, sticky="w")
+
+        ttk.Checkbutton(
+            advanced_option_frame,
+            text="參、價格形成之主要因素分析：縮排不調整",
+            variable=self.skip_chapter_three_indents_var,
+        ).grid(row=2, column=0, pady=4, sticky="w")
 
         ttk.Checkbutton(
             advanced_option_frame,
             text="XML 判斷非 14pt 時使用 Word COM 確認內文字號",
             variable=self.word_com_check_body_font_var,
-        ).grid(row=2, column=0, pady=(4, 0), sticky="w")
+        ).grid(row=3, column=0, pady=(4, 0), sticky="w")
 
         progress_frame = ttk.LabelFrame(process_tab, text="處理進度")
         progress_frame.pack(fill="x", pady=(0, 10))
@@ -457,7 +466,8 @@ class DocxFixerApp:
             outline_preface_paragraphs=self.outline_preface_var.get(),
             enable_level1_level2_body_first_line_indent=self.level1_level2_body_first_line_indent_var.get(),
             word_com_check_body_font_when_xml_not_14=self.word_com_check_body_font_var.get(),
-            skip_all_under_chapter_three=self.skip_all_under_chapter_three_var.get(),
+            skip_chapter_three_tables=self.skip_chapter_three_tables_var.get(),
+            skip_chapter_three_indents=self.skip_chapter_three_indents_var.get(),
         )
 
         if not (

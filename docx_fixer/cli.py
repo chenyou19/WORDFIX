@@ -11,11 +11,23 @@ from .process_log import write_heading_suffix_log_file, write_process_log, write
 from .stop_controller import StopController
 
 
-def _chapter_three_protection_from_args(args) -> bool:
-    return args.skip_all_under_chapter_three or args.skip_special_layout_under_chapter_three
+def _chapter_three_options_from_args(args) -> tuple[bool, bool]:
+    skip_tables = args.skip_chapter_three_tables
+    skip_indents = args.skip_chapter_three_indents
+
+    if args.skip_all_under_chapter_three is not None:
+        skip_tables = args.skip_all_under_chapter_three
+        skip_indents = args.skip_all_under_chapter_three
+
+    if args.skip_special_layout_under_chapter_three:
+        skip_tables = True
+        skip_indents = True
+
+    return skip_tables, skip_indents
 
 
 def _build_process_options(args, *, enable_default_actions: bool = False) -> ProcessOptions:
+    skip_chapter_three_tables, skip_chapter_three_indents = _chapter_three_options_from_args(args)
     return ProcessOptions(
         fix_table_layout=True if enable_default_actions else args.table,
         fix_color=True if enable_default_actions else args.color,
@@ -25,7 +37,8 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         outline_preface_paragraphs=False if enable_default_actions else args.outline_preface,
         enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
         word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
-        skip_all_under_chapter_three=_chapter_three_protection_from_args(args),
+        skip_chapter_three_tables=skip_chapter_three_tables,
+        skip_chapter_three_indents=skip_chapter_three_indents,
     )
 
 
@@ -127,20 +140,46 @@ def parse_args(argv: list[str]):
     parser.add_argument(
         "--skip-special-layout-under-chapter-three",
         action="store_true",
-        help="Deprecated alias: protect the whole chapter 參、價格形成之主要因素分析 region",
+        help="Deprecated alias: skip both table and indent fixes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--skip-chapter-three-tables",
+        action="store_true",
+        default=True,
+        dest="skip_chapter_three_tables",
+        help="Do not modify table layout or colors under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--no-skip-chapter-three-tables",
+        action="store_false",
+        dest="skip_chapter_three_tables",
+        help="Allow table layout and color changes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--skip-chapter-three-indents",
+        action="store_true",
+        default=True,
+        dest="skip_chapter_three_indents",
+        help="Do not modify paragraph indents under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--no-skip-chapter-three-indents",
+        action="store_false",
+        dest="skip_chapter_three_indents",
+        help="Allow paragraph indent changes under chapter 參、價格形成之主要因素分析",
     )
     parser.add_argument(
         "--skip-all-under-chapter-three",
         action="store_true",
-        default=True,
+        default=None,
         dest="skip_all_under_chapter_three",
-        help="Do not modify any content under chapter 參、價格形成之主要因素分析 until the next first-level heading",
+        help="Deprecated alias: skip both table and indent fixes under chapter 參、價格形成之主要因素分析",
     )
     parser.add_argument(
         "--no-skip-all-under-chapter-three",
         action="store_false",
         dest="skip_all_under_chapter_three",
-        help="Allow formatting changes inside chapter 參、價格形成之主要因素分析",
+        help="Deprecated alias: allow both table and indent fixes under chapter 參、價格形成之主要因素分析",
     )
     parser.add_argument("--quiet", action="store_true", help="Do not print progress")
     return parser.parse_args(argv)

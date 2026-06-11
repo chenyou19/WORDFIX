@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import unittest
 
-from docx_fixer.gui_app import DEFAULT_WINDOW_GEOMETRY, MIN_WINDOW_SIZE, DocxFixerApp
+from pathlib import Path
+
+from docx_fixer.gui_app import (
+    DEFAULT_SKIP_CHAPTER_THREE_INDENTS,
+    DEFAULT_SKIP_CHAPTER_THREE_TABLES,
+    DEFAULT_WINDOW_GEOMETRY,
+    MIN_WINDOW_SIZE,
+    DocxFixerApp,
+)
 
 
 class FakeProgressBar:
@@ -56,6 +64,15 @@ class GuiAppTests(unittest.TestCase):
         self.assertEqual(app.progress_bar.stop_count, 1)
         self.assertEqual(app.progress_bar.configures[-1], {"mode": "determinate"})
         self.assertEqual(app.progress_var.value, 100)
+
+    def test_chapter_three_gui_options_default_to_checked_and_old_label_removed(self):
+        self.assertTrue(DEFAULT_SKIP_CHAPTER_THREE_TABLES)
+        self.assertTrue(DEFAULT_SKIP_CHAPTER_THREE_INDENTS)
+
+        gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
+        self.assertIn("參、價格形成之主要因素分析：表格不調整", gui_source)
+        self.assertIn("參、價格形成之主要因素分析：縮排不調整", gui_source)
+        self.assertNotIn("區段全部不調整", gui_source)
 
 
 if __name__ == "__main__":
