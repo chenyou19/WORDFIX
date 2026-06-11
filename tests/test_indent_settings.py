@@ -48,7 +48,7 @@ class IndentSettingsTests(unittest.TestCase):
         settings = current_indent_settings()
         expected = [
             (-0.04, 1.27, 1.23),
-            (0.70, 1.12, 1.83),
+            (0.73, 1.13, 1.86),
             (1.47, 1.48, 2.96),
             (2.96, 0.50, 3.45),
             (3.21, 1.23, 4.44),
@@ -113,10 +113,11 @@ class IndentSettingsTests(unittest.TestCase):
             PREFACE_OUTLINE_INDENTS.clear()
             self.assertTrue(load_saved_indent_settings(path))
 
-        self.assertIn("number_start_cm", saved["preface"][2])
-        self.assertIn("hanging_cm", saved["preface"][2])
-        self.assertIn("body_left_cm", saved["preface"][2])
-        self.assertNotIn("left_cm", saved["preface"][2])
+        saved_indent = saved["indent_settings"]
+        self.assertIn("number_start_cm", saved_indent["preface"][2])
+        self.assertIn("hanging_cm", saved_indent["preface"][2])
+        self.assertIn("body_left_cm", saved_indent["preface"][2])
+        self.assertNotIn("left_cm", saved_indent["preface"][2])
 
         number_start_cm, hanging_cm, body_left_cm = spec_to_cm_values(PREFACE_OUTLINE_INDENTS[2])
         self.assertAlmostEqual(number_start_cm, 3.01, places=2)
@@ -141,6 +142,22 @@ class IndentSettingsTests(unittest.TestCase):
         self.assertAlmostEqual(float(first["number_start_cm"]), 2.25, places=2)
         self.assertAlmostEqual(float(first["hanging_cm"]), 2.25, places=2)
         self.assertAlmostEqual(float(first["body_left_cm"]), 4.50, places=2)
+
+    def test_save_settings_preserves_gui_defaults_in_shared_file(self):
+        settings = current_indent_settings()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "indent_defaults.json"
+            path.write_text(
+                json.dumps({"gui_defaults": {"fix_table": False}}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            save_indent_settings(settings, path)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertIn("indent_settings", saved)
+        self.assertIn("gui_defaults", saved)
+        self.assertFalse(saved["gui_defaults"]["fix_table"])
 
     def test_invalid_hanging_is_rejected(self):
         settings = current_indent_settings()

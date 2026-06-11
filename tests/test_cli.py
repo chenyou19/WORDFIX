@@ -22,6 +22,28 @@ class CliOptionTests(unittest.TestCase):
         self.assertTrue(args.indent_preface)
         self.assertTrue(args.outline_preface)
 
+    def test_process_options_default_skip_log_output_is_true(self):
+        options = ProcessOptions(True, True, True)
+
+        self.assertTrue(options.skip_log_output)
+
+    def test_cli_preserves_log_output_by_default_and_supports_no_log_aliases(self):
+        args = parse_args(["input.docx", "output.docx"])
+        options = _build_process_options(args)
+
+        self.assertFalse(args.skip_log_output)
+        self.assertFalse(options.skip_log_output)
+
+        no_log_args = parse_args(["input.docx", "output.docx", "--no-log"])
+        no_log_options = _build_process_options(no_log_args)
+        self.assertTrue(no_log_args.skip_log_output)
+        self.assertTrue(no_log_options.skip_log_output)
+
+        alias_args = parse_args(["input.docx", "output.docx", "--skip-log-output"])
+        alias_options = _build_process_options(alias_args)
+        self.assertTrue(alias_args.skip_log_output)
+        self.assertTrue(alias_options.skip_log_output)
+
     def test_process_options_do_not_keep_old_special_table_flag(self):
         field_names = {field.name for field in fields(ProcessOptions)}
 

@@ -13,6 +13,11 @@ from tkinter import filedialog, messagebox, ttk
 from .constants import DEFAULT_SUFFIX
 from .docx_processor import fix_docx_fast
 from .exceptions import ProcessStopped
+from .gui_defaults import (
+    built_in_gui_defaults,
+    load_saved_gui_defaults,
+    save_gui_defaults as write_gui_defaults,
+)
 from .indent_settings import (
     apply_indent_settings,
     built_in_indent_settings,
@@ -29,9 +34,44 @@ from .stop_controller import StopController
 
 DEFAULT_WINDOW_GEOMETRY = "1080x760"
 MIN_WINDOW_SIZE = (980, 680)
-DEFAULT_SKIP_CHAPTER_THREE_TABLE_LAYOUT = True
-DEFAULT_SKIP_CHAPTER_THREE_TABLE_COLOR = True
-DEFAULT_SKIP_CHAPTER_THREE_INDENTS = False
+_BUILTIN_GUI_DEFAULTS = built_in_gui_defaults()
+DEFAULT_SKIP_CHAPTER_THREE_TABLE_LAYOUT = _BUILTIN_GUI_DEFAULTS["skip_chapter_three_table_layout"]
+DEFAULT_SKIP_CHAPTER_THREE_TABLE_COLOR = _BUILTIN_GUI_DEFAULTS["skip_chapter_three_table_color"]
+DEFAULT_SKIP_CHAPTER_THREE_INDENTS = _BUILTIN_GUI_DEFAULTS["skip_chapter_three_indents"]
+
+
+def write_logs_if_enabled(
+    final_output: Path,
+    summary,
+    skip_log_output: bool,
+    warning_callback=None,
+) -> tuple[Path | None, Path | None, Path | None]:
+    log_path = None
+    table_log_path = None
+    heading_suffix_log_path = None
+
+    if skip_log_output:
+        return log_path, table_log_path, heading_suffix_log_path
+
+    try:
+        log_path = write_process_log(final_output, summary)
+    except Exception as exc:
+        if warning_callback is not None:
+            warning_callback(f"無法寫入處理 log：{exc}")
+
+    try:
+        table_log_path = write_table_log_file(final_output, summary)
+    except Exception as exc:
+        if warning_callback is not None:
+            warning_callback(f"無法寫入表格 log：{exc}")
+
+    try:
+        heading_suffix_log_path = write_heading_suffix_log_file(final_output, summary)
+    except Exception as exc:
+        if warning_callback is not None:
+            warning_callback(f"無法寫入標題後方分隔符 log：{exc}")
+
+    return log_path, table_log_path, heading_suffix_log_path
 
 
 class DocxFixerApp:
@@ -53,23 +93,37 @@ class DocxFixerApp:
             "body": [],
         }
         self.indent_settings_load_error: str | None = None
+        self.gui_defaults_load_error: str | None = None
 
         try:
             load_saved_indent_settings()
         except Exception as exc:
             self.indent_settings_load_error = str(exc)
 
-        self.fix_table_var = tk.BooleanVar(value=True)
-        self.fix_color_var = tk.BooleanVar(value=True)
-        self.fix_paragraph_var = tk.BooleanVar(value=True)
-        self.remove_all_outline_var = tk.BooleanVar(value=True)
-        self.indent_preface_var = tk.BooleanVar(value=False)
-        self.outline_preface_var = tk.BooleanVar(value=False)
-        self.level1_level2_body_first_line_indent_var = tk.BooleanVar(value=True)
-        self.word_com_check_body_font_var = tk.BooleanVar(value=False)
-        self.skip_chapter_three_table_layout_var = tk.BooleanVar(value=DEFAULT_SKIP_CHAPTER_THREE_TABLE_LAYOUT)
-        self.skip_chapter_three_table_color_var = tk.BooleanVar(value=DEFAULT_SKIP_CHAPTER_THREE_TABLE_COLOR)
-        self.skip_chapter_three_indents_var = tk.BooleanVar(value=DEFAULT_SKIP_CHAPTER_THREE_INDENTS)
+        try:
+            gui_defaults = load_saved_gui_defaults()
+        except Exception as exc:
+            self.gui_defaults_load_error = str(exc)
+            gui_defaults = built_in_gui_defaults()
+
+        self.fix_table_var = tk.BooleanVar(value=gui_defaults["fix_table"])
+        self.fix_color_var = tk.BooleanVar(value=gui_defaults["fix_color"])
+        self.fix_paragraph_var = tk.BooleanVar(value=gui_defaults["fix_paragraph"])
+        self.remove_all_outline_var = tk.BooleanVar(value=gui_defaults["remove_all_outline"])
+        self.indent_preface_var = tk.BooleanVar(value=gui_defaults["indent_preface"])
+        self.outline_preface_var = tk.BooleanVar(value=gui_defaults["outline_preface"])
+        self.level1_level2_body_first_line_indent_var = tk.BooleanVar(
+            value=gui_defaults["level1_level2_body_first_line_indent"]
+        )
+        self.word_com_check_body_font_var = tk.BooleanVar(value=gui_defaults["word_com_check_body_font"])
+        self.skip_log_output_var = tk.BooleanVar(value=gui_defaults["skip_log_output"])
+        self.skip_chapter_three_table_layout_var = tk.BooleanVar(
+            value=gui_defaults["skip_chapter_three_table_layout"]
+        )
+        self.skip_chapter_three_table_color_var = tk.BooleanVar(
+            value=gui_defaults["skip_chapter_three_table_color"]
+        )
+        self.skip_chapter_three_indents_var = tk.BooleanVar(value=gui_defaults["skip_chapter_three_indents"])
 
         self.status_var = tk.StringVar(value="請先選擇 .docx 檔案")
         self.progress_var = tk.DoubleVar(value=0)
@@ -80,6 +134,12 @@ class DocxFixerApp:
                 "縮排設定載入失敗",
                 "無法讀取既有的縮排設定，將改用目前內建預設。\n"
                 f"{self.indent_settings_load_error}",
+            )
+        if self.gui_defaults_load_error:
+            messagebox.showwarning(
+                "GUI 預設勾選方案載入失敗",
+                "無法讀取既有的 GUI 預設勾選方案，將改用內建預設。\n"
+                f"{self.gui_defaults_load_error}",
             )
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
@@ -158,6 +218,18 @@ class DocxFixerApp:
             variable=self.outline_preface_var,
         ).grid(row=1, column=0, pady=4, sticky="w")
 
+        ttk.Checkbutton(
+            preface_option_frame,
+            text="XML 判斷非 14pt 時使用 Word COM 確認內文字號",
+            variable=self.word_com_check_body_font_var,
+        ).grid(row=2, column=0, pady=4, sticky="w")
+
+        ttk.Checkbutton(
+            preface_option_frame,
+            text="不要輸出 log 檔",
+            variable=self.skip_log_output_var,
+        ).grid(row=3, column=0, pady=(4, 0), sticky="w")
+
         advanced_option_frame = ttk.Frame(option_frame)
         advanced_option_frame.grid(row=2, column=1, padx=(12, 16), pady=(4, 10), sticky="nw")
 
@@ -185,11 +257,18 @@ class DocxFixerApp:
             variable=self.skip_chapter_three_indents_var,
         ).grid(row=3, column=0, pady=4, sticky="w")
 
-        ttk.Checkbutton(
-            advanced_option_frame,
-            text="XML 判斷非 14pt 時使用 Word COM 確認內文字號",
-            variable=self.word_com_check_body_font_var,
-        ).grid(row=4, column=0, pady=(4, 0), sticky="w")
+        defaults_button_frame = ttk.Frame(option_frame)
+        defaults_button_frame.grid(row=3, column=0, columnspan=2, padx=(12, 16), pady=(0, 10), sticky="w")
+        ttk.Button(
+            defaults_button_frame,
+            text="保存目前勾選為預設方案",
+            command=self.save_gui_defaults,
+        ).pack(side="left")
+        ttk.Button(
+            defaults_button_frame,
+            text="還原內建勾選預設",
+            command=self.restore_builtin_gui_defaults,
+        ).pack(side="left", padx=8)
 
         progress_frame = ttk.LabelFrame(process_tab, text="處理進度")
         progress_frame.pack(fill="x", pady=(0, 10))
@@ -275,6 +354,7 @@ class DocxFixerApp:
         button_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
         ttk.Button(button_frame, text="套用目前設定", command=self.apply_indent_entries).pack(side="left")
+        ttk.Button(button_frame, text="保存成預設樣式", command=self.save_indent_defaults).pack(side="left", padx=8)
         ttk.Button(button_frame, text="還原內建預設", command=self.restore_builtin_indent_defaults).pack(side="left", padx=8)
 
         path_label = ttk.Label(
@@ -359,7 +439,52 @@ class DocxFixerApp:
             messagebox.showerror("縮排設定錯誤", str(exc))
             return
 
+        self.status_var.set("已保存並套用縮排預設")
         messagebox.showinfo("已儲存", f"縮排設定已儲存：\n{path}")
+
+    def collect_gui_defaults(self) -> dict[str, bool]:
+        return {
+            "fix_table": self.fix_table_var.get(),
+            "fix_color": self.fix_color_var.get(),
+            "fix_paragraph": self.fix_paragraph_var.get(),
+            "remove_all_outline": self.remove_all_outline_var.get(),
+            "indent_preface": self.indent_preface_var.get(),
+            "outline_preface": self.outline_preface_var.get(),
+            "level1_level2_body_first_line_indent": self.level1_level2_body_first_line_indent_var.get(),
+            "word_com_check_body_font": self.word_com_check_body_font_var.get(),
+            "skip_log_output": self.skip_log_output_var.get(),
+            "skip_chapter_three_table_layout": self.skip_chapter_three_table_layout_var.get(),
+            "skip_chapter_three_table_color": self.skip_chapter_three_table_color_var.get(),
+            "skip_chapter_three_indents": self.skip_chapter_three_indents_var.get(),
+        }
+
+    def save_gui_defaults(self) -> None:
+        try:
+            path = write_gui_defaults(self.collect_gui_defaults())
+        except Exception as exc:
+            messagebox.showerror("GUI 預設勾選方案錯誤", str(exc))
+            return
+
+        self.status_var.set("已保存 GUI 預設勾選方案")
+        messagebox.showinfo("已儲存", f"GUI 預設勾選方案已儲存：\n{path}")
+
+    def restore_builtin_gui_defaults(self) -> None:
+        defaults = built_in_gui_defaults()
+        self.fix_table_var.set(defaults["fix_table"])
+        self.fix_color_var.set(defaults["fix_color"])
+        self.fix_paragraph_var.set(defaults["fix_paragraph"])
+        self.remove_all_outline_var.set(defaults["remove_all_outline"])
+        self.indent_preface_var.set(defaults["indent_preface"])
+        self.outline_preface_var.set(defaults["outline_preface"])
+        self.level1_level2_body_first_line_indent_var.set(
+            defaults["level1_level2_body_first_line_indent"]
+        )
+        self.word_com_check_body_font_var.set(defaults["word_com_check_body_font"])
+        self.skip_log_output_var.set(defaults["skip_log_output"])
+        self.skip_chapter_three_table_layout_var.set(defaults["skip_chapter_three_table_layout"])
+        self.skip_chapter_three_table_color_var.set(defaults["skip_chapter_three_table_color"])
+        self.skip_chapter_three_indents_var.set(defaults["skip_chapter_three_indents"])
+        self.status_var.set("已還原內建 GUI 預設勾選方案")
 
     def restore_builtin_indent_defaults(self) -> None:
         settings = built_in_indent_settings()
@@ -477,6 +602,7 @@ class DocxFixerApp:
             skip_chapter_three_table_layout=self.skip_chapter_three_table_layout_var.get(),
             skip_chapter_three_table_color=self.skip_chapter_three_table_color_var.get(),
             skip_chapter_three_indents=self.skip_chapter_three_indents_var.get(),
+            skip_log_output=self.skip_log_output_var.get(),
         )
 
         if not (
@@ -581,21 +707,12 @@ class DocxFixerApp:
                     f"無法覆寫原輸出檔，已改存為：{fallback_output}",
                 ))
 
-            log_path = None
-            table_log_path = None
-            heading_suffix_log_path = None
-            try:
-                log_path = write_process_log(final_output, summary)
-            except Exception as exc:
-                self.ui_queue.put(("warning", f"無法寫入處理 log：{exc}"))
-            try:
-                table_log_path = write_table_log_file(final_output, summary)
-            except Exception as exc:
-                self.ui_queue.put(("warning", f"無法寫入表格 log：{exc}"))
-            try:
-                heading_suffix_log_path = write_heading_suffix_log_file(final_output, summary)
-            except Exception as exc:
-                self.ui_queue.put(("warning", f"無法寫入標題後方分隔符 log：{exc}"))
+            log_path, table_log_path, heading_suffix_log_path = write_logs_if_enabled(
+                final_output,
+                summary,
+                options.skip_log_output,
+                warning_callback=lambda message: self.ui_queue.put(("warning", message)),
+            )
 
             self.ui_queue.put(("done", final_output, summary, log_path, table_log_path, heading_suffix_log_path))
 

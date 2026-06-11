@@ -48,8 +48,14 @@ TEMPLATE_OUTLINE_INDENTS = {
 
 
 PREFACE_OUTLINE_INDENTS = {
-    level: dict(TEMPLATE_OUTLINE_INDENTS[level])
-    for level in range(8)
+    0: make_outline_indent_spec(-0.04, 1.14, 1.09),  # 一、
+    1: make_outline_indent_spec(0.73, 1.48, 2.21),  # （一）
+    2: make_outline_indent_spec(2.21, 0.49, 3.45),  # 1.
+    3: make_outline_indent_spec(2.45, 1.24, 4.44),  # （1）
+    4: make_outline_indent_spec(4.43, 0.50, 4.92),  # A.
+    5: make_outline_indent_spec(4.67, 1.24, 5.90),  # （A）
+    6: make_outline_indent_spec(6.39, 0.50, 6.85),  # a.
+    7: make_outline_indent_spec(7.72, 1.24, 8.96),  # （a）
 }
 
 BUILTIN_TEMPLATE_OUTLINE_INDENTS = {

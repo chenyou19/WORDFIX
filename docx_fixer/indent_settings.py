@@ -14,6 +14,7 @@ from .constants import (
 )
 
 INDENT_SETTINGS_FILENAME = "indent_defaults.json"
+INDENT_SETTINGS_KEY = "indent_settings"
 
 BODY_LEVEL_LABELS = [
     "壹、",
@@ -134,6 +135,7 @@ def normalize_row(row: dict, level: int, label: str) -> dict[str, float | int | 
 
 
 def normalize_indent_settings(settings: dict) -> dict[str, list[dict[str, float | int | str]]]:
+    settings = extract_indent_settings(settings)
     normalized = {"body": [], "preface": []}
     expected = {
         "body": BODY_LEVEL_LABELS,
@@ -161,6 +163,17 @@ def normalize_indent_settings(settings: dict) -> dict[str, list[dict[str, float 
             normalized[section].append(normalize_row(by_level[level], level, label))
 
     return normalized
+
+
+def extract_indent_settings(data: dict) -> dict:
+    if not isinstance(data, dict):
+        raise ValueError("Indent settings must be a JSON object")
+    if INDENT_SETTINGS_KEY in data:
+        settings = data[INDENT_SETTINGS_KEY]
+        if not isinstance(settings, dict):
+            raise ValueError("indent_settings must be a JSON object")
+        return settings
+    return data
 
 
 def apply_indent_settings(settings: dict) -> dict[str, list[dict[str, float | int | str]]]:
@@ -191,6 +204,8 @@ def load_saved_indent_settings(path: str | Path | None = None) -> bool:
         return False
 
     data = json.loads(settings_path.read_text(encoding="utf-8"))
+    if INDENT_SETTINGS_KEY not in data and not ("body" in data and "preface" in data):
+        return False
     apply_indent_settings(data)
     return True
 
@@ -198,8 +213,16 @@ def load_saved_indent_settings(path: str | Path | None = None) -> bool:
 def save_indent_settings(settings: dict, path: str | Path | None = None) -> Path:
     normalized = apply_indent_settings(settings)
     settings_path = Path(path) if path is not None else get_indent_settings_path()
+    data = {}
+    if settings_path.exists():
+        loaded = json.loads(settings_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            data = loaded
+    if INDENT_SETTINGS_KEY not in data and ("body" in data or "preface" in data):
+        data = {}
+    data[INDENT_SETTINGS_KEY] = normalized
     settings_path.write_text(
-        json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     return settings_path

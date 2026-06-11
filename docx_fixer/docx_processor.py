@@ -452,7 +452,11 @@ def fix_docx_fast(
             root = None
             if item.filename == "word/document.xml" and document_root_for_toc is not None:
                 root = document_root_for_toc
-            outline_clear_exclude_paragraph_ids = protected_context.toc_paragraph_ids_for_part(item.filename)
+            toc_paragraph_ids = protected_context.toc_paragraph_ids_for_part(item.filename)
+            # remove_all_outline_levels intentionally also applies to TOC
+            # paragraphs. Other cleanup steps still use toc_paragraph_ids to
+            # avoid changing TOC indents, tabs, fields, styles, and numbering.
+            outline_body_level_exclude_paragraph_ids = None
             chapter_three_paragraph_ids = protected_context.chapter_three_paragraph_ids_for_part(
                 item.filename
             )
@@ -461,7 +465,7 @@ def fix_docx_fast(
                 if options.skip_chapter_three_indents
                 else None
             )
-            sanitize_exclude_paragraph_ids = outline_clear_exclude_paragraph_ids
+            sanitize_exclude_paragraph_ids = toc_paragraph_ids
             if options.skip_chapter_three_indents and chapter_three_paragraph_ids:
                 sanitize_ids = set(sanitize_exclude_paragraph_ids or set())
                 sanitize_ids.update(chapter_three_paragraph_ids)
@@ -480,12 +484,11 @@ def fix_docx_fast(
                         root,
                         stop=stop,
                         summary=summary,
-                        exclude_paragraph_ids=outline_clear_exclude_paragraph_ids,
+                        exclude_paragraph_ids=outline_body_level_exclude_paragraph_ids,
                     )
                     restore_outline_levels_for_protected_paragraphs(
                         root,
                         indent_skip_paragraph_ids,
-                        toc_paragraph_ids=outline_clear_exclude_paragraph_ids,
                         stop=stop,
                         numbering_level_lookup=numbering_level_lookup,
                         style_numbering_lookup=style_numbering_lookup,

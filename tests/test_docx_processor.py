@@ -13,6 +13,7 @@ from lxml import etree
 
 from docx_fixer.constants import NS, TEMPLATE_OUTLINE_INDENTS, W_NS
 from docx_fixer.docx_processor import fix_docx_fast
+from docx_fixer.outline import collect_all_toc_paragraph_ids
 from docx_fixer.protected_region import ProtectedRegionContext, collect_chapter_three_paragraph_ids
 from docx_fixer.numbering import (
     build_numbering_format_lookup,
@@ -783,6 +784,24 @@ def assert_all_document_outlines_are_body(test_case: unittest.TestCase, path: Pa
     paragraphs = root.xpath(".//w:p", namespaces=NS)
     test_case.assertGreater(len(paragraphs), 0)
     for p in paragraphs:
+        outline = p.find("./w:pPr/w:outlineLvl", NS)
+        test_case.assertIsNotNone(outline)
+        test_case.assertEqual(outline.get(qn("val")), "9")
+
+
+def assert_toc_outlines_are_body(test_case: unittest.TestCase, path: Path) -> None:
+    root = read_document_root(path)
+    paragraphs = root.xpath(".//w:p", namespaces=NS)
+    toc_ids = collect_all_toc_paragraph_ids(
+        root,
+        numbering_level_lookup={},
+        style_numbering_lookup={},
+        paragraphs=paragraphs,
+    )
+    test_case.assertGreater(len(toc_ids), 0)
+    for p in paragraphs:
+        if id(p) not in toc_ids:
+            continue
         outline = p.find("./w:pPr/w:outlineLvl", NS)
         test_case.assertIsNotNone(outline)
         test_case.assertEqual(outline.get(qn("val")), "9")
@@ -2526,6 +2545,65 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIn("STYLES_XML_SKIP_TOC_STYLE: styleId=TOC1", joined_numbering_logs)
             self.assertIn("NUMBERING_XML_SKIP_TOC_NUMBERING", joined_numbering_logs)
             self.assertNotIn("STYLES_XML_NUMBERED_STYLE_INDENT: styleId=TOC1", joined_numbering_logs)
+
+    def test_remove_all_outline_forces_toc_paragraphs_to_body_without_other_toc_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            document_xml = make_toc_immutable_document_xml()
+            make_docx(
+                input_docx,
+                document_xml,
+                styles_xml=make_toc_immutable_styles_xml(),
+                numbering_xml=make_toc_immutable_numbering_xml(),
+            )
+
+            input_root = etree.fromstring(document_xml)
+            input_paragraphs = input_root.xpath(".//w:p", namespaces=NS)
+            input_toc_texts = [
+                "".join(p.xpath(".//w:t/text()", namespaces=NS))
+                for p in input_paragraphs[:3]
+            ]
+            input_toc_ind_attrs = [
+                dict(p.find("./w:pPr/w:ind", NS).attrib)
+                if p.find("./w:pPr/w:ind", NS) is not None
+                else None
+                for p in input_paragraphs[:3]
+            ]
+            input_toc_tabs = [
+                etree.tostring(p.find("./w:pPr/w:tabs", NS))
+                if p.find("./w:pPr/w:tabs", NS) is not None
+                else None
+                for p in input_paragraphs[:3]
+            ]
+
+            fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    remove_all_outline_levels=True,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            assert_toc_outlines_are_body(self, output_docx)
+            output_root = read_document_root(output_docx)
+            output_paragraphs = output_root.xpath(".//w:p", namespaces=NS)
+            for index in range(3):
+                with self.subTest(toc_paragraph=index):
+                    self.assertEqual(
+                        "".join(output_paragraphs[index].xpath(".//w:t/text()", namespaces=NS)),
+                        input_toc_texts[index],
+                    )
+                    output_ind = output_paragraphs[index].find("./w:pPr/w:ind", NS)
+                    output_ind_attrs = dict(output_ind.attrib) if output_ind is not None else None
+                    self.assertEqual(output_ind_attrs, input_toc_ind_attrs[index])
+                    output_tabs = output_paragraphs[index].find("./w:pPr/w:tabs", NS)
+                    output_tabs_xml = etree.tostring(output_tabs) if output_tabs is not None else None
+                    self.assertEqual(output_tabs_xml, input_toc_tabs[index])
 
     def test_remove_all_outline_only_clears_existing_outline_levels_in_all_parts(self):
         with tempfile.TemporaryDirectory() as temp_dir:

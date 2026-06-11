@@ -52,6 +52,7 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         skip_chapter_three_table_layout=skip_chapter_three_table_layout,
         skip_chapter_three_table_color=skip_chapter_three_table_color,
         skip_chapter_three_indents=skip_chapter_three_indents,
+        skip_log_output=args.skip_log_output,
     )
 
 
@@ -123,9 +124,13 @@ def run_cli(args) -> int:
         print(f"level_{level}_paragraphs={count}")
     print(f"unknown_paragraphs={summary.unknown_paragraphs}")
     print(f"output_docx={args.output_docx}")
-    log_path = write_process_log(args.output_docx, summary)
-    table_log_path = write_table_log_file(args.output_docx, summary)
-    heading_suffix_log_path = write_heading_suffix_log_file(args.output_docx, summary)
+    log_path = None
+    table_log_path = None
+    heading_suffix_log_path = None
+    if not options.skip_log_output:
+        log_path = write_process_log(args.output_docx, summary)
+        table_log_path = write_table_log_file(args.output_docx, summary)
+        heading_suffix_log_path = write_heading_suffix_log_file(args.output_docx, summary)
     print(f"process_log={log_path}")
     print(f"table_log={table_log_path}")
     print(f"heading_suffix_log={heading_suffix_log_path}")
@@ -233,6 +238,14 @@ def parse_args(argv: list[str]):
         action="store_false",
         dest="skip_all_under_chapter_three",
         help="Deprecated alias: allow both table and indent fixes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--no-log",
+        "--skip-log-output",
+        action="store_true",
+        default=False,
+        dest="skip_log_output",
+        help="Do not write process, table, or heading suffix log files",
     )
     parser.add_argument("--quiet", action="store_true", help="Do not print progress")
     return parser.parse_args(argv)

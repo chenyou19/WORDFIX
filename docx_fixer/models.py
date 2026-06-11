@@ -19,6 +19,7 @@ class ProcessOptions:
     skip_chapter_three_tables: bool = False
     skip_chapter_three_indents: bool = False
     skip_all_under_chapter_three: bool = False
+    skip_log_output: bool = True
 
     def __post_init__(self) -> None:
         # Backward compatibility for older callers. The GUI no longer exposes

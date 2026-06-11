@@ -300,7 +300,7 @@ class OutlineFixTests(unittest.TestCase):
     def test_template_indents_match_requested_cm_values(self):
         expected = {
             0: (1.23, -0.04, 1.27, 1.23),
-            1: (1.82, 0.70, 1.12, 1.83),
+            1: (1.86, 0.73, 1.13, 1.86),
             2: (2.95, 1.47, 1.48, 2.96),
             3: (3.46, 2.96, 0.50, 3.45),
             4: (4.44, 3.21, 1.23, 4.44),
@@ -799,10 +799,10 @@ class OutlineFixTests(unittest.TestCase):
 
         expected_left = TEMPLATE_OUTLINE_INDENTS[1]["body_left"]
         assert_body_indent_hard_override(self, body, expected_left, expected_first_line="560")
-        self.assertAlmostEqual(twips_to_cm(expected_left), 1.83, places=2)
+        self.assertAlmostEqual(twips_to_cm(expected_left), 1.86, places=2)
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=1", debug)
-        self.assertIn("spec_body_left_cm=1.83", debug)
+        self.assertIn("spec_body_left_cm=1.86", debug)
         self.assertIn("spec_firstLine_twips=560", debug)
         self.assertIn("written_firstLine_twips=560", debug)
         self.assertIn("written_firstLineChars=0", debug)

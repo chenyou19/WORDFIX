@@ -24,6 +24,8 @@ python main.py
 - 勾選是否修正表格版面、表格底色與段落。
 - 開啟縮排設定視窗，調整各層級的縮排預設值。
 - 視需要啟用序言處理、Word COM 字號確認等選項。
+- GUI 預設勾選「不要輸出 log 檔」，因此處理完成後只會輸出修正後的 docx。
+- 如果需要除錯或檢查表格處理細節，請取消勾選「不要輸出 log 檔」，程式才會額外輸出 process log、table log、heading suffix log。
 
 GUI 預設勾選 `參、價格形成之主要因素分析：表格不調整` 與 `參、價格形成之主要因素分析：縮排不調整`，兩者可獨立切換。
 
@@ -49,6 +51,7 @@ python main.py input.docx output.docx --table --color --paragraph
 - `--skip-chapter-three-tables` / `--no-skip-chapter-three-tables`：控制 `參、價格形成之主要因素分析` 區段表格版面與底色是否跳過，預設跳過。
 - `--skip-chapter-three-indents` / `--no-skip-chapter-three-indents`：控制該區段段落縮排、tabs、首行縮排與 Word COM 內文縮排補救是否跳過，預設跳過。
 - `--skip-all-under-chapter-three`、`--no-skip-all-under-chapter-three`、`--skip-special-layout-under-chapter-three`：相容舊參數名稱，會映射到上述兩個新選項。
+- `--no-log` / `--skip-log-output`：不輸出 process log、table log、heading suffix log。CLI 預設仍會輸出 log 檔。
 - `--quiet`：減少終端輸出訊息。
 
 ## 主要處理選項說明
@@ -74,13 +77,15 @@ python main.py input.docx output.docx --table --color --paragraph
 - 目錄（TOC）相關段落會跳過，避免誤改 Word 自動產生的目錄內容。
 - numbering.xml 的 `suffix=nothing` 等既有處理邏輯維持不變。
 
-## `indent_defaults.json` 位置與用途
+## 預設設定檔位置與用途
 
-- 檔名固定為 `indent_defaults.json`。
-- 一般以原始碼執行時，預設位置在目前工作目錄。
-- 打包成 EXE 後，預設位置在 EXE 同層目錄。
-- 這個檔案用來覆寫內建的縮排預設值，供 GUI 與 CLI 共用。
+- 預設設定共用單一檔案：`indent_defaults.json`。
+- `indent_defaults.json` 內的 `indent_settings` 區塊是縮排預設樣式；GUI 縮排設定頁按「保存成預設樣式」後會寫入這個區塊，GUI 與 CLI 都會載入使用。
+- `indent_defaults.json` 內的 `gui_defaults` 區塊是 GUI 第一頁勾選狀態的預設方案；按「保存目前勾選為預設方案」後會寫入這個區塊。
+- 一般以原始碼執行時，`indent_defaults.json` 放在目前工作目錄，也就是啟動 `python main.py` 時所在的資料夾。
+- 打包成 EXE 後，`indent_defaults.json` 放在 EXE 同層目錄。
 - 若檔案存在，程式會優先載入其中設定；若不存在，則使用程式內建預設。
+- 要把 EXE 帶到另一台電腦沿用設定時，只要把 EXE 與 `indent_defaults.json` 放在同一層目錄即可。
 
 ## `process_log` 與 `table_log` 輸出說明
 
@@ -92,5 +97,5 @@ python main.py input.docx output.docx --table --color --paragraph
 
 - 不要直接覆寫原始 `.docx` 檔案，輸入與輸出路徑應分開。
 - 建議在批次處理前先備份原始文件。
-- 若使用 EXE 版本，可在 EXE 同層保留 `indent_defaults.json`，方便攜帶自訂縮排設定。
+- 若使用 EXE 版本，可在 EXE 同層保留 `indent_defaults.json`，方便攜帶自訂縮排與 GUI 勾選設定。
 - 對於特殊格式文件，建議先用少量樣本測試，再批次處理正式檔案。
