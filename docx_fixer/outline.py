@@ -107,15 +107,11 @@ def is_processing_start_marker(
     return level == 0
 
 
-def effective_indent_level(level: int, set_outline: bool) -> int:
-    """
-    When preface paragraphs receive indentation without outline levels, fold
-    the level back by one while keeping the minimum at 0. This makes preface
-    indentation slightly tighter than the matching body level.
-    """
-    if set_outline:
-        return level
-    return max(level - 1, 0)
+def preface_indent_level_from_detected_level(level: int) -> int | None:
+    """Map detected outline levels to the independent preface indent table."""
+    if 1 <= level <= 8:
+        return level - 1
+    return None
 
 
 def is_separator_char(ch: str) -> bool:
@@ -2065,25 +2061,38 @@ def fix_outline_paragraphs(
                 after_outline = str(level)
                 action = f"apply level {level + 1} outline and indent"
             else:
-                indent_level = effective_indent_level(level, set_outline=False)
+                preface_indent_level = preface_indent_level_from_detected_level(level)
+                if preface_indent_level is None:
+                    append_paragraph_change_log(
+                        change_logs,
+                        part_name,
+                        paragraph_index,
+                        text,
+                        before_outline,
+                        before_outline,
+                        f"{reason or 'numbering'}; skipped preface indent level for detected level {level}",
+                    )
+                    continue
+
+                indent_level = preface_indent_level
                 apply_outline_format(
                     p,
-                    indent_level,
+                    preface_indent_level,
                     set_indent=indent_preface_paragraphs,
                     set_outline=outline_preface_paragraphs,
                     use_preface_indent=True,
                     font_level=level,
                 )
                 changed_count += 1
-                after_outline = str(indent_level) if outline_preface_paragraphs else before_outline
+                after_outline = str(preface_indent_level) if outline_preface_paragraphs else before_outline
                 actions = []
                 if indent_preface_paragraphs:
                     increment_indented_preface_count(summary)
-                    actions.append(f"apply preface level {indent_level + 1} indent")
-                    current_heading_indent = (indent_level, False)
+                    actions.append(f"apply preface level {preface_indent_level + 1} indent")
+                    current_heading_indent = (preface_indent_level, False)
                 if outline_preface_paragraphs:
                     increment_outlined_preface_count(summary)
-                    actions.append(f"apply preface level {indent_level + 1} outline")
+                    actions.append(f"apply preface level {preface_indent_level + 1} outline")
                 action = "; ".join(actions)
 
             record_numbering_measurement(
@@ -2092,7 +2101,7 @@ def fix_outline_paragraphs(
                 p=p,
                 level=level,
                 indent_level=indent_level,
-                set_outline=main_outline_started or outline_preface_paragraphs,
+                set_outline=main_outline_started,
             )
 
             append_numbering_debug_log(
