@@ -14,15 +14,23 @@ class ProcessOptions:
     enable_level1_level2_body_first_line_indent: bool = False
     word_com_check_body_font_when_xml_not_14: bool = False
     normalize_body_style_to_none: bool = False
+    skip_chapter_three_table_layout: bool = False
+    skip_chapter_three_table_color: bool = False
     skip_chapter_three_tables: bool = False
     skip_chapter_three_indents: bool = False
     skip_all_under_chapter_three: bool = False
 
     def __post_init__(self) -> None:
         # Backward compatibility for older callers. The GUI no longer exposes
-        # the combined "skip all" option.
+        # the combined "skip all" option, and skip_chapter_three_tables is a
+        # deprecated alias for skipping both table layout and color.
+        if self.skip_chapter_three_tables:
+            self.skip_chapter_three_table_layout = True
+            self.skip_chapter_three_table_color = True
+
         if self.skip_all_under_chapter_three:
-            self.skip_chapter_three_tables = True
+            self.skip_chapter_three_table_layout = True
+            self.skip_chapter_three_table_color = True
             self.skip_chapter_three_indents = True
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .constants import NS, TEMPLATE_OUTLINE_INDENTS
 from .numbering import has_auto_numbering, paragraph_style_id
 from .outline import detect_manual_numbering_prefix
@@ -50,6 +52,8 @@ def build_table_log_record(
     color_fixed: bool,
     changed_to_gray: int,
     cleared_colors: int,
+    chapter_three_table_layout_skipped: bool = False,
+    chapter_three_table_color_skipped: bool = False,
     shading_debug: list[str] | None = None,
 ) -> dict[str, object]:
     return {
@@ -68,8 +72,20 @@ def build_table_log_record(
         "color_fixed": color_fixed,
         "changed_to_gray": changed_to_gray,
         "cleared_colors": cleared_colors,
+        "chapter_three_table_layout_skipped": chapter_three_table_layout_skipped,
+        "chapter_three_table_color_skipped": chapter_three_table_color_skipped,
         "shading_debug": list(shading_debug or []),
     }
+
+
+def _chapter_three_table_skip_reason(*, layout_skipped: bool, color_skipped: bool) -> str:
+    if layout_skipped and color_skipped:
+        return "chapter three protected table; layout and color skipped"
+    if layout_skipped:
+        return "chapter three protected table; layout skipped; color allowed"
+    if color_skipped:
+        return "chapter three protected table; layout allowed; color skipped"
+    return "chapter three protected table"
 
 def _parse_twips_attr(element, attr_name: str) -> int | None:
     if element is None:
@@ -280,10 +296,26 @@ def process_tables_in_part(
             summary.skipped_first_page_tables += 1
             continue
 
-        if (
-            getattr(options, "skip_chapter_three_tables", False)
-            and protected_context.is_table_protected(tbl, part_name)
-        ):
+        is_chapter_three_table = protected_context.is_table_protected(tbl, part_name)
+        chapter_three_table_layout_skipped = bool(
+            is_chapter_three_table and getattr(options, "skip_chapter_three_table_layout", False)
+        )
+        chapter_three_table_color_skipped = bool(
+            is_chapter_three_table and getattr(options, "skip_chapter_three_table_color", False)
+        )
+        effective_fix_table_layout = bool(options.fix_table_layout)
+        effective_fix_color = bool(options.fix_color)
+        if chapter_three_table_layout_skipped:
+            effective_fix_table_layout = False
+        if chapter_three_table_color_skipped:
+            effective_fix_color = False
+        effective_options = replace(
+            options,
+            fix_table_layout=effective_fix_table_layout,
+            fix_color=effective_fix_color,
+        )
+
+        if is_chapter_three_table and not effective_fix_table_layout and not effective_fix_color:
             summary.table_log_records.append(
                 build_table_log_record(
                     part_name=part_name,
@@ -295,12 +327,17 @@ def process_tables_in_part(
                     column_count=column_count,
                     table_type="skipped_chapter_three_table",
                     action="skipped",
-                    reason=protected_context.protected_reason("table"),
+                    reason=_chapter_three_table_skip_reason(
+                        layout_skipped=chapter_three_table_layout_skipped,
+                        color_skipped=chapter_three_table_color_skipped,
+                    ),
                     special_layout_used=False,
                     layout_fixed=False,
                     color_fixed=False,
                     changed_to_gray=0,
                     cleared_colors=0,
+                    chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
+                    chapter_three_table_color_skipped=chapter_three_table_color_skipped,
                     shading_debug=[],
                 )
             )
@@ -329,7 +366,7 @@ def process_tables_in_part(
             )
             continue
 
-        special_layout = options.fix_table_layout and column_count <= 4
+        special_layout = effective_options.fix_table_layout and column_count <= 4
         special_table_geometry = None
         if special_layout:
             special_table_geometry = _resolve_special_table_geometry(
@@ -339,19 +376,19 @@ def process_tables_in_part(
             )
         changed_to_gray, cleared_colors, shading_debug = process_table(
             tbl,
-            options,
+            effective_options,
             stop=stop,
             special_layout=special_layout,
             special_table_geometry=special_table_geometry,
         )
-        layout_fixed = bool(options.fix_table_layout)
-        color_fixed = bool(options.fix_color)
-        if options.fix_table_layout:
+        layout_fixed = bool(effective_options.fix_table_layout)
+        color_fixed = bool(effective_options.fix_color)
+        if effective_options.fix_table_layout:
             if special_layout:
                 table_type = "special_table"
                 action = (
                     "apply_special_table_format_and_color"
-                    if options.fix_color
+                    if effective_options.fix_color
                     else "apply_special_table_format"
                 )
                 reason = "column_count <= 4"
@@ -359,11 +396,11 @@ def process_tables_in_part(
                 table_type = "normal_table"
                 action = (
                     "apply_normal_table_format_and_color"
-                    if options.fix_color
+                    if effective_options.fix_color
                     else "apply_normal_table_format"
                 )
                 reason = "column_count > 4"
-        elif options.fix_color:
+        elif effective_options.fix_color:
             table_type = "color_only_table"
             action = "apply_color_only"
             reason = "fix_table_layout disabled but fix_color enabled"
@@ -371,6 +408,13 @@ def process_tables_in_part(
             table_type = "skipped"
             action = "skipped"
             reason = "no table actions enabled"
+        if is_chapter_three_table and (
+            chapter_three_table_layout_skipped or chapter_three_table_color_skipped
+        ):
+            reason = _chapter_three_table_skip_reason(
+                layout_skipped=chapter_three_table_layout_skipped,
+                color_skipped=chapter_three_table_color_skipped,
+            )
         summary.changed_to_gray += changed_to_gray
         summary.cleared_colors += cleared_colors
         if special_layout:
@@ -394,6 +438,8 @@ def process_tables_in_part(
                 color_fixed=color_fixed,
                 changed_to_gray=changed_to_gray,
                 cleared_colors=cleared_colors,
+                chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
+                chapter_three_table_color_skipped=chapter_three_table_color_skipped,
                 shading_debug=shading_debug,
             )
         )

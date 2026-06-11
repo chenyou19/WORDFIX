@@ -6,7 +6,8 @@ from pathlib import Path
 
 from docx_fixer.gui_app import (
     DEFAULT_SKIP_CHAPTER_THREE_INDENTS,
-    DEFAULT_SKIP_CHAPTER_THREE_TABLES,
+    DEFAULT_SKIP_CHAPTER_THREE_TABLE_COLOR,
+    DEFAULT_SKIP_CHAPTER_THREE_TABLE_LAYOUT,
     DEFAULT_WINDOW_GEOMETRY,
     MIN_WINDOW_SIZE,
     DocxFixerApp,
@@ -66,13 +67,16 @@ class GuiAppTests(unittest.TestCase):
         self.assertEqual(app.progress_var.value, 100)
 
     def test_chapter_three_gui_options_default_to_checked_and_old_label_removed(self):
-        self.assertTrue(DEFAULT_SKIP_CHAPTER_THREE_TABLES)
+        self.assertTrue(DEFAULT_SKIP_CHAPTER_THREE_TABLE_LAYOUT)
+        self.assertTrue(DEFAULT_SKIP_CHAPTER_THREE_TABLE_COLOR)
         self.assertTrue(DEFAULT_SKIP_CHAPTER_THREE_INDENTS)
 
+        chapter_three = "".join(chr(code) for code in [0x53C3, 0x3001, 0x50F9, 0x683C, 0x5F62, 0x6210, 0x4E4B, 0x4E3B, 0x8981, 0x56E0, 0x7D20, 0x5206, 0x6790])
         gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
-        self.assertIn("參、價格形成之主要因素分析：表格不調整", gui_source)
-        self.assertIn("參、價格形成之主要因素分析：縮排不調整", gui_source)
-        self.assertNotIn("區段全部不調整", gui_source)
+        self.assertIn(f"{chapter_three}\uff1a\u8868\u683c\u7248\u9762\u4e0d\u8abf\u6574", gui_source)
+        self.assertIn(f"{chapter_three}\uff1a\u8868\u683c\u984f\u8272\u4e0d\u8abf\u6574", gui_source)
+        self.assertIn(f"{chapter_three}\uff1a\u7e2e\u6392\u4e0d\u8abf\u6574", gui_source)
+        self.assertNotIn(f"{chapter_three}\uff1a\u8868\u683c\u4e0d\u8abf\u6574", gui_source)
 
 
 if __name__ == "__main__":

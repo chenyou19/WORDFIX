@@ -1016,14 +1016,26 @@ class DocxProcessorTests(unittest.TestCase):
 
     def test_chapter_three_table_and_indent_options_are_independent(self):
         cases = [
-            (True, True, "skipped_chapter_three_table", True),
-            (True, False, "skipped_chapter_three_table", False),
-            (False, True, "special_table", True),
-            (False, False, "special_table", False),
+            (True, True, True, "skipped_chapter_three_table", False, False, True),
+            (True, False, False, "color_only_table", False, True, False),
+            (False, True, True, "special_table", True, False, True),
+            (False, False, False, "special_table", True, True, False),
         ]
 
-        for skip_tables, skip_indents, expected_table_type, expect_indent_skipped in cases:
-            with self.subTest(skip_tables=skip_tables, skip_indents=skip_indents):
+        for (
+            skip_table_layout,
+            skip_table_color,
+            skip_indents,
+            expected_table_type,
+            expected_layout_fixed,
+            expected_color_fixed,
+            expect_indent_skipped,
+        ) in cases:
+            with self.subTest(
+                skip_table_layout=skip_table_layout,
+                skip_table_color=skip_table_color,
+                skip_indents=skip_indents,
+            ):
                 with tempfile.TemporaryDirectory() as tmp:
                     input_docx = Path(tmp) / "input.docx"
                     output_docx = Path(tmp) / "output.docx"
@@ -1034,11 +1046,12 @@ class DocxProcessorTests(unittest.TestCase):
                         output_docx,
                         ProcessOptions(
                             fix_table_layout=True,
-                            fix_color=False,
+                            fix_color=True,
                             fix_paragraph=True,
                             remove_all_outline_levels=True,
                             normalize_with_word_com=False,
-                            skip_chapter_three_tables=skip_tables,
+                            skip_chapter_three_table_layout=skip_table_layout,
+                            skip_chapter_three_table_color=skip_table_color,
                             skip_chapter_three_indents=skip_indents,
                         ),
                     )
@@ -1051,11 +1064,17 @@ class DocxProcessorTests(unittest.TestCase):
                     chapter_body_ind = paragraphs[4].find("./w:pPr/w:ind", NS)
 
                     self.assertEqual(summary.table_log_records[1]["table_type"], expected_table_type)
-                    self.assertNotIn(
-                        "all table layout and color fixes skipped",
-                        "\n".join(str(record.get("reason")) for record in summary.table_log_records),
+                    self.assertEqual(summary.table_log_records[1]["layout_fixed"], expected_layout_fixed)
+                    self.assertEqual(summary.table_log_records[1]["color_fixed"], expected_color_fixed)
+                    self.assertEqual(
+                        summary.table_log_records[1]["chapter_three_table_layout_skipped"],
+                        skip_table_layout,
                     )
-                    if skip_tables:
+                    self.assertEqual(
+                        summary.table_log_records[1]["chapter_three_table_color_skipped"],
+                        skip_table_color,
+                    )
+                    if not expected_layout_fixed:
                         self.assertIsNone(tables[1].find("w:tblPr", NS))
                     else:
                         self.assertIsNotNone(tables[1].find("w:tblPr", NS))

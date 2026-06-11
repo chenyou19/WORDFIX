@@ -35,6 +35,8 @@ class CliOptionTests(unittest.TestCase):
             "--word-com-check-body-font",
             "--skip-special-layout-under-chapter-three",
             "--skip-chapter-three-tables",
+            "--skip-chapter-three-table-layout",
+            "--skip-chapter-three-table-color",
             "--skip-chapter-three-indents",
         ])
 
@@ -42,6 +44,8 @@ class CliOptionTests(unittest.TestCase):
         self.assertTrue(args.word_com_check_body_font)
         self.assertTrue(args.skip_special_layout_under_chapter_three)
         self.assertTrue(args.skip_chapter_three_tables)
+        self.assertTrue(args.skip_chapter_three_table_layout)
+        self.assertTrue(args.skip_chapter_three_table_color)
         self.assertTrue(args.skip_chapter_three_indents)
 
     def test_body_style_normalization_hidden_argument_can_enable_internal_option(self):
@@ -84,20 +88,24 @@ class CliOptionTests(unittest.TestCase):
         args = parse_args(["input.docx", "output.docx"])
         options = _build_process_options(args)
 
-        self.assertTrue(args.skip_chapter_three_tables)
+        self.assertIsNone(args.skip_chapter_three_tables)
+        self.assertTrue(args.skip_chapter_three_table_layout)
+        self.assertTrue(args.skip_chapter_three_table_color)
         self.assertTrue(args.skip_chapter_three_indents)
-        self.assertTrue(options.skip_chapter_three_tables)
+        self.assertTrue(options.skip_chapter_three_table_layout)
+        self.assertTrue(options.skip_chapter_three_table_color)
         self.assertTrue(options.skip_chapter_three_indents)
 
-    def test_new_chapter_three_options_can_be_disabled_independently(self):
+    def test_new_chapter_three_table_options_can_be_disabled_independently(self):
         args = parse_args([
             "input.docx",
             "output.docx",
-            "--no-skip-chapter-three-tables",
+            "--no-skip-chapter-three-table-layout",
         ])
         options = _build_process_options(args)
 
-        self.assertFalse(options.skip_chapter_three_tables)
+        self.assertFalse(options.skip_chapter_three_table_layout)
+        self.assertTrue(options.skip_chapter_three_table_color)
         self.assertTrue(options.skip_chapter_three_indents)
 
     def test_no_skip_all_under_chapter_three_disables_both_legacy_protections(self):
@@ -105,8 +113,17 @@ class CliOptionTests(unittest.TestCase):
         options = _build_process_options(args)
 
         self.assertFalse(args.skip_all_under_chapter_three)
-        self.assertFalse(options.skip_chapter_three_tables)
+        self.assertFalse(options.skip_chapter_three_table_layout)
+        self.assertFalse(options.skip_chapter_three_table_color)
         self.assertFalse(options.skip_chapter_three_indents)
+
+    def test_legacy_chapter_three_tables_alias_maps_to_layout_and_color(self):
+        args = parse_args(["input.docx", "output.docx", "--no-skip-chapter-three-tables"])
+        options = _build_process_options(args)
+
+        self.assertFalse(args.skip_chapter_three_tables)
+        self.assertFalse(options.skip_chapter_three_table_layout)
+        self.assertFalse(options.skip_chapter_three_table_color)
 
     def test_old_special_layout_alias_maps_to_both_chapter_three_options(self):
         args = parse_args([
@@ -118,7 +135,8 @@ class CliOptionTests(unittest.TestCase):
         options = _build_process_options(args)
 
         self.assertTrue(args.skip_special_layout_under_chapter_three)
-        self.assertTrue(options.skip_chapter_three_tables)
+        self.assertTrue(options.skip_chapter_three_table_layout)
+        self.assertTrue(options.skip_chapter_three_table_color)
         self.assertTrue(options.skip_chapter_three_indents)
 
     def test_old_level_two_body_indent_argument_is_kept_as_alias(self):

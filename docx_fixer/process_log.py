@@ -385,6 +385,8 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"special_layout_used: {_bool_text(record['special_layout_used'])}",
                 f"layout_fixed: {_bool_text(record['layout_fixed'])}",
                 f"color_fixed: {_bool_text(record['color_fixed'])}",
+                f"chapter_three_table_layout_skipped: {_bool_text(record.get('chapter_three_table_layout_skipped', False))}",
+                f"chapter_three_table_color_skipped: {_bool_text(record.get('chapter_three_table_color_skipped', False))}",
                 f"changed_to_gray: {record['changed_to_gray']}",
                 f"cleared_colors: {record['cleared_colors']}",
                 f"shading_debug: {' | '.join(record.get('shading_debug', [])) if record.get('shading_debug') else 'none'}",

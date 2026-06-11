@@ -33,6 +33,26 @@ def make_table(row_columns: list[int]):
     return tbl
 
 
+def make_shaded_table(row_columns: list[int], fill: str = "808080"):
+    tbl = make_table(row_columns)
+    first_tc = tbl.find("w:tr/w:tc", NS)
+    tc_pr = first_tc.find("w:tcPr", NS)
+    if tc_pr is None:
+        tc_pr = etree.SubElement(first_tc, qn("tcPr"))
+    shd = etree.SubElement(tc_pr, qn("shd"))
+    shd.set(qn("val"), "clear")
+    shd.set(qn("fill"), fill)
+    shd.set(qn("color"), "auto")
+    return tbl
+
+
+def first_table_fill(tbl) -> str | None:
+    shd = tbl.find(".//w:tcPr/w:shd", NS)
+    if shd is None:
+        return None
+    return shd.get(qn("fill"))
+
+
 def make_paragraph(
     text: str,
     *,
@@ -319,8 +339,10 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; table layout and color fixes skipped by option skip_chapter_three_tables",
+                "chapter three protected table; layout and color skipped",
             )
+            self.assertTrue(summary.table_log_records[1]["chapter_three_table_layout_skipped"])
+            self.assertTrue(summary.table_log_records[1]["chapter_three_table_color_skipped"])
             self.assertEqual(summary.table_log_records[2]["table_type"], "special_table")
             self.assertEqual(summary.table_log_records[2]["special_layout_used"], True)
 
@@ -331,6 +353,90 @@ class TableFormatTests(unittest.TestCase):
             self.assertIsNone(tables[1].find("w:tblPr", NS))
             self.assertIsNone(table_setting(tables[1], "tblInd", "w"))
             self.assertEqual(table_setting(tables[2], "jc"), "right")
+
+    def test_processor_allows_color_only_under_chapter_three_when_only_layout_is_skipped(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("\u58f9\u3001\u5e8f\u8a00"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("\u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790"))
+        body.append(make_shaded_table([3, 3], fill="808080"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr("word/document.xml", etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True))
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=True,
+                    fix_color=True,
+                    fix_paragraph=False,
+                    normalize_with_word_com=False,
+                    skip_chapter_three_table_layout=True,
+                    skip_chapter_three_table_color=False,
+                ),
+            )
+
+            record = summary.table_log_records[1]
+            self.assertEqual(record["table_type"], "color_only_table")
+            self.assertEqual(record["action"], "apply_color_only")
+            self.assertEqual(record["reason"], "chapter three protected table; layout skipped; color allowed")
+            self.assertFalse(record["layout_fixed"])
+            self.assertTrue(record["color_fixed"])
+            self.assertTrue(record["chapter_three_table_layout_skipped"])
+            self.assertFalse(record["chapter_three_table_color_skipped"])
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertIsNone(table_setting(tables[1], "jc"))
+            self.assertEqual(first_table_fill(tables[1]), "D9D9D9")
+
+    def test_processor_allows_layout_only_under_chapter_three_when_only_color_is_skipped(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("\u58f9\u3001\u5e8f\u8a00"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("\u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790"))
+        body.append(make_shaded_table([3, 3], fill="808080"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr("word/document.xml", etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True))
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=True,
+                    fix_color=True,
+                    fix_paragraph=False,
+                    normalize_with_word_com=False,
+                    skip_chapter_three_table_layout=False,
+                    skip_chapter_three_table_color=True,
+                ),
+            )
+
+            record = summary.table_log_records[1]
+            self.assertEqual(record["table_type"], "special_table")
+            self.assertEqual(record["action"], "apply_special_table_format")
+            self.assertEqual(record["reason"], "chapter three protected table; layout allowed; color skipped")
+            self.assertTrue(record["layout_fixed"])
+            self.assertFalse(record["color_fixed"])
+            self.assertFalse(record["chapter_three_table_layout_skipped"])
+            self.assertTrue(record["chapter_three_table_color_skipped"])
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertEqual(table_setting(tables[1], "jc"), "right")
+            self.assertEqual(first_table_fill(tables[1]), "808080")
 
     def test_processor_does_not_skip_other_chapter_three_titles(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
@@ -419,7 +525,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; table layout and color fixes skipped by option skip_chapter_three_tables",
+                "chapter three protected table; layout and color skipped",
             )
 
             with ZipFile(output_docx) as zin:
@@ -474,7 +580,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(summary.table_log_records[1]["special_layout_used"], False)
             self.assertEqual(
                 summary.table_log_records[1]["reason"],
-                "under chapter \u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790; table layout and color fixes skipped by option skip_chapter_three_tables",
+                "chapter three protected table; layout and color skipped",
             )
 
             with ZipFile(output_docx) as zin:

@@ -11,23 +11,34 @@ from .process_log import write_heading_suffix_log_file, write_process_log, write
 from .stop_controller import StopController
 
 
-def _chapter_three_options_from_args(args) -> tuple[bool, bool]:
-    skip_tables = args.skip_chapter_three_tables
+def _chapter_three_options_from_args(args) -> tuple[bool, bool, bool]:
+    skip_table_layout = args.skip_chapter_three_table_layout
+    skip_table_color = args.skip_chapter_three_table_color
     skip_indents = args.skip_chapter_three_indents
 
+    if args.skip_chapter_three_tables is not None:
+        skip_table_layout = args.skip_chapter_three_tables
+        skip_table_color = args.skip_chapter_three_tables
+
     if args.skip_all_under_chapter_three is not None:
-        skip_tables = args.skip_all_under_chapter_three
+        skip_table_layout = args.skip_all_under_chapter_three
+        skip_table_color = args.skip_all_under_chapter_three
         skip_indents = args.skip_all_under_chapter_three
 
     if args.skip_special_layout_under_chapter_three:
-        skip_tables = True
+        skip_table_layout = True
+        skip_table_color = True
         skip_indents = True
 
-    return skip_tables, skip_indents
+    return skip_table_layout, skip_table_color, skip_indents
 
 
 def _build_process_options(args, *, enable_default_actions: bool = False) -> ProcessOptions:
-    skip_chapter_three_tables, skip_chapter_three_indents = _chapter_three_options_from_args(args)
+    (
+        skip_chapter_three_table_layout,
+        skip_chapter_three_table_color,
+        skip_chapter_three_indents,
+    ) = _chapter_three_options_from_args(args)
     return ProcessOptions(
         fix_table_layout=True if enable_default_actions else args.table,
         fix_color=True if enable_default_actions else args.color,
@@ -38,7 +49,8 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         enable_level1_level2_body_first_line_indent=args.level1_level2_body_first_line_indent,
         word_com_check_body_font_when_xml_not_14=args.word_com_check_body_font,
         normalize_body_style_to_none=args.normalize_body_style_to_none,
-        skip_chapter_three_tables=skip_chapter_three_tables,
+        skip_chapter_three_table_layout=skip_chapter_three_table_layout,
+        skip_chapter_three_table_color=skip_chapter_three_table_color,
         skip_chapter_three_indents=skip_chapter_three_indents,
     )
 
@@ -160,15 +172,41 @@ def parse_args(argv: list[str]):
     parser.add_argument(
         "--skip-chapter-three-tables",
         action="store_true",
-        default=True,
+        default=None,
         dest="skip_chapter_three_tables",
-        help="Do not modify table layout or colors under chapter 參、價格形成之主要因素分析",
+        help="Deprecated alias: do not modify table layout or colors under chapter 參、價格形成之主要因素分析",
     )
     parser.add_argument(
         "--no-skip-chapter-three-tables",
         action="store_false",
         dest="skip_chapter_three_tables",
-        help="Allow table layout and color changes under chapter 參、價格形成之主要因素分析",
+        help="Deprecated alias: allow table layout and color changes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--skip-chapter-three-table-layout",
+        action="store_true",
+        default=True,
+        dest="skip_chapter_three_table_layout",
+        help="Do not modify table layout under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--no-skip-chapter-three-table-layout",
+        action="store_false",
+        dest="skip_chapter_three_table_layout",
+        help="Allow table layout changes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--skip-chapter-three-table-color",
+        action="store_true",
+        default=True,
+        dest="skip_chapter_three_table_color",
+        help="Do not modify table shading colors under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--no-skip-chapter-three-table-color",
+        action="store_false",
+        dest="skip_chapter_three_table_color",
+        help="Allow table shading color changes under chapter 參、價格形成之主要因素分析",
     )
     parser.add_argument(
         "--skip-chapter-three-indents",

@@ -393,7 +393,8 @@ def fix_docx_fast(
             try:
                 document_root_for_toc = etree.fromstring(zin.read("word/document.xml"), parser)
                 protect_chapter_three = (
-                    options.skip_chapter_three_tables
+                    options.skip_chapter_three_table_layout
+                    or options.skip_chapter_three_table_color
                     or options.skip_chapter_three_indents
                 )
                 protected_context = ProtectedRegionContext.from_document(
