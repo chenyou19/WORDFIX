@@ -9,6 +9,11 @@ from .indent_settings import load_saved_indent_settings
 from .models import ProcessOptions
 from .process_log import write_heading_suffix_log_file, write_process_log, write_table_log_file
 from .stop_controller import StopController
+from .table_color_settings import (
+    current_table_color_settings,
+    normalize_hex_color,
+    parse_color_list_text,
+)
 
 
 def _chapter_three_options_from_args(args) -> tuple[bool, bool, bool]:
@@ -33,6 +38,38 @@ def _chapter_three_options_from_args(args) -> tuple[bool, bool, bool]:
     return skip_table_layout, skip_table_color, skip_indents
 
 
+def _table_color_options_from_args(args) -> dict[str, object]:
+    saved = current_table_color_settings()
+    keep_colors = (
+        parse_color_list_text(args.table_keep_colors)
+        if args.table_keep_colors is not None
+        else list(saved["keep_colors"])
+    )
+    gray_colors = (
+        parse_color_list_text(args.table_gray_colors)
+        if args.table_gray_colors is not None
+        else list(saved["gray_colors"])
+    )
+    gray_target = (
+        normalize_hex_color(args.table_gray_target)
+        if args.table_gray_target is not None
+        else str(saved["gray_target"])
+    )
+    special_skip_colors = (
+        parse_color_list_text(args.special_color_skip_colors)
+        if args.special_color_skip_colors is not None
+        else list(saved["special_color_skip_colors"])
+    )
+    return {
+        "table_keep_colors": tuple(keep_colors),
+        "table_gray_colors": tuple(gray_colors),
+        "table_gray_target": gray_target,
+        "skip_special_color_tables": args.skip_special_color_tables,
+        "special_color_skip_colors": tuple(special_skip_colors),
+        "clear_special_colors_after_skip": args.clear_special_colors_after_skip,
+    }
+
+
 def _build_process_options(args, *, enable_default_actions: bool = False) -> ProcessOptions:
     (
         skip_chapter_three_table_layout,
@@ -54,6 +91,7 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         skip_chapter_three_indents=skip_chapter_three_indents,
         skip_nested_tables=args.skip_nested_tables,
         skip_log_output=args.skip_log_output,
+        **_table_color_options_from_args(args),
     )
 
 
@@ -101,6 +139,7 @@ def run_cli(args) -> int:
     print(f"skipped_first_page_tables={summary.skipped_first_page_tables}")
     print(f"skipped_small_tables={summary.skipped_small_tables}")
     print(f"skipped_nested_tables={summary.skipped_nested_tables}")
+    print(f"special_color_skipped_tables={summary.special_color_skipped_tables}")
     print(f"cross_page_tables={summary.cross_page_tables}")
     print(f"cross_page_resolved_tables={summary.cross_page_resolved_tables}")
     print(f"cross_page_still_split_tables={summary.cross_page_still_split_tables}")
@@ -262,6 +301,56 @@ def parse_args(argv: list[str]):
         action="store_false",
         dest="skip_all_under_chapter_three",
         help="Deprecated alias: allow both table and indent fixes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--skip-special-color-tables",
+        action="store_true",
+        default=False,
+        dest="skip_special_color_tables",
+        help="Skip the whole table when any cell shading matches the special color skip list",
+    )
+    parser.add_argument(
+        "--no-skip-special-color-tables",
+        action="store_false",
+        dest="skip_special_color_tables",
+        help="Do not skip tables based on the special color skip list",
+    )
+    parser.add_argument(
+        "--clear-special-colors-after-skip",
+        action="store_true",
+        default=False,
+        dest="clear_special_colors_after_skip",
+        help="After skipping a special color table, clear only the cells matching the skip list to no color",
+    )
+    parser.add_argument(
+        "--no-clear-special-colors-after-skip",
+        action="store_false",
+        dest="clear_special_colors_after_skip",
+        help="Keep the matched special colors when skipping a special color table",
+    )
+    parser.add_argument(
+        "--table-keep-colors",
+        default=None,
+        dest="table_keep_colors",
+        help="Comma separated HEX shading colors to keep unchanged (default: saved table color settings)",
+    )
+    parser.add_argument(
+        "--table-gray-colors",
+        default=None,
+        dest="table_gray_colors",
+        help="Comma separated HEX shading colors converted to the gray target (default: saved table color settings)",
+    )
+    parser.add_argument(
+        "--table-gray-target",
+        default=None,
+        dest="table_gray_target",
+        help="Target gray HEX used when converting shading colors (default: saved table color settings)",
+    )
+    parser.add_argument(
+        "--special-color-skip-colors",
+        default=None,
+        dest="special_color_skip_colors",
+        help="Comma separated HEX colors; a table is skipped entirely when any cell matches (default: saved table color settings)",
     )
     parser.add_argument(
         "--no-log",

@@ -28,6 +28,8 @@ def built_in_gui_defaults() -> dict[str, bool]:
         "skip_chapter_three_table_layout": True,
         "skip_chapter_three_table_color": True,
         "skip_chapter_three_indents": False,
+        "skip_special_color_tables": False,
+        "clear_special_colors_after_skip": False,
     }
 
 

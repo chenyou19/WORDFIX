@@ -66,6 +66,21 @@ CLI 與 GUI 的參章縮排預設不同：CLI 的 `--skip-chapter-three-indents`
 | `--skip-nested-tables` | 目前參數 | 開啟 | 跳過表格內含表格，或本身位於其他表格內的表格。 |
 | `--no-skip-nested-tables` | 目前參數 |  | 允許處理上述巢狀表格。 |
 
+## 表格顏色參數
+
+| 參數 | 狀態 | 預設 | 說明 |
+| --- | --- | --- | --- |
+| `--table-keep-colors DDEBF7,FFFFFF` | 目前參數 | 讀取保存的 `table_color_settings` | 逗號分隔 HEX 清單，命中時底色保留。 |
+| `--table-gray-colors BFBFBF,C0C0C0` | 目前參數 | 讀取保存的 `table_color_settings` | 逗號分隔 HEX 清單，命中時改成目標灰色。 |
+| `--table-gray-target D9D9D9` | 目前參數 | 讀取保存的 `table_color_settings` | 轉灰色時使用的目標灰色。 |
+| `--special-color-skip-colors FFFF00,FF0000` | 目前參數 | 讀取保存的 `table_color_settings` | 表格任一格底色命中清單就整張表跳過。 |
+| `--skip-special-color-tables` | 目前參數 | 關閉 | 啟用特殊顏色表格整張跳過。 |
+| `--no-skip-special-color-tables` | 目前參數 |  | 停用特殊顏色表格跳過。 |
+| `--clear-special-colors-after-skip` | 目前參數 | 關閉 | 跳過後只把命中指定清單的儲存格底色清成無色。 |
+| `--no-clear-special-colors-after-skip` | 目前參數 |  | 跳過後保留命中的指定顏色。 |
+
+CLI 沒指定顏色清單參數時，會讀取 `indent_defaults.json` 內保存的 `table_color_settings`；檔案不存在時使用內建預設。
+
 ## Log 與輸出參數
 
 | 參數 | 狀態 | 說明 |

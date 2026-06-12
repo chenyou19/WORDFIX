@@ -21,6 +21,8 @@ GUI 由 `main.py` 在沒有輸入、輸出檔參數時啟動，主要介面在 `
 | 參、價格形成之主要因素分析：表格版面不調整 | `skip_chapter_three_table_layout` | 勾選 |
 | 參、價格形成之主要因素分析：表格顏色不調整 | `skip_chapter_three_table_color` | 勾選 |
 | 參、價格形成之主要因素分析：縮排不調整 | `skip_chapter_three_indents` | 不勾選 |
+| 跳過特殊顏色表格（第三頁） | `skip_special_color_tables` | 不勾選 |
+| 跳過後將指定顏色改回無色彩（第三頁） | `clear_special_colors_after_skip` | 不勾選 |
 
 注意：GUI 內建預設不是「參章縮排不調整」。參章保護已拆成表格版面、表格顏色、縮排三個選項，其中只有表格版面與表格顏色預設勾選。
 
@@ -43,9 +45,25 @@ GUI 由 `main.py` 在沒有輸入、輸出檔參數時啟動，主要介面在 `
 - **參、價格形成之主要因素分析：表格顏色不調整**：只停用該章內表格底色處理，不影響版面。
 - **參、價格形成之主要因素分析：縮排不調整**：只停用該章內段落縮排、firstLine、hanging、tabs、字元縮排清理與 Word COM 內文縮排補救；真正標題的 outline level 仍會恢復。
 
+## 表格顏色設定（第三頁）
+
+第三頁「表格顏色設定」控制底色規則與特殊顏色跳過，分成三區：
+
+- **保留顏色（不調整）**：HEX 色碼清單，命中時底色保留。每行一個或逗號分隔，可輸入 `#DDEBF7` 或 `DDEBF7`，內部統一轉成大寫 6 碼。內建預設 `DDEBF7`。
+- **轉成灰色的顏色**：HEX 色碼清單，命中時改成「目標灰色」（預設 `D9D9D9`）。內建清單：`BFBFBF`、`C0C0C0`、`A6A6A6`、`808080`；比目標灰色更深的灰色不在清單內也會用既有規則轉灰。
+- **指定顏色跳過整張表**：勾選「跳過特殊顏色表格」後，表格中任一格底色命中指定清單，整張表跳過版面與顏色處理（`special_color_skipped_table`）。再勾選「跳過後將指定顏色改回無色彩」則只把命中清單的儲存格底色清成無色，其他顏色不動。
+
+第三頁底部按鈕：
+
+- **套用顏色設定**：只套用到目前程式執行中的設定，不保存。
+- **保存成預設顏色設定**：寫入 `indent_defaults.json` 的 `table_color_settings` 區塊，下次開 GUI 自動載入。
+- **還原內建顏色設定**：回復 `built_in_table_color_settings()`。
+
+兩個 checkbox 的勾選狀態屬於 `gui_defaults`，由第一頁「保存目前勾選為預設方案」保存。
+
 ## 預設方案按鈕
 
-- **保存目前勾選為預設方案**：將 GUI 第一頁勾選狀態寫入 `indent_defaults.json` 的 `gui_defaults` 區塊。
-- **還原內建勾選預設**：把 GUI 第一頁勾選狀態還原成 `built_in_gui_defaults()`。
+- **保存目前勾選為預設方案**：將 GUI 勾選狀態（含第三頁兩個 checkbox）寫入 `indent_defaults.json` 的 `gui_defaults` 區塊。
+- **還原內建勾選預設**：把 GUI 勾選狀態還原成 `built_in_gui_defaults()`。
 
-縮排設定頁另有「保存成預設樣式」與「還原內建預設」，那兩個按鈕影響 `indent_settings`，不等同於 GUI 第一頁的 `gui_defaults`。
+縮排設定頁另有「保存成預設樣式」與「還原內建預設」，那兩個按鈕影響 `indent_settings`；表格顏色設定頁的按鈕影響 `table_color_settings`，皆不等同於 `gui_defaults`。

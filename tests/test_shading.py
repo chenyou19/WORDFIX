@@ -5,7 +5,7 @@ import unittest
 from lxml import etree
 
 from docx_fixer.constants import NS, W_NS
-from docx_fixer.shading import get_shading_action, get_shading_decision
+from docx_fixer.shading import get_shading_action, get_shading_decision, normalize_fill_hex
 from docx_fixer.xml_utils import qn
 
 
@@ -74,6 +74,54 @@ class ShadingTests(unittest.TestCase):
 
     def test_explicit_light_blue_is_cleared(self):
         self.assertEqual(get_shading_action(make_shd(fill="DDEBF7")), "clear")
+
+    def test_normalize_fill_hex(self):
+        self.assertEqual(normalize_fill_hex("#ddebf7"), "DDEBF7")
+        self.assertEqual(normalize_fill_hex("DDEBF7"), "DDEBF7")
+        self.assertIsNone(normalize_fill_hex("auto"))
+        self.assertIsNone(normalize_fill_hex("ZZZZZZ"))
+        self.assertIsNone(normalize_fill_hex(None))
+        self.assertIsNone(normalize_fill_hex(""))
+
+    def test_keep_color_list_overrides_clear_rule(self):
+        decision = get_shading_decision(make_shd(fill="DDEBF7"), keep_colors=("DDEBF7",))
+
+        self.assertEqual(decision["action"], "keep")
+        self.assertEqual(decision["reason"], "matched keep color list")
+        self.assertEqual(decision["matched_keep_color"], "DDEBF7")
+        self.assertIsNone(decision["matched_gray_color"])
+
+    def test_keep_color_list_matches_hash_prefixed_fill(self):
+        decision = get_shading_decision(make_shd(fill="#ddebf7"), keep_colors=("DDEBF7",))
+
+        self.assertEqual(decision["action"], "keep")
+        self.assertEqual(decision["reason"], "matched keep color list")
+
+    def test_gray_color_list_forces_gray_action(self):
+        decision = get_shading_decision(make_shd(fill="FFC000"), gray_colors=("FFC000",))
+
+        self.assertEqual(decision["action"], "gray")
+        self.assertEqual(decision["reason"], "matched gray color list")
+        self.assertEqual(decision["matched_gray_color"], "FFC000")
+
+    def test_keep_color_list_wins_over_gray_color_list(self):
+        decision = get_shading_decision(
+            make_shd(fill="BFBFBF"),
+            keep_colors=("BFBFBF",),
+            gray_colors=("BFBFBF",),
+        )
+
+        self.assertEqual(decision["action"], "keep")
+        self.assertEqual(decision["reason"], "matched keep color list")
+
+    def test_gray_target_changes_darkness_threshold(self):
+        decision = get_shading_decision(make_shd(fill="D9D9D9"), gray_target="F2F2F2")
+
+        self.assertEqual(decision["action"], "gray")
+        self.assertEqual(decision["gray_target"], "F2F2F2")
+
+        decision = get_shading_decision(make_shd(fill="D9D9D9"), gray_target="808080")
+        self.assertEqual(decision["action"], "keep")
 
 
 if __name__ == "__main__":

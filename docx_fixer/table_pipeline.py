@@ -10,7 +10,13 @@ from .protected_region import (
     _outline_level_from_identity,
     find_table_first_level_heading,
 )
-from .table_format import process_table, table_cell_count, table_column_count
+from .table_format import (
+    clear_matching_special_colors,
+    process_table,
+    table_cell_count,
+    table_column_count,
+    table_has_special_skip_color,
+)
 from .xml_utils import paragraph_text, qn
 
 def _normalize_table_log_text(text: str, limit: int = 100) -> str:
@@ -70,6 +76,12 @@ def build_table_log_record(
     special_left_indent_twips: int | None = None,
     special_width_twips: int | None = None,
     special_text_width_twips: int | None = None,
+    special_color_skip_matched: bool = False,
+    special_color_skip_colors: list[str] | None = None,
+    special_color_cleared_count: int = 0,
+    table_keep_colors: list[str] | None = None,
+    table_gray_colors: list[str] | None = None,
+    table_gray_target: str = "D9D9D9",
 ) -> dict[str, object]:
     special_right_edge_twips: int | None = None
     special_overflow_twips: int | None = None
@@ -104,6 +116,12 @@ def build_table_log_record(
         "special_text_width_twips": special_text_width_twips,
         "special_right_edge_twips": special_right_edge_twips,
         "special_overflow_twips": special_overflow_twips,
+        "special_color_skip_matched": special_color_skip_matched,
+        "special_color_skip_colors": list(special_color_skip_colors or []),
+        "special_color_cleared_count": special_color_cleared_count,
+        "table_keep_colors": list(table_keep_colors or []),
+        "table_gray_colors": list(table_gray_colors or []),
+        "table_gray_target": table_gray_target,
         "shading_debug": list(shading_debug or []),
     }
 
@@ -291,6 +309,17 @@ def process_tables_in_part(
     tables = root.xpath(".//w:tbl", namespaces=NS)
     table_count = len(tables)
 
+    color_settings_fields = {
+        "table_keep_colors": list(getattr(options, "table_keep_colors", ()) or ()),
+        "table_gray_colors": list(getattr(options, "table_gray_colors", ()) or ()),
+        "table_gray_target": str(getattr(options, "table_gray_target", "D9D9D9") or "D9D9D9"),
+    }
+    special_color_skip_colors = tuple(getattr(options, "special_color_skip_colors", ()) or ())
+    skip_special_color_tables = bool(getattr(options, "skip_special_color_tables", False))
+    clear_special_colors_after_skip = bool(
+        getattr(options, "clear_special_colors_after_skip", False)
+    )
+
     for table_index, tbl in enumerate(tables, start=1):
         if stop:
             stop.check()
@@ -329,6 +358,7 @@ def process_tables_in_part(
                     color_fixed=False,
                     changed_to_gray=0,
                     cleared_colors=0,
+                    **color_settings_fields,
                 )
             )
             summary.skipped_first_page_tables += 1
@@ -356,6 +386,7 @@ def process_tables_in_part(
                     changed_to_gray=0,
                     cleared_colors=0,
                     shading_debug=[],
+                    **color_settings_fields,
                 )
             )
             continue
@@ -403,9 +434,49 @@ def process_tables_in_part(
                     chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
                     chapter_three_table_color_skipped=chapter_three_table_color_skipped,
                     shading_debug=[],
+                    **color_settings_fields,
                 )
             )
             continue
+
+        if skip_special_color_tables and special_color_skip_colors:
+            special_color_matched, matched_skip_colors = table_has_special_skip_color(
+                tbl,
+                special_color_skip_colors,
+            )
+            if special_color_matched:
+                special_color_cleared_count = 0
+                if clear_special_colors_after_skip:
+                    special_color_cleared_count = clear_matching_special_colors(
+                        tbl,
+                        special_color_skip_colors,
+                    )
+                summary.special_color_skipped_tables += 1
+                summary.table_log_records.append(
+                    build_table_log_record(
+                        part_name=part_name,
+                        table_index=table_index,
+                        global_table_index=global_table_index,
+                        table_name=table_name,
+                        first_level_heading=first_level_heading,
+                        cell_count=cell_count,
+                        column_count=column_count,
+                        table_type="special_color_skipped_table",
+                        action="skipped_special_color_table",
+                        reason="matched special color skip list",
+                        special_layout_used=False,
+                        layout_fixed=False,
+                        color_fixed=special_color_cleared_count > 0,
+                        changed_to_gray=0,
+                        cleared_colors=0,
+                        special_color_skip_matched=True,
+                        special_color_skip_colors=matched_skip_colors,
+                        special_color_cleared_count=special_color_cleared_count,
+                        shading_debug=[],
+                        **color_settings_fields,
+                    )
+                )
+                continue
 
         if cell_count <= 4:
             summary.skipped_small_tables += 1
@@ -426,6 +497,7 @@ def process_tables_in_part(
                     color_fixed=False,
                     changed_to_gray=0,
                     cleared_colors=0,
+                    **color_settings_fields,
                 )
             )
             continue
@@ -528,6 +600,7 @@ def process_tables_in_part(
                 special_width_twips=special_width_twips,
                 special_text_width_twips=special_text_width_twips,
                 shading_debug=shading_debug,
+                **color_settings_fields,
             )
         )
 

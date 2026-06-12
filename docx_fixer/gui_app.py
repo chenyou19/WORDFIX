@@ -31,6 +31,15 @@ from .models import ProcessOptions
 from .path_utils import is_same_file_path
 from .process_log import write_heading_suffix_log_file, write_process_log, write_table_log_file
 from .stop_controller import StopController
+from .table_color_settings import (
+    built_in_table_color_settings,
+    format_color_list_text,
+    get_table_color_settings_path,
+    load_saved_table_color_settings,
+    normalize_hex_color,
+    parse_color_list_text,
+    save_table_color_settings,
+)
 
 DEFAULT_WINDOW_GEOMETRY = "1080x760"
 MIN_WINDOW_SIZE = (980, 680)
@@ -94,6 +103,7 @@ class DocxFixerApp:
         }
         self.indent_settings_load_error: str | None = None
         self.gui_defaults_load_error: str | None = None
+        self.table_color_settings_load_error: str | None = None
 
         try:
             load_saved_indent_settings()
@@ -105,6 +115,13 @@ class DocxFixerApp:
         except Exception as exc:
             self.gui_defaults_load_error = str(exc)
             gui_defaults = built_in_gui_defaults()
+
+        try:
+            table_color_settings = load_saved_table_color_settings()
+        except Exception as exc:
+            self.table_color_settings_load_error = str(exc)
+            table_color_settings = built_in_table_color_settings()
+        self.applied_table_color_settings = table_color_settings
 
         self.fix_table_var = tk.BooleanVar(value=gui_defaults["fix_table"])
         self.fix_color_var = tk.BooleanVar(value=gui_defaults["fix_color"])
@@ -125,6 +142,13 @@ class DocxFixerApp:
             value=gui_defaults["skip_chapter_three_table_color"]
         )
         self.skip_chapter_three_indents_var = tk.BooleanVar(value=gui_defaults["skip_chapter_three_indents"])
+        self.skip_special_color_tables_var = tk.BooleanVar(
+            value=gui_defaults["skip_special_color_tables"]
+        )
+        self.clear_special_colors_after_skip_var = tk.BooleanVar(
+            value=gui_defaults["clear_special_colors_after_skip"]
+        )
+        self.gray_target_var = tk.StringVar(value=str(table_color_settings["gray_target"]))
 
         self.status_var = tk.StringVar(value="請先選擇 .docx 檔案")
         self.progress_var = tk.DoubleVar(value=0)
@@ -142,6 +166,12 @@ class DocxFixerApp:
                 "無法讀取既有的 GUI 預設勾選方案，將改用內建預設。\n"
                 f"{self.gui_defaults_load_error}",
             )
+        if self.table_color_settings_load_error:
+            messagebox.showwarning(
+                "表格顏色設定載入失敗",
+                "無法讀取既有的表格顏色設定，將改用內建預設。\n"
+                f"{self.table_color_settings_load_error}",
+            )
         self._poll_queue()
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
 
@@ -157,8 +187,10 @@ class DocxFixerApp:
 
         process_tab = ttk.Frame(notebook, padding=10)
         indent_tab = ttk.Frame(notebook, padding=10)
+        table_color_tab = ttk.Frame(notebook, padding=10)
         notebook.add(process_tab, text="處理")
         notebook.add(indent_tab, text="縮排設定")
+        notebook.add(table_color_tab, text="表格顏色設定")
 
         file_frame = ttk.LabelFrame(process_tab, text="檔案")
         file_frame.pack(fill="x", pady=(0, 10))
@@ -312,6 +344,151 @@ class DocxFixerApp:
         self.log_text.configure(yscrollcommand=scrollbar.set)
 
         self._build_indent_settings_tab(indent_tab)
+        self._build_table_color_tab(table_color_tab)
+
+    def _build_table_color_tab(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.columnconfigure(1, weight=1)
+        parent.rowconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
+
+        keep_frame = ttk.LabelFrame(parent, text="保留顏色（不調整）")
+        keep_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        ttk.Label(
+            keep_frame,
+            text="每行一個或逗號分隔，可輸入 #DDEBF7 或 DDEBF7",
+        ).pack(anchor="w", padx=8, pady=(6, 0))
+        self.keep_colors_text = tk.Text(keep_frame, height=7, width=24)
+        self.keep_colors_text.pack(fill="both", expand=True, padx=8, pady=8)
+
+        gray_frame = ttk.LabelFrame(parent, text="轉成灰色的顏色")
+        gray_frame.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
+        ttk.Label(
+            gray_frame,
+            text="底色在此清單內就改成目標灰色",
+        ).pack(anchor="w", padx=8, pady=(6, 0))
+        self.gray_colors_text = tk.Text(gray_frame, height=7, width=24)
+        self.gray_colors_text.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+
+        gray_target_row = ttk.Frame(gray_frame)
+        gray_target_row.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Label(gray_target_row, text="目標灰色：").pack(side="left")
+        ttk.Entry(gray_target_row, textvariable=self.gray_target_var, width=10).pack(side="left")
+
+        special_frame = ttk.LabelFrame(parent, text="指定顏色跳過整張表")
+        special_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=6, pady=6)
+
+        ttk.Checkbutton(
+            special_frame,
+            text="跳過特殊顏色表格",
+            variable=self.skip_special_color_tables_var,
+        ).pack(anchor="w", padx=8, pady=(8, 4))
+
+        ttk.Label(
+            special_frame,
+            text="指定顏色清單（命中任一格就跳過整張表）",
+        ).pack(anchor="w", padx=8)
+        self.special_skip_colors_text = tk.Text(special_frame, height=5, width=24)
+        self.special_skip_colors_text.pack(fill="both", expand=True, padx=8, pady=(4, 4))
+
+        ttk.Checkbutton(
+            special_frame,
+            text="跳過後將指定顏色改回無色彩",
+            variable=self.clear_special_colors_after_skip_var,
+        ).pack(anchor="w", padx=8, pady=(0, 8))
+
+        button_frame = ttk.Frame(parent)
+        button_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        ttk.Button(button_frame, text="套用顏色設定", command=self.apply_table_color_entries).pack(side="left")
+        ttk.Button(
+            button_frame,
+            text="保存成預設顏色設定",
+            command=self.save_table_color_defaults,
+        ).pack(side="left", padx=8)
+        ttk.Button(
+            button_frame,
+            text="還原內建顏色設定",
+            command=self.restore_builtin_table_color_settings,
+        ).pack(side="left", padx=8)
+
+        ttk.Label(
+            button_frame,
+            text=f"設定檔位置：{get_table_color_settings_path()}",
+        ).pack(side="right")
+
+        self._set_table_color_widgets(self.applied_table_color_settings)
+
+    def _set_table_color_widgets(self, settings: dict) -> None:
+        for widget, key in (
+            (self.keep_colors_text, "keep_colors"),
+            (self.gray_colors_text, "gray_colors"),
+            (self.special_skip_colors_text, "special_color_skip_colors"),
+        ):
+            widget.delete("1.0", "end")
+            widget.insert("1.0", format_color_list_text(settings[key]))
+        self.gray_target_var.set(str(settings["gray_target"]))
+
+    def collect_table_color_entries(self) -> dict[str, object]:
+        try:
+            keep_colors = parse_color_list_text(self.keep_colors_text.get("1.0", "end"))
+        except ValueError as exc:
+            raise ValueError(f"保留顏色清單：{exc}") from exc
+
+        try:
+            gray_colors = parse_color_list_text(self.gray_colors_text.get("1.0", "end"))
+        except ValueError as exc:
+            raise ValueError(f"轉灰色清單：{exc}") from exc
+
+        try:
+            special_skip_colors = parse_color_list_text(
+                self.special_skip_colors_text.get("1.0", "end")
+            )
+        except ValueError as exc:
+            raise ValueError(f"指定顏色清單：{exc}") from exc
+
+        gray_target_text = self.gray_target_var.get().strip()
+        if not gray_target_text:
+            raise ValueError("請輸入目標灰色 HEX 色碼，例如 D9D9D9")
+        try:
+            gray_target = normalize_hex_color(gray_target_text)
+        except ValueError as exc:
+            raise ValueError(f"目標灰色：{exc}") from exc
+
+        return {
+            "keep_colors": keep_colors,
+            "gray_colors": gray_colors,
+            "gray_target": gray_target,
+            "special_color_skip_colors": special_skip_colors,
+        }
+
+    def apply_table_color_entries(self) -> bool:
+        try:
+            self.applied_table_color_settings = self.collect_table_color_entries()
+        except Exception as exc:
+            messagebox.showerror("表格顏色設定錯誤", str(exc))
+            return False
+
+        self.status_var.set("已套用表格顏色設定")
+        return True
+
+    def save_table_color_defaults(self) -> None:
+        try:
+            settings = self.collect_table_color_entries()
+            path = save_table_color_settings(settings)
+        except Exception as exc:
+            messagebox.showerror("表格顏色設定錯誤", str(exc))
+            return
+
+        self.applied_table_color_settings = settings
+        self.status_var.set("已保存表格顏色設定")
+        messagebox.showinfo("已儲存", f"表格顏色設定已儲存：\n{path}")
+
+    def restore_builtin_table_color_settings(self) -> None:
+        settings = built_in_table_color_settings()
+        self._set_table_color_widgets(settings)
+        self.applied_table_color_settings = settings
+        self.status_var.set("已還原內建表格顏色設定")
 
     def _build_indent_settings_tab(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
@@ -464,6 +641,8 @@ class DocxFixerApp:
             "skip_chapter_three_table_layout": self.skip_chapter_three_table_layout_var.get(),
             "skip_chapter_three_table_color": self.skip_chapter_three_table_color_var.get(),
             "skip_chapter_three_indents": self.skip_chapter_three_indents_var.get(),
+            "skip_special_color_tables": self.skip_special_color_tables_var.get(),
+            "clear_special_colors_after_skip": self.clear_special_colors_after_skip_var.get(),
         }
 
     def save_gui_defaults(self) -> None:
@@ -493,6 +672,8 @@ class DocxFixerApp:
         self.skip_chapter_three_table_layout_var.set(defaults["skip_chapter_three_table_layout"])
         self.skip_chapter_three_table_color_var.set(defaults["skip_chapter_three_table_color"])
         self.skip_chapter_three_indents_var.set(defaults["skip_chapter_three_indents"])
+        self.skip_special_color_tables_var.set(defaults["skip_special_color_tables"])
+        self.clear_special_colors_after_skip_var.set(defaults["clear_special_colors_after_skip"])
         self.status_var.set("已還原內建 GUI 預設勾選方案")
 
     def restore_builtin_indent_defaults(self) -> None:
@@ -599,6 +780,9 @@ class DocxFixerApp:
         if not self.apply_indent_entries():
             return None
 
+        if not self.apply_table_color_entries():
+            return None
+
         options = ProcessOptions(
             fix_table_layout=self.fix_table_var.get(),
             fix_color=self.fix_color_var.get(),
@@ -613,6 +797,14 @@ class DocxFixerApp:
             skip_chapter_three_indents=self.skip_chapter_three_indents_var.get(),
             skip_nested_tables=self.skip_nested_tables_var.get(),
             skip_log_output=self.skip_log_output_var.get(),
+            table_keep_colors=tuple(self.applied_table_color_settings["keep_colors"]),
+            table_gray_colors=tuple(self.applied_table_color_settings["gray_colors"]),
+            table_gray_target=str(self.applied_table_color_settings["gray_target"]),
+            skip_special_color_tables=self.skip_special_color_tables_var.get(),
+            special_color_skip_colors=tuple(
+                self.applied_table_color_settings["special_color_skip_colors"]
+            ),
+            clear_special_colors_after_skip=self.clear_special_colors_after_skip_var.get(),
         )
 
         if not (

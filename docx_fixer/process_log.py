@@ -377,6 +377,12 @@ def _optional_int_text(value: object) -> str:
     return str(value)
 
 
+def _color_list_text(value: object) -> str:
+    if not value:
+        return "none"
+    return ",".join(str(item) for item in value)
+
+
 def format_table_log_lines(summary: ProcessSummary) -> list[str]:
     lines = ["表格處理紀錄："]
     if not summary.table_log_records:
@@ -411,6 +417,12 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"special_text_width_twips: {_optional_int_text(record.get('special_text_width_twips'))}",
                 f"special_right_edge_twips: {_optional_int_text(record.get('special_right_edge_twips'))}",
                 f"special_overflow_twips: {_optional_int_text(record.get('special_overflow_twips'))}",
+                f"special_color_skip_matched: {_bool_text(record.get('special_color_skip_matched', False))}",
+                f"special_color_skip_colors: {_color_list_text(record.get('special_color_skip_colors'))}",
+                f"special_color_cleared_count: {record.get('special_color_cleared_count', 0)}",
+                f"table_keep_colors: {_color_list_text(record.get('table_keep_colors'))}",
+                f"table_gray_colors: {_color_list_text(record.get('table_gray_colors'))}",
+                f"table_gray_target: {record.get('table_gray_target', 'D9D9D9')}",
                 f"changed_to_gray: {record['changed_to_gray']}",
                 f"cleared_colors: {record['cleared_colors']}",
                 f"shading_debug: {' | '.join(record.get('shading_debug', [])) if record.get('shading_debug') else 'none'}",
@@ -444,6 +456,7 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         f"跳過第一張表格數：{summary.skipped_first_page_tables}",
         f"因格子數小於等於 4 而跳過的表格數：{summary.skipped_small_tables}",
         f"因表格中有表格而跳過的表格數：{summary.skipped_nested_tables}",
+        f"因特殊顏色而跳過的表格數：{summary.special_color_skipped_tables}",
         f"跨頁表格數：{summary.cross_page_tables}",
         f"跨頁已解決的表格數：{summary.cross_page_resolved_tables}",
         f"跨頁未解決的表格數：{summary.cross_page_still_split_tables}",

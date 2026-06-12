@@ -116,12 +116,31 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 ## 表格底色
 
-底色處理由 `table_format.apply_table_color()` 與 `shading.py` 負責：
+底色處理由 `table_format.apply_table_color()` 與 `shading.py` 負責，規則不再寫死，改由 GUI 第三頁「表格顏色設定」、CLI 參數或 `table_color_settings.py` 的設定決定（`ProcessOptions` 的 `table_keep_colors`、`table_gray_colors`、`table_gray_target`）。
 
-- 沒有底色、`AUTO`、`NONE` 且沒有 theme 色彩時保留。
-- 灰色且比預設灰 `D9D9D9` 更深時，改成 `D9D9D9`。
-- 灰色且比預設灰更淺或相同時保留。
-- 無法解析的 theme 色彩保留。
-- 明確的非灰色十六進位底色會清除成無色。
+`get_shading_decision()` 判斷順序：
 
-`table_log` 會記錄 `changed_to_gray`、`cleared_colors` 與 `shading_debug`。
+1. 沒有底色、`AUTO`、`NONE` 且沒有 theme 色彩時保留。
+2. 底色在保留顏色清單（`keep_colors`）時保留。
+3. 底色在轉灰色清單（`gray_colors`）時改成目標灰色（`gray_target`）。
+4. 灰色且比目標灰色更深時，改成目標灰色。
+5. 灰色且比目標灰色更淺或相同時保留。
+6. 無法解析的 theme 色彩保留。
+7. fill hex 不可用時保留。
+8. 其餘明確的非灰色十六進位底色清除成無色。
+
+內建預設：保留 `DDEBF7`；轉灰色清單 `BFBFBF`、`C0C0C0`、`A6A6A6`、`808080`；目標灰色 `D9D9D9`，與舊版寫死規則行為一致。
+
+`table_log` 會記錄 `changed_to_gray`、`cleared_colors`、`shading_debug`，以及生效中的 `table_keep_colors`、`table_gray_colors`、`table_gray_target`。
+
+## 特殊顏色表格跳過
+
+啟用「跳過特殊顏色表格」（`skip_special_color_tables`）並設定指定顏色清單（`special_color_skip_colors`）後，只要表格中任一格底色命中清單，整張表就跳過：
+
+- 判斷順序：第一張表格 → 巢狀表格保護 → 參章保護 → **特殊顏色表格** → 小表格（cell_count <= 4）→ 特殊/一般表格。
+- 命中時不做任何版面調整、不套用一般底色規則、不加入 Word COM AutoFit 清單。
+- `table_type = special_color_skipped_table`、`action = skipped_special_color_table`、`reason = matched special color skip list`。
+- 若勾選「跳過後將指定顏色改回無色彩」（`clear_special_colors_after_skip`），只把命中指定清單的儲存格底色清成無色，其他顏色完全不動；清除格數記在 `special_color_cleared_count`。
+- `table_log` 另記 `special_color_skip_matched` 與命中的 `special_color_skip_colors`。
+
+顏色設定保存在與縮排設定共用的 `indent_defaults.json`（key 為 `table_color_settings`），EXE 版會放在執行檔同資料夾，可攜帶到其他電腦。

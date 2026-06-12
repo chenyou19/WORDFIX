@@ -21,6 +21,12 @@ class ProcessOptions:
     skip_all_under_chapter_three: bool = False
     skip_log_output: bool = True
     skip_nested_tables: bool = True
+    table_keep_colors: tuple[str, ...] = ("DDEBF7",)
+    table_gray_colors: tuple[str, ...] = ("BFBFBF", "C0C0C0", "A6A6A6", "808080")
+    table_gray_target: str = "D9D9D9"
+    skip_special_color_tables: bool = False
+    special_color_skip_colors: tuple[str, ...] = ()
+    clear_special_colors_after_skip: bool = False
 
     def __post_init__(self) -> None:
         # Backward compatibility for older callers. The GUI no longer exposes
@@ -42,6 +48,7 @@ class ProcessSummary:
     skipped_first_page_tables: int = 0
     skipped_small_tables: int = 0
     skipped_nested_tables: int = 0
+    special_color_skipped_tables: int = 0
     special_autofit_right_tables: int = 0
     normal_processed_tables: int = 0
     cross_page_tables: int = 0

@@ -98,16 +98,33 @@ def fix_shading_to_no_color(shd) -> None:
     remove_theme_color_attrs(shd)
 
 
-def get_shading_decision(shd) -> dict[str, str | None]:
+def get_shading_decision(
+    shd,
+    *,
+    keep_colors: tuple[str, ...] | list[str] = (),
+    gray_colors: tuple[str, ...] | list[str] = (),
+    gray_target: str = DEFAULT_GRAY,
+) -> dict[str, str | None]:
     raw_attrs = {attr: shd.get(qn(attr)) for attr in SHADING_DEBUG_ATTRS}
     fill_hex = normalize_fill_hex(raw_attrs["fill"])
     has_theme_color = any(raw_attrs[attr] is not None for attr in ["themeFill", "themeColor"])
 
+    matched_keep_color: str | None = None
+    matched_gray_color: str | None = None
+
     if is_no_color_shading(shd):
         action = "keep"
         reason = "no color shading"
+    elif fill_hex is not None and fill_hex in keep_colors:
+        matched_keep_color = fill_hex
+        action = "keep"
+        reason = "matched keep color list"
+    elif fill_hex is not None and fill_hex in gray_colors:
+        matched_gray_color = fill_hex
+        action = "gray"
+        reason = "matched gray color list"
     elif is_gray_hex(fill_hex):
-        if is_darker_than_default_gray(fill_hex):
+        if is_darker_than_default_gray(fill_hex, gray_target):
             action = "gray"
             reason = "gray hex darker than default gray"
         else:
@@ -132,6 +149,9 @@ def get_shading_decision(shd) -> dict[str, str | None]:
         "raw_themeFillTint": raw_attrs["themeFillTint"],
         "raw_themeFillShade": raw_attrs["themeFillShade"],
         "normalized_fill_hex": fill_hex,
+        "matched_keep_color": matched_keep_color,
+        "matched_gray_color": matched_gray_color,
+        "gray_target": gray_target,
         "action": action,
         "reason": reason,
     }
@@ -147,10 +167,26 @@ def format_shading_decision(decision: dict[str, str | None]) -> str:
         f"raw_themeFillTint={decision['raw_themeFillTint']}; "
         f"raw_themeFillShade={decision['raw_themeFillShade']}; "
         f"normalized_fill_hex={decision['normalized_fill_hex']}; "
+        f"matched_keep_color={decision.get('matched_keep_color')}; "
+        f"matched_gray_color={decision.get('matched_gray_color')}; "
+        f"gray_target={decision.get('gray_target')}; "
         f"final_action={decision['action']}; "
         f"reason={decision['reason']}"
     )
 
 
-def get_shading_action(shd) -> str:
-    return str(get_shading_decision(shd)["action"])
+def get_shading_action(
+    shd,
+    *,
+    keep_colors: tuple[str, ...] | list[str] = (),
+    gray_colors: tuple[str, ...] | list[str] = (),
+    gray_target: str = DEFAULT_GRAY,
+) -> str:
+    return str(
+        get_shading_decision(
+            shd,
+            keep_colors=keep_colors,
+            gray_colors=gray_colors,
+            gray_target=gray_target,
+        )["action"]
+    )

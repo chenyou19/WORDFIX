@@ -74,6 +74,34 @@ class GuiDefaultsTests(unittest.TestCase):
         )
         self.assertTrue(normalized["skip_nested_tables"])
         self.assertTrue(normalized["skip_log_output"])
+        self.assertFalse(normalized["skip_special_color_tables"])
+        self.assertFalse(normalized["clear_special_colors_after_skip"])
+
+    def test_old_settings_without_special_color_fields_get_built_in_defaults(self):
+        normalized = normalize_gui_defaults(
+            {
+                "fix_table": True,
+                "fix_color": True,
+            }
+        )
+
+        self.assertIn("skip_special_color_tables", normalized)
+        self.assertIn("clear_special_colors_after_skip", normalized)
+        self.assertFalse(normalized["skip_special_color_tables"])
+        self.assertFalse(normalized["clear_special_colors_after_skip"])
+
+    def test_special_color_checkboxes_round_trip(self):
+        settings = built_in_gui_defaults()
+        settings["skip_special_color_tables"] = True
+        settings["clear_special_colors_after_skip"] = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "indent_defaults.json"
+            save_gui_defaults(settings, path)
+            loaded = load_saved_gui_defaults(path)
+
+        self.assertTrue(loaded["skip_special_color_tables"])
+        self.assertTrue(loaded["clear_special_colors_after_skip"])
 
     def test_built_in_defaults_skip_log_output(self):
         self.assertTrue(built_in_gui_defaults()["skip_log_output"])

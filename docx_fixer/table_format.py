@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from lxml import etree
 
-from .constants import NS
+from .constants import DEFAULT_GRAY, NS
 from .models import ProcessOptions
 from .shading import (
     fix_shading_to_gray,
     fix_shading_to_no_color,
     format_shading_decision,
     get_shading_decision,
+    normalize_fill_hex,
 )
 from .stop_controller import StopController
 from .xml_utils import get_or_add, qn
@@ -198,7 +199,47 @@ def apply_autofit_contents_right_format(tbl, stop: StopController | None = None)
     _apply_table_content_format(tbl, stop=stop)
 
 
-def apply_table_color(tbl, stop: StopController | None = None) -> tuple[int, int, list[str]]:
+def table_has_special_skip_color(
+    tbl,
+    special_color_skip_colors: tuple[str, ...] | list[str],
+) -> tuple[bool, list[str]]:
+    targets = {color for color in special_color_skip_colors}
+    if not targets:
+        return False, []
+
+    matched: list[str] = []
+    for shd in tbl.xpath(".//w:tc/w:tcPr/w:shd", namespaces=NS):
+        fill_hex = normalize_fill_hex(shd.get(qn("fill")))
+        if fill_hex is not None and fill_hex in targets and fill_hex not in matched:
+            matched.append(fill_hex)
+    return bool(matched), matched
+
+
+def clear_matching_special_colors(
+    tbl,
+    special_color_skip_colors: tuple[str, ...] | list[str],
+) -> int:
+    targets = {color for color in special_color_skip_colors}
+    if not targets:
+        return 0
+
+    cleared = 0
+    for shd in tbl.xpath(".//w:tc/w:tcPr/w:shd", namespaces=NS):
+        fill_hex = normalize_fill_hex(shd.get(qn("fill")))
+        if fill_hex is not None and fill_hex in targets:
+            fix_shading_to_no_color(shd)
+            cleared += 1
+    return cleared
+
+
+def apply_table_color(
+    tbl,
+    stop: StopController | None = None,
+    *,
+    keep_colors: tuple[str, ...] | list[str] = (),
+    gray_colors: tuple[str, ...] | list[str] = (),
+    gray_target: str = DEFAULT_GRAY,
+) -> tuple[int, int, list[str]]:
     changed_to_gray = 0
     cleared_colors = 0
     shading_debug_logs: list[str] = []
@@ -212,12 +253,17 @@ def apply_table_color(tbl, stop: StopController | None = None) -> tuple[int, int
             continue
 
         for shd in tcPr.findall("w:shd", NS):
-            decision = get_shading_decision(shd)
+            decision = get_shading_decision(
+                shd,
+                keep_colors=keep_colors,
+                gray_colors=gray_colors,
+                gray_target=gray_target,
+            )
             action = decision["action"]
             shading_debug_logs.append(format_shading_decision(decision))
 
             if action == "gray":
-                fix_shading_to_gray(shd)
+                fix_shading_to_gray(shd, gray_target)
                 changed_to_gray += 1
             elif action == "clear":
                 fix_shading_to_no_color(shd)
@@ -254,6 +300,12 @@ def process_table(
             apply_table_format(tbl, stop=stop)
 
     if options.fix_color:
-        changed_to_gray, cleared_colors, shading_debug_logs = apply_table_color(tbl, stop=stop)
+        changed_to_gray, cleared_colors, shading_debug_logs = apply_table_color(
+            tbl,
+            stop=stop,
+            keep_colors=tuple(getattr(options, "table_keep_colors", ()) or ()),
+            gray_colors=tuple(getattr(options, "table_gray_colors", ()) or ()),
+            gray_target=str(getattr(options, "table_gray_target", DEFAULT_GRAY) or DEFAULT_GRAY),
+        )
 
     return changed_to_gray, cleared_colors, shading_debug_logs

@@ -55,6 +55,29 @@ def first_table_fill(tbl) -> str | None:
     return shd.get(qn("fill"))
 
 
+def set_cell_shading(tbl, row_index: int, cell_index: int, fill: str):
+    tr = tbl.findall("w:tr", NS)[row_index]
+    tc = tr.findall("w:tc", NS)[cell_index]
+    tc_pr = tc.find("w:tcPr", NS)
+    if tc_pr is None:
+        tc_pr = etree.Element(qn("tcPr"))
+        tc.insert(0, tc_pr)
+    shd = etree.SubElement(tc_pr, qn("shd"))
+    shd.set(qn("val"), "clear")
+    shd.set(qn("fill"), fill)
+    shd.set(qn("color"), "auto")
+    return shd
+
+
+def cell_fill(tbl, row_index: int, cell_index: int) -> str | None:
+    tr = tbl.findall("w:tr", NS)[row_index]
+    tc = tr.findall("w:tc", NS)[cell_index]
+    shd = tc.find("w:tcPr/w:shd", NS)
+    if shd is None:
+        return None
+    return shd.get(qn("fill"))
+
+
 def make_nested_table_document():
     document = etree.Element(qn("document"), nsmap={"w": W_NS})
     body = etree.SubElement(document, qn("body"))
@@ -1576,6 +1599,246 @@ class TableFormatTests(unittest.TestCase):
                 header_root = etree.fromstring(zin.read("word/header1.xml"))
             header_tables = header_root.xpath(".//w:tbl", namespaces=NS)
             self.assertEqual(table_setting(header_tables[0], "jc"), "center")
+
+    def test_keep_color_list_preserves_fill_in_process_table(self):
+        tbl = make_shaded_table([3, 3], fill="DDEBF7")
+        process_table(tbl, ProcessOptions(False, True, False, False))
+        self.assertEqual(first_table_fill(tbl), "DDEBF7")
+
+        tbl = make_shaded_table([3, 3], fill="FCE4D6")
+        process_table(
+            tbl,
+            ProcessOptions(False, True, False, False, table_keep_colors=("FCE4D6",)),
+        )
+        self.assertEqual(first_table_fill(tbl), "FCE4D6")
+
+    def test_gray_color_list_converts_to_gray_target(self):
+        tbl = make_shaded_table([3, 3], fill="BFBFBF")
+        process_table(tbl, ProcessOptions(False, True, False, False))
+        self.assertEqual(first_table_fill(tbl), "D9D9D9")
+
+        tbl = make_shaded_table([3, 3], fill="FFC000")
+        process_table(
+            tbl,
+            ProcessOptions(
+                False,
+                True,
+                False,
+                False,
+                table_gray_colors=("FFC000",),
+                table_gray_target="CCCCCC",
+            ),
+        )
+        self.assertEqual(first_table_fill(tbl), "CCCCCC")
+
+    def test_special_color_table_is_skipped_entirely(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("特殊顏色表格"))
+        special_color_table = make_table([5, 5])
+        set_cell_shading(special_color_table, 0, 0, "FFFF00")
+        set_cell_shading(special_color_table, 0, 1, "FF0000")
+        body.append(special_color_table)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=True,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_special_color_tables=True,
+                special_color_skip_colors=("FFFF00",),
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            record = summary.table_log_records[1]
+            self.assertEqual(record["table_type"], "special_color_skipped_table")
+            self.assertEqual(record["action"], "skipped_special_color_table")
+            self.assertEqual(record["reason"], "matched special color skip list")
+            self.assertTrue(record["special_color_skip_matched"])
+            self.assertEqual(record["special_color_skip_colors"], ["FFFF00"])
+            self.assertEqual(record["special_color_cleared_count"], 0)
+            self.assertFalse(record["layout_fixed"])
+            self.assertFalse(record["color_fixed"])
+            self.assertFalse(record["special_layout_used"])
+            self.assertEqual(summary.special_color_skipped_tables, 1)
+            self.assertEqual(summary.normal_processed_tables, 0)
+            self.assertEqual(summary.special_autofit_right_tables, 0)
+            self.assertEqual(summary.word_com_table_autofit_records, [])
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+            # The whole table is skipped: no layout change, no color rules.
+            self.assertIsNone(tbl.find("w:tblPr", NS))
+            self.assertEqual(cell_fill(tbl, 0, 0), "FFFF00")
+            self.assertEqual(cell_fill(tbl, 0, 1), "FF0000")
+
+    def test_special_color_table_clear_after_skip_only_clears_matched_colors(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("特殊顏色表格"))
+        special_color_table = make_table([5, 5])
+        set_cell_shading(special_color_table, 0, 0, "FFFF00")
+        set_cell_shading(special_color_table, 0, 1, "FF0000")
+        set_cell_shading(special_color_table, 1, 0, "808080")
+        body.append(special_color_table)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=True,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_special_color_tables=True,
+                special_color_skip_colors=("FFFF00",),
+                clear_special_colors_after_skip=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            record = summary.table_log_records[1]
+            self.assertEqual(record["table_type"], "special_color_skipped_table")
+            self.assertEqual(record["special_color_cleared_count"], 1)
+            self.assertTrue(record["color_fixed"])
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+            # Only the matched special color is cleared to no color.
+            self.assertEqual(cell_fill(tbl, 0, 0), "auto")
+            # Other colors are untouched: no clear rule, no gray rule.
+            self.assertEqual(cell_fill(tbl, 0, 1), "FF0000")
+            self.assertEqual(cell_fill(tbl, 1, 0), "808080")
+            self.assertIsNone(tbl.find("w:tblPr", NS))
+
+    def test_special_color_skip_does_not_affect_first_table_rule(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        first_table = make_table([5, 5])
+        set_cell_shading(first_table, 0, 0, "FFFF00")
+        body.append(first_table)
+        body.append(make_paragraph("一般表格"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=True,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_special_color_tables=True,
+                special_color_skip_colors=("FFFF00",),
+                clear_special_colors_after_skip=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.table_log_records[0]["table_type"], "skipped_first_table")
+            self.assertFalse(summary.table_log_records[0]["special_color_skip_matched"])
+            self.assertEqual(summary.table_log_records[1]["table_type"], "normal_table")
+            self.assertEqual(summary.special_color_skipped_tables, 0)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+
+            # The first table stays fully untouched even though it matches.
+            self.assertEqual(cell_fill(tables[0], 0, 0), "FFFF00")
+            self.assertIsNone(tables[0].find("w:tblPr", NS))
+
+    def test_special_color_skip_does_not_affect_nested_table_skip(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("巢狀表格"))
+        outer = make_table([3, 3])
+        inner = make_shaded_table([3, 3], fill="FFFF00")
+        outer.find("w:tr/w:tc", NS).append(inner)
+        body.append(outer)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=True,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_nested_tables=True,
+                skip_special_color_tables=True,
+                special_color_skip_colors=("FFFF00",),
+                clear_special_colors_after_skip=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(
+                [record["table_type"] for record in summary.table_log_records],
+                ["skipped_first_table", "skipped_nested_table", "skipped_nested_table"],
+            )
+            self.assertEqual(summary.special_color_skipped_tables, 0)
+            self.assertEqual(summary.skipped_nested_tables, 2)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            inner_out = root.xpath(".//w:tbl", namespaces=NS)[2]
+            self.assertEqual(first_table_fill(inner_out), "FFFF00")
 
     def test_color_only_tables_are_logged_as_color_only(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
