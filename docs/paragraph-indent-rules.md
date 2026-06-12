@@ -18,13 +18,26 @@
 
 這些段落不會套用一般大綱或縮排格式。
 
-## 編號來源
+## 編號來源與判斷順序
 
-段落層級支援三種來源：
+段落層級支援三種來源，判斷順序如下：
 
-- 手動編號：直接由段落可見文字解析，例如 `壹、`、`一、`、`（一）`、`1.`。
-- 自動編號：由段落自己的 `numPr` 讀取 `numId` 與 `ilvl`，再對照 numbering。
-- 樣式編號：段落樣式本身帶有 numbering 時，由 style lookup 推回層級。
+1. **自動編號**：段落本身有 `w:pPr/w:numPr` 時，先以 `numId` + `ilvl` 查 numbering.xml（`detect_valid_auto_heading_level()`）。只有 `numFmt` + `lvlText` 明確符合支援的標題格式（例如 `decimal` + `（%1）` → 階層 5）才算有效標題；bullet、缺 `numFmt`/`lvlText`、或查不到對應格式時一律無效，**不可只靠 `ilvl` fallback 成標題階層**。Word 自動編號的標號不會出現在 `paragraph_text(p)` 裡，因此自動編號不要求可見文字有前綴。
+2. **可見文字前綴**（手動編號）：自動編號無效時，再檢查 `paragraph_text(p)` 是否以 `壹、`、`一、`、`（一）`、`1.`、`（1）`、`A.`、`（A）`、`a.`、`（a）` 等支援格式開頭。殘留無效 `numPr` 但文字有手動前綴的段落，會移除 `numPr` 並以手動前綴決定層級。
+3. **樣式編號**：前兩步都沒有結果時，由段落樣式的 numbering identity 查 level lookup；lookup 只含格式驗證過的項目，無法確認就不當標題。
+
+以上都沒有結果時，段落視為一般內文（依最近標題層級套用內文縮排）或 unknown；殘留 `numPr` 的內文不得被誤判成階層大綱。自動編號有效/無效都會寫入 log（`auto numbering valid: ...` / `auto numbering skipped: missing or unsupported numbering format; ...`）。
+
+殘留無效 `numPr` 的內文走 body indent 時，除了移除段落層 `w:numPr`，若段落的 paragraph style 在 style numbering lookup 中（代表 styles.xml 直接或經 basedOn 繼承綁定 numbering），會**強制**呼叫 `normalize_paragraph_style_to_none()` 移除 `w:pStyle`，並把殘留的 `outlineLvl 0~8` 改回 9——否則 Word 重新開啟時會從樣式層級自行補回「1.」之類的編號。此行為不依賴 GUI 的 `normalize_body_style_to_none` 選項，log 會記錄 `invalid auto numbering body paragraph: removed paragraph numPr and numbering style; ...; style_numbering_removed=True; reason=style-level numbering would reappear in Word`。style 不帶 numbering 的內文則保留原樣式。有效的 auto numbering 標題不受影響，樣式與編號都保留。
+
+因為移除帶 numbering 的 `w:pStyle` 會讓段落失去原本從樣式繼承的字體與字級，強制移除樣式後會接著呼叫 `apply_body_font_after_numbering_cleanup()`，把字型直接寫回段落：
+
+- 段落層 `w:pPr/w:rPr` 與每個有可見文字的 run 都寫入 `w:rFonts`（ascii/eastAsia/hAnsi/cs = 標楷體）、`w:sz val=28`、`w:szCs val=28`（14pt）。
+- 只覆寫 rFonts、sz、szCs；粗體、底線、顏色等其他 run 屬性保留。
+- 只在「無效 auto numbering 內文且實際移除了帶 numbering 的樣式」時觸發，不會無條件改所有內文字體；只移除 numPr、樣式不帶 numbering 的內文不受影響。
+- log 記錄 `invalid auto numbering body paragraph font normalized: font=標楷體; size=14pt; ...; reason=numbering/style cleanup removed inherited formatting`；body indent debug record 另含 `font_normalized_after_numbering_cleanup`、`normalized_font_name`、`normalized_font_size_pt`。
+
+特殊情況：段落同時有「有效自動編號」與「可見手動標題前綴」（例如手動標題殘留清單編號）時，維持手動標題優先並移除殘留 `numPr`。
 
 過長且不像標題的註記型段落會跳過樣式編號推論，避免誤判成標題。
 

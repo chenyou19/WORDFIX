@@ -17,6 +17,8 @@ from docx_fixer.numbering import (
     apply_numbering_outline_format,
     apply_styles_outline_format_to_root,
     build_numbering_format_lookup,
+    build_numbering_level_lookup,
+    detect_valid_auto_heading_level,
     force_clean_numbering_suffix_tabs,
 )
 from docx_fixer.style_resolver import build_style_font_size_lookup
@@ -254,6 +256,36 @@ def make_numbering_xml():
     return etree.tostring(root)
 
 
+def make_heading_validation_numbering_xml():
+    """numbering.xml with one supported heading format, one bullet, and one
+    unsupported format that must not fall back to ilvl."""
+    root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+
+    def add_abstract(abstract_id: str, ilvl: str, num_fmt: str, lvl_text: str):
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), abstract_id)
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), ilvl)
+        fmt = etree.SubElement(lvl, qn("numFmt"))
+        fmt.set(qn("val"), num_fmt)
+        text_el = etree.SubElement(lvl, qn("lvlText"))
+        text_el.set(qn("val"), lvl_text)
+
+    def add_num(num_id: str, abstract_id: str):
+        num = etree.SubElement(root, qn("num"))
+        num.set(qn("numId"), num_id)
+        abstract_el = etree.SubElement(num, qn("abstractNumId"))
+        abstract_el.set(qn("val"), abstract_id)
+
+    add_abstract("64", "0", "decimal", "（%1）")
+    add_abstract("9", "0", "bullet", "")
+    add_abstract("77", "2", "decimal", "%1")
+    add_num("64", "64")
+    add_num("9", "9")
+    add_num("77", "77")
+    return etree.tostring(root)
+
+
 def make_styles_font_xml(
     *,
     doc_default_pt: float | None = None,
@@ -421,6 +453,317 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIn(f"lvl_hanging={spec['hanging']}", debug)
         self.assertIn("lvlJc=left", debug)
         self.assertIn("suff=nothing", debug)
+
+    def test_build_numbering_level_lookup_has_no_ilvl_fallback(self):
+        lookup = build_numbering_level_lookup(make_heading_validation_numbering_xml())
+
+        self.assertEqual(lookup.get(("64", 0)), 4)
+        # The unsupported decimal "%1" pattern must not fall back to ilvl=2.
+        self.assertNotIn(("77", 2), lookup)
+
+    def test_detect_valid_auto_heading_level_supported_format(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        p = make_paragraph("433-2地號土地開發分析法評估結果", num_id="64", ilvl=0)
+
+        level, details = detect_valid_auto_heading_level(
+            p,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+        )
+
+        self.assertEqual(level, 4)
+        self.assertEqual(details["num_id"], "64")
+        self.assertEqual(details["ilvl"], 0)
+        self.assertEqual(details["num_fmt"], "decimal")
+        self.assertEqual(details["lvl_text"], "（%1）")
+
+    def test_detect_valid_auto_heading_level_rejects_unknown_bullet_and_unsupported(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        numbering_level_lookup = build_numbering_level_lookup(numbering_xml)
+        numbering_format_lookup = build_numbering_format_lookup(numbering_xml)
+
+        unknown = make_paragraph("殘留編號內文", num_id="0", ilvl=0)
+        bullet = make_paragraph("項目符號內容", num_id="9", ilvl=0)
+        unsupported = make_paragraph("不支援格式", num_id="77", ilvl=2)
+
+        for paragraph, expected_num_id in ((unknown, "0"), (bullet, "9"), (unsupported, "77")):
+            with self.subTest(num_id=expected_num_id):
+                level, details = detect_valid_auto_heading_level(
+                    paragraph,
+                    numbering_level_lookup=numbering_level_lookup,
+                    numbering_format_lookup=numbering_format_lookup,
+                )
+                self.assertIsNone(level)
+                self.assertEqual(details["num_id"], expected_num_id)
+
+    def test_leftover_numpr_body_paragraph_is_not_treated_as_heading(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        first_marker = make_paragraph("壹、序言")
+        marker = make_paragraph("壹、序言")
+        body = make_paragraph(
+            "依上述計算之總銷售金額及相關開發費用後，依照土地開發分析法，推算土地開發分析價格如下。",
+            num_id="0",
+            ilvl=0,
+            font_size_pt=14,
+        )
+        root = make_root(first_marker, marker, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+        )
+
+        # No heading outline level 0-8 and no heading indent.
+        self.assertNotIn(paragraph_outline(body), [str(i) for i in range(9)])
+        self.assertNotEqual(paragraph_indent(body), expected_indent(0))
+        # The paragraph follows the current heading's body indent instead.
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[0]["body_left"])
+
+        joined = "\n".join(summary.paragraph_logs)
+        self.assertIn("auto numbering skipped: missing or unsupported numbering format", joined)
+        self.assertIn("auto_heading_valid=False", joined)
+        self.assertIn("numId=0", joined)
+        self.assertIn("Body indent applied", joined)
+
+    def test_valid_auto_numbering_heading_without_text_marker_is_level_four(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        first_marker = make_paragraph("壹、序言")
+        marker = make_paragraph("壹、序言")
+        heading = make_paragraph("433-2地號土地開發分析法評估結果", num_id="64", ilvl=0)
+        root = make_root(first_marker, marker, heading)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+        )
+
+        # The marker "（6）" only exists in Word auto numbering, not in w:t
+        # text, and the heading must still resolve to level 4 (階層 5).
+        self.assertEqual(paragraph_outline(heading), "4")
+        self.assertEqual(paragraph_indent(heading), expected_indent(4))
+        self.assertIsNotNone(heading.find("./w:pPr/w:numPr", NS))
+
+        joined = "\n".join(summary.paragraph_logs)
+        self.assertIn("auto numbering valid", joined)
+        self.assertIn("numId=64", joined)
+        self.assertIn("numFmt=decimal", joined)
+        self.assertIn("resolved_level=4", joined)
+        self.assertIn("auto_heading_valid=True", joined)
+        self.assertIn("apply level 5 outline and indent", joined)
+
+    def test_invalid_auto_numbering_falls_back_to_manual_text_prefix(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        first_marker = make_paragraph("壹、序言")
+        marker = make_paragraph("壹、序言")
+        heading = make_paragraph(
+            "（6）433-2地號土地開發分析法評估結果",
+            num_id="0",
+            ilvl=0,
+        )
+        root = make_root(first_marker, marker, heading)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+        )
+
+        self.assertEqual(paragraph_outline(heading), "4")
+        self.assertEqual(paragraph_indent(heading), expected_indent(4))
+        # The leftover numPr is removed so Word cannot renumber the heading.
+        self.assertIsNone(heading.find("./w:pPr/w:numPr", NS))
+
+        # The manual heading must not enter the invalid-auto-numbering body
+        # cleanup, so no forced 標楷體 font rewrite happens.
+        self.assertIsNone(heading.find("./w:r/w:rPr/w:rFonts", NS))
+        self.assertIsNone(heading.find("./w:pPr/w:rPr/w:rFonts", NS))
+
+        joined = "\n".join(summary.paragraph_logs)
+        self.assertIn("Manual heading paragraph numPr removed", joined)
+        self.assertIn("manual numbering; apply level 5 outline and indent", joined)
+        self.assertNotIn("invalid auto numbering body paragraph", joined)
+        self.assertNotIn("font normalized", joined)
+
+    def test_bullet_numbering_paragraph_is_never_a_heading(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        first_marker = make_paragraph("壹、序言")
+        marker = make_paragraph("壹、序言")
+        bullet = make_paragraph("項目符號內容", num_id="9", ilvl=0, font_size_pt=14)
+        root = make_root(first_marker, marker, bullet)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+        )
+
+        self.assertNotIn(paragraph_outline(bullet), [str(i) for i in range(9)])
+        self.assertNotEqual(paragraph_indent(bullet), expected_indent(0))
+        joined = "\n".join(summary.paragraph_logs)
+        self.assertIn("auto numbering skipped: missing or unsupported numbering format", joined)
+        self.assertIn("numFmt=bullet", joined)
+
+    def test_invalid_auto_numbering_body_paragraph_removes_numbering_style(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        first_marker = make_paragraph("壹、序言")
+        marker = make_paragraph("壹、序言")
+        body = make_paragraph(
+            "依上述計算之總銷售金額及相關開發費用後，依照土地開發分析法，推算土地開發分析價格如下。",
+            style="51",
+            outline=3,
+            num_id="0",
+            ilvl=0,
+            font_size_pt=14,
+        )
+        # Existing run properties such as bold must survive the cleanup.
+        etree.SubElement(body.find("./w:r/w:rPr", NS), qn("b"))
+        root = make_root(first_marker, marker, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+            # Style 51 carries numbering, so Word would re-apply "1." from the
+            # style even after the paragraph-level numPr is removed.
+            style_numbering_lookup={"51": ("0", 0)},
+        )
+
+        self.assertIsNone(body.find("./w:pPr/w:numPr", NS))
+        self.assertIsNone(body.find("./w:pPr/w:pStyle", NS))
+        self.assertEqual(paragraph_outline(body), "9")
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[0]["body_left"])
+
+        # The removed style carried the fonts, so 標楷體 14pt is written
+        # directly on the paragraph mark and every visible text run.
+        p_rpr_fonts = body.find("./w:pPr/w:rPr/w:rFonts", NS)
+        self.assertIsNotNone(p_rpr_fonts)
+        for attr in ("ascii", "eastAsia", "hAnsi", "cs"):
+            self.assertEqual(p_rpr_fonts.get(qn(attr)), "標楷體")
+        self.assertEqual(body.find("./w:pPr/w:rPr/w:sz", NS).get(qn("val")), "28")
+        self.assertEqual(body.find("./w:pPr/w:rPr/w:szCs", NS).get(qn("val")), "28")
+
+        run_rpr = body.find("./w:r/w:rPr", NS)
+        run_fonts = run_rpr.find("w:rFonts", NS)
+        self.assertIsNotNone(run_fonts)
+        for attr in ("ascii", "eastAsia", "hAnsi", "cs"):
+            self.assertEqual(run_fonts.get(qn(attr)), "標楷體")
+        self.assertEqual(run_rpr.find("w:sz", NS).get(qn("val")), "28")
+        self.assertEqual(run_rpr.find("w:szCs", NS).get(qn("val")), "28")
+        self.assertIsNotNone(run_rpr.find("w:b", NS))
+
+        record = summary.body_indent_records[-1]
+        self.assertTrue(record["font_normalized_after_numbering_cleanup"])
+        self.assertEqual(record["normalized_font_name"], "標楷體")
+        self.assertEqual(record["normalized_font_size_pt"], 14.0)
+
+        joined = "\n".join(summary.paragraph_logs)
+        self.assertIn(
+            "invalid auto numbering body paragraph: removed paragraph numPr and numbering style",
+            joined,
+        )
+        self.assertIn("paragraph_style_id_before=51", joined)
+        self.assertIn("paragraph_style_id_after=none", joined)
+        self.assertIn("style_numbering_removed=True", joined)
+        self.assertIn("reason=style-level numbering would reappear in Word", joined)
+        self.assertIn(
+            "invalid auto numbering body paragraph font normalized: font=標楷體; size=14pt",
+            joined,
+        )
+        self.assertIn("reason=numbering/style cleanup removed inherited formatting", joined)
+
+    def test_invalid_auto_numbering_body_paragraph_keeps_plain_style(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        first_marker = make_paragraph("壹、序言")
+        marker = make_paragraph("壹、序言")
+        body = make_paragraph(
+            "依上述計算之總銷售金額及相關開發費用後，依照土地開發分析法，推算土地開發分析價格如下。",
+            style="BodyText",
+            num_id="0",
+            ilvl=0,
+            font_size_pt=14,
+        )
+        root = make_root(first_marker, marker, body)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+            # No style in the lookup carries numbering.
+            style_numbering_lookup={},
+        )
+
+        self.assertIsNone(body.find("./w:pPr/w:numPr", NS))
+        self.assertEqual(paragraph_style(body), "BodyText")
+        self.assertEqual(paragraph_left_indent(body), TEMPLATE_OUTLINE_INDENTS[0]["body_left"])
+
+        # The style still provides the fonts, so no forced font rewrite: the
+        # run keeps its original properties and gains no rFonts.
+        self.assertIsNone(body.find("./w:r/w:rPr/w:rFonts", NS))
+        self.assertIsNone(body.find("./w:pPr/w:rPr/w:rFonts", NS))
+        self.assertEqual(body.find("./w:r/w:rPr/w:sz", NS).get(qn("val")), "28")
+        record = summary.body_indent_records[-1]
+        self.assertFalse(record["font_normalized_after_numbering_cleanup"])
+        self.assertIsNone(record["normalized_font_name"])
+
+        joined = "\n".join(summary.paragraph_logs)
+        self.assertNotIn("invalid auto numbering body paragraph", joined)
+        self.assertNotIn("font normalized", joined)
+
+    def test_valid_auto_numbering_heading_keeps_style_and_numbering(self):
+        numbering_xml = make_heading_validation_numbering_xml()
+        first_marker = make_paragraph("壹、序言")
+        marker = make_paragraph("壹、序言")
+        heading = make_paragraph(
+            "433-2地號土地開發分析法評估結果",
+            style="51",
+            num_id="64",
+            ilvl=0,
+        )
+        root = make_root(first_marker, marker, heading)
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(
+            root,
+            include_tables=True,
+            summary=summary,
+            numbering_level_lookup=build_numbering_level_lookup(numbering_xml),
+            numbering_format_lookup=build_numbering_format_lookup(numbering_xml),
+            style_numbering_lookup={"51": ("0", 0)},
+        )
+
+        # The valid auto numbering heading keeps its style and numbering.
+        self.assertEqual(paragraph_outline(heading), "4")
+        self.assertIsNotNone(heading.find("./w:pPr/w:numPr", NS))
+        self.assertEqual(paragraph_style(heading), "51")
+
+        # The body-font cleanup flow must not touch a valid heading.
+        self.assertIsNone(heading.find("./w:r/w:rPr/w:rFonts", NS))
+        self.assertIsNone(heading.find("./w:pPr/w:rPr/w:rFonts", NS))
+
+        joined = "\n".join(summary.paragraph_logs)
+        self.assertIn("auto numbering valid", joined)
+        self.assertNotIn("invalid auto numbering body paragraph", joined)
+        self.assertNotIn("font normalized", joined)
 
     def test_detects_all_manual_outline_numbering_shapes(self):
         samples = [

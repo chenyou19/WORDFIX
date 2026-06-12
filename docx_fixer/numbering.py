@@ -269,6 +269,18 @@ def paragraph_style_id(p) -> str | None:
     return style_el.get(qn("val"))
 
 
+def style_has_numbering(style_id: str | None, style_numbering_lookup) -> bool:
+    """Return whether a paragraph style carries numbering.
+
+    style_numbering_lookup is built from styles.xml with basedOn inheritance
+    resolved, so membership alone means Word would re-apply the style's
+    numbering marker when the document is reopened.
+    """
+    if not style_id or not style_numbering_lookup:
+        return False
+    return style_id in style_numbering_lookup
+
+
 def normalize_lvl_text(value: str | None) -> str:
     if value is None:
         return ""
@@ -372,14 +384,11 @@ def build_numbering_level_lookup(numbering_xml: bytes | None):
                 levels[ilvl] = BULLET_OUTLINE_LEVEL
                 continue
 
+            # Only numFmt + lvlText combinations that match a supported
+            # heading pattern may map to an outline level. ilvl alone must
+            # never become an outline level, otherwise leftover numPr on body
+            # paragraphs would be misclassified as headings.
             outline_level = numbering_pattern_to_outline_level(num_fmt, lvl_text)
-
-            # If numbering.xml cannot identify the format directly but this is
-            # a Word automatic numbering level, use ilvl as the outline level.
-            # This matches the assumption that every automatic numbering entry
-            # in the document represents an outline level.
-            if outline_level is None and 0 <= ilvl <= 8:
-                outline_level = ilvl
 
             if outline_level is not None:
                 levels[ilvl] = outline_level
@@ -418,8 +427,6 @@ def build_numbering_level_lookup(numbering_xml: bytes | None):
                 continue
 
             outline_level = numbering_pattern_to_outline_level(num_fmt, lvl_text)
-            if outline_level is None and 0 <= ilvl <= 8:
-                outline_level = ilvl
 
             if outline_level is not None:
                 lookup[(num_id, ilvl)] = outline_level
@@ -1004,19 +1011,81 @@ def detect_number_level_from_identity(num_id, ilvl, numbering_level_lookup=None)
     if num_id is None or ilvl is None:
         return None
 
-    if numbering_level_lookup is not None:
-        outline_level = numbering_level_lookup.get((num_id, ilvl))
-        if outline_level == BULLET_OUTLINE_LEVEL:
-            return BULLET_OUTLINE_LEVEL
-        if outline_level is not None:
-            return outline_level
-        if numbering_level_lookup:
-            return None
+    # The level lookup only contains entries whose numFmt + lvlText matched a
+    # supported heading pattern (or the bullet sentinel). Without numbering.xml
+    # information the format cannot be validated, and ilvl alone must never
+    # become an outline level.
+    if not numbering_level_lookup:
+        return None
 
-    if 0 <= ilvl <= 8:
-        return ilvl
+    return numbering_level_lookup.get((num_id, ilvl))
 
-    return None
+
+def detect_valid_auto_heading_level(
+    p,
+    numbering_level_lookup=None,
+    numbering_format_lookup=None,
+    style_numbering_lookup=None,
+) -> tuple[int | None, dict[str, object]]:
+    """Validate the paragraph's own w:pPr/w:numPr as a supported auto heading.
+
+    Word automatic numbering markers are not stored in w:t text, so the
+    paragraph's numId/ilvl must be resolved against numbering.xml. Only a
+    numFmt + lvlText combination that matches a supported heading pattern may
+    return a level (0-8); bullets and unknown formats return None, and ilvl
+    alone never becomes an outline level.
+
+    Returns (level_or_None, details) where details carries numId/ilvl/numFmt/
+    lvlText for logging.
+    """
+    del style_numbering_lookup  # Style numbering is validated in a later step.
+
+    details: dict[str, object] = {
+        "num_id": None,
+        "ilvl": None,
+        "num_fmt": None,
+        "lvl_text": None,
+    }
+
+    num_id_el = p.find("./w:pPr/w:numPr/w:numId", NS)
+    if num_id_el is None:
+        return None, details
+
+    num_id = num_id_el.get(qn("val"))
+    details["num_id"] = num_id
+    if num_id is None:
+        return None, details
+
+    ilvl_el = p.find("./w:pPr/w:numPr/w:ilvl", NS)
+    try:
+        ilvl = int(ilvl_el.get(qn("val"))) if ilvl_el is not None else 0
+    except Exception:
+        return None, details
+    details["ilvl"] = ilvl
+
+    level_format = (numbering_format_lookup or {}).get((num_id, ilvl))
+    if level_format is not None:
+        num_fmt = level_format.get("numFmt")
+        lvl_text = level_format.get("lvlText")
+        details["num_fmt"] = num_fmt
+        details["lvl_text"] = lvl_text
+        if is_bullet_num_fmt(num_fmt):
+            return None, details
+        if num_fmt is not None or lvl_text is not None:
+            level = numbering_pattern_to_outline_level(num_fmt, lvl_text)
+            if level is not None and 0 <= level <= 8:
+                return level, details
+            return None, details
+
+    # No usable numFmt/lvlText information for this pair. The level lookup
+    # only contains pattern-validated entries, so it may still confirm the
+    # heading; a miss means the numbering cannot be validated.
+    level = (numbering_level_lookup or {}).get((num_id, ilvl))
+    if level == BULLET_OUTLINE_LEVEL:
+        return None, details
+    if level is not None and 0 <= level <= 8:
+        return level, details
+    return None, details
 
 
 def detect_auto_number_level(p, numbering_level_lookup=None, style_numbering_lookup=None):

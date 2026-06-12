@@ -69,12 +69,14 @@ def _outline_level_from_identity(
     if num_id is None or ilvl is None:
         return None
 
-    level = numbering_level_lookup.get((num_id, ilvl))
-    if level is not None:
-        return level
-    if 0 <= ilvl <= 8:
-        return ilvl
-    return None
+    # The level lookup only contains numbering pairs whose numFmt + lvlText
+    # matched a supported heading pattern. ilvl alone must never become an
+    # outline level, otherwise leftover numPr on body paragraphs would be
+    # misclassified as headings.
+    if not numbering_level_lookup:
+        return None
+
+    return numbering_level_lookup.get((num_id, ilvl))
 
 
 def _chapter_number_token_from_format(num_fmt: str | None, ordinal: int) -> str | None:

@@ -20,8 +20,10 @@ from .indent_settings import twips_to_cm
 from .numbering import (
     detect_auto_number_level,
     detect_style_number_level,
+    detect_valid_auto_heading_level,
     has_auto_numbering,
     paragraph_style_id,
+    style_has_numbering,
 )
 from .stop_controller import StopController
 from .style_resolver import half_points_to_pt
@@ -168,9 +170,15 @@ def match_parenthesized_numbering(text: str):
         end_index = m.end()
 
         # Avoid misclassifying content like `(A)pple`, `(a)bc`, or `(1)234`.
+        # Fullwidth parentheses are deliberate CJK numbering markers, so the
+        # guard only applies to halfwidth parentheses.
         if end_index < len(text):
             next_char = text[end_index]
-            if level in {4, 6, 8} and is_ascii_letter_or_digit(next_char):
+            if (
+                level in {4, 6, 8}
+                and is_ascii_letter_or_digit(next_char)
+                and not m.group(0).startswith("（")
+            ):
                 return None
 
         return level
@@ -233,7 +241,15 @@ def detect_manual_numbering_prefix(text: str) -> tuple[int, str] | None:
         m = re.match(pattern, text)
         if not m:
             continue
-        if m.end() < len(text) and level in {3, 4, 5, 6, 7, 8} and is_ascii_letter_or_digit(text[m.end()]):
+        # Reject markers immediately followed by ASCII letters/digits, such
+        # as `(A)pple` or `1.234`. Fullwidth parentheses are deliberate CJK
+        # numbering markers, so the guard only applies to halfwidth markers.
+        if (
+            m.end() < len(text)
+            and level in {3, 4, 5, 6, 7, 8}
+            and is_ascii_letter_or_digit(text[m.end()])
+            and not m.group(0).startswith("（")
+        ):
             return None
         return level, m.group(0)
 
@@ -702,6 +718,51 @@ def set_run_font_size_pt(run, font_size_pt: float) -> None:
         size_el.set(qn("val"), value)
 
 
+BODY_FONT_NAME_AFTER_NUMBERING_CLEANUP = "標楷體"
+BODY_FONT_SIZE_PT_AFTER_NUMBERING_CLEANUP = 14.0
+
+
+def _set_rpr_body_cleanup_font(rPr) -> None:
+    rFonts = rPr.find("w:rFonts", NS)
+    if rFonts is None:
+        rFonts = etree.Element(qn("rFonts"))
+        r_style = rPr.find("w:rStyle", NS)
+        if r_style is not None:
+            r_style.addnext(rFonts)
+        else:
+            rPr.insert(0, rFonts)
+    for attr in ("ascii", "eastAsia", "hAnsi", "cs"):
+        rFonts.set(qn(attr), BODY_FONT_NAME_AFTER_NUMBERING_CLEANUP)
+
+    value = font_size_to_half_points(BODY_FONT_SIZE_PT_AFTER_NUMBERING_CLEANUP)
+    for tag in ("sz", "szCs"):
+        size_el = get_or_add(rPr, tag)
+        size_el.set(qn("val"), value)
+
+
+def apply_body_font_after_numbering_cleanup(p) -> int:
+    """Write direct 標楷體 14pt after paragraph/style numbering cleanup.
+
+    Removing a numbering-bound paragraph style can drop the fonts the
+    paragraph inherited from that style, so the font and size are written
+    directly on w:pPr/w:rPr and on every visible text run. Only rFonts, sz,
+    and szCs are overwritten; other run properties such as bold, underline,
+    or color are preserved. Returns the number of text runs updated.
+    """
+    pPr = get_or_add(p, "pPr", first=True)
+    p_rPr = get_or_add(pPr, "rPr")
+    _set_rpr_body_cleanup_font(p_rPr)
+
+    updated_runs = 0
+    for run in p.findall("./w:r", NS):
+        if not visible_run_text(run):
+            continue
+        rPr = get_or_add(run, "rPr", first=True)
+        _set_rpr_body_cleanup_font(rPr)
+        updated_runs += 1
+    return updated_runs
+
+
 def apply_outline_level_font_size(p, level: int) -> bool:
     font_size_pt = OUTLINE_LEVEL_FONT_SIZE_PT.get(level)
     if font_size_pt is None:
@@ -1150,6 +1211,7 @@ def append_body_indent_record(
     body_style_normalized: bool = False,
     indent_result: dict[str, str | None] | None = None,
     heading_uses_outline: bool = True,
+    font_normalized_after_numbering_cleanup: bool = False,
 ) -> None:
     if summary is None:
         return
@@ -1193,6 +1255,17 @@ def append_body_indent_record(
             "body_first_line_twips_applied": expected_first_line_twips is not None,
             "removed_tabs": (indent_result or {}).get("removed_tabs") == "True",
             "removed_numPr": (indent_result or {}).get("removed_numPr") == "True",
+            "font_normalized_after_numbering_cleanup": font_normalized_after_numbering_cleanup,
+            "normalized_font_name": (
+                BODY_FONT_NAME_AFTER_NUMBERING_CLEANUP
+                if font_normalized_after_numbering_cleanup
+                else None
+            ),
+            "normalized_font_size_pt": (
+                BODY_FONT_SIZE_PT_AFTER_NUMBERING_CLEANUP
+                if font_normalized_after_numbering_cleanup
+                else None
+            ),
         }
     )
 
@@ -1320,6 +1393,7 @@ def append_body_indent_debug_log(
     paragraph_style_for_log: str | None = None,
     run_style_for_log: str | None = None,
     indent_result: dict[str, str | None] | None = None,
+    font_normalized_after_numbering_cleanup: bool = False,
 ) -> None:
     if summary is None:
         return
@@ -1394,6 +1468,9 @@ def append_body_indent_debug_log(
         f"body_first_line_twips_applied={expected_first_line_twips is not None}; "
         f"removed_tabs={(indent_result or {}).get('removed_tabs', 'False')}; "
         f"removed_numPr={(indent_result or {}).get('removed_numPr', 'False')}; "
+        f"font_normalized_after_numbering_cleanup={font_normalized_after_numbering_cleanup}; "
+        f"normalized_font_name={BODY_FONT_NAME_AFTER_NUMBERING_CLEANUP if font_normalized_after_numbering_cleanup else 'none'}; "
+        f"normalized_font_size_pt={BODY_FONT_SIZE_PT_AFTER_NUMBERING_CLEANUP if font_normalized_after_numbering_cleanup else 'none'}; "
         f"written_hanging={paragraph_format.get('hanging')}; "
         f"written_firstLine={paragraph_format.get('firstLine')}; "
         f"leftChars={paragraph_format.get('leftChars')}; "
@@ -1797,7 +1874,28 @@ def fix_outline_paragraphs(
                 continue
 
             manual_numbering = detect_manual_numbering_prefix(text)
+
+            # Auto numbering is validated first from the paragraph's own
+            # numId/ilvl against numbering.xml. Word auto numbering markers
+            # are not stored in w:t text, so text prefixes must not be
+            # required for auto numbering headings.
+            auto_heading_level = None
+            auto_numbering_details: dict[str, object] | None = None
+            if has_auto_numbering(p):
+                auto_heading_level, auto_numbering_details = detect_valid_auto_heading_level(
+                    p,
+                    numbering_level_lookup=numbering_level_lookup,
+                    numbering_format_lookup=numbering_format_lookup,
+                    style_numbering_lookup=style_numbering_lookup,
+                )
+
+            # A visible manual heading prefix wins over leftover list
+            # numbering on the same paragraph: the numPr is removed so the
+            # list marker cannot reclassify or renumber the manual heading.
+            manual_heading_overrides_auto = False
             if manual_numbering is not None and remove_paragraph_numPr(p):
+                manual_heading_overrides_auto = True
+                auto_heading_level = None
                 append_paragraph_change_log(
                     change_logs,
                     part_name,
@@ -1851,21 +1949,53 @@ def fix_outline_paragraphs(
             reason = None
             numbering_kind = "manual"
 
-            if manual_numbering is not None:
+            # Step 1: valid auto numbering decided from numId/ilvl wins.
+            if auto_heading_level is not None:
+                level = auto_heading_level
+                numbering_kind = "auto"
+                style_id = paragraph_style_id(p)
+                reason = (
+                    "auto numbering valid: "
+                    f"numId={auto_numbering_details.get('num_id')}; "
+                    f"ilvl={auto_numbering_details.get('ilvl')}; "
+                    f"numFmt={auto_numbering_details.get('num_fmt')}; "
+                    f"lvlText={auto_numbering_details.get('lvl_text')}; "
+                    f"resolved_level={level}; "
+                    f"style={style_id or 'none'}; "
+                    "auto_heading_valid=True; "
+                    "reason=auto numbering supported heading pattern"
+                )
+            elif auto_numbering_details is not None and not manual_heading_overrides_auto:
+                append_paragraph_change_log(
+                    change_logs,
+                    part_name,
+                    paragraph_index,
+                    text,
+                    before_outline,
+                    before_outline,
+                    "auto numbering skipped: missing or unsupported numbering format; "
+                    "auto_heading_valid=False; "
+                    f"numId={auto_numbering_details.get('num_id')}; "
+                    f"ilvl={auto_numbering_details.get('ilvl')}; "
+                    f"numFmt={auto_numbering_details.get('num_fmt')}; "
+                    f"lvlText={auto_numbering_details.get('lvl_text')}",
+                )
+
+            # Step 2: visible text prefix decides manual numbering headings.
+            if level is None and manual_numbering is not None:
                 level = manual_numbering[0]
                 reason = "manual numbering"
                 numbering_kind = "manual"
 
-            if level is None and has_auto_numbering(p):
-                num_id, ilvl = get_auto_number_identity(p)
-                style_id = paragraph_style_id(p)
-                level = detect_auto_number_level(
-                    p,
-                    numbering_level_lookup=numbering_level_lookup,
-                    style_numbering_lookup=style_numbering_lookup,
-                )
-                reason = f"auto numbering numId={num_id} ilvl={ilvl} style={style_id or 'none'}"
+            if level is None:
+                detected_text_level = detect_outline_level(text)
+                if detected_text_level is not None:
+                    level = detected_text_level
+                    reason = "manual numbering"
+                    numbering_kind = "manual"
 
+            # Step 3: style numbering, validated through the level lookup that
+            # only contains supported numFmt + lvlText patterns.
             if level is None and not should_skip_style_numbering(text):
                 style_id = paragraph_style_id(p)
                 level = detect_style_number_level(
@@ -1875,11 +2005,6 @@ def fix_outline_paragraphs(
                 )
                 if level is not None:
                     reason = f"style numbering style={style_id}"
-
-            if level is None:
-                level = detect_outline_level(text)
-                if level is not None:
-                    reason = "manual numbering"
 
             if level is None:
                 if current_heading_indent is not None:
@@ -1959,12 +2084,61 @@ def fix_outline_paragraphs(
                     if indent_result is not None:
                         paragraph_style_id_after = paragraph_style_id_before
                         body_style_normalized = False
-                        if normalize_body_style_to_none:
+                        # A body paragraph with leftover invalid auto
+                        # numbering must also lose a numbering-bound style:
+                        # removing only the paragraph-level numPr is not
+                        # enough, because Word re-applies the style's
+                        # numbering marker when the document is reopened.
+                        force_style_numbering_removal = (
+                            auto_numbering_details is not None
+                            and auto_heading_level is None
+                            and manual_numbering is None
+                            and style_has_numbering(
+                                paragraph_style_id_before,
+                                style_numbering_lookup,
+                            )
+                        )
+                        if normalize_body_style_to_none or force_style_numbering_removal:
                             (
                                 paragraph_style_id_before,
                                 paragraph_style_id_after,
                                 body_style_normalized,
                             ) = normalize_paragraph_style_to_none(p)
+                        font_normalized_after_numbering_cleanup = False
+                        if force_style_numbering_removal:
+                            remove_paragraph_numPr(p)
+                            apply_paragraph_body_text_level(p)
+                            append_paragraph_change_log(
+                                change_logs,
+                                part_name,
+                                paragraph_index,
+                                text,
+                                before_outline,
+                                get_paragraph_outline_level_value(p),
+                                "invalid auto numbering body paragraph: "
+                                "removed paragraph numPr and numbering style; "
+                                f"paragraph_style_id_before={paragraph_style_id_before or 'none'}; "
+                                f"paragraph_style_id_after={paragraph_style_id_after or 'none'}; "
+                                f"style_numbering_removed={body_style_normalized}; "
+                                "reason=style-level numbering would reappear in Word",
+                            )
+                            # The removed style carried the paragraph's font,
+                            # so 標楷體 14pt is written directly to keep the
+                            # text stable when Word reopens the document.
+                            normalized_font_runs = apply_body_font_after_numbering_cleanup(p)
+                            font_normalized_after_numbering_cleanup = True
+                            append_paragraph_change_log(
+                                change_logs,
+                                part_name,
+                                paragraph_index,
+                                text,
+                                before_outline,
+                                get_paragraph_outline_level_value(p),
+                                "invalid auto numbering body paragraph font normalized: "
+                                f"font={BODY_FONT_NAME_AFTER_NUMBERING_CLEANUP}; size=14pt; "
+                                f"normalized_runs={normalized_font_runs}; "
+                                "reason=numbering/style cleanup removed inherited formatting",
+                            )
                         changed_count += 1
                         if spec is not None:
                             append_body_indent_record(
@@ -1981,6 +2155,7 @@ def fix_outline_paragraphs(
                                 body_style_normalized=body_style_normalized,
                                 indent_result=indent_result,
                                 heading_uses_outline=heading_uses_outline,
+                                font_normalized_after_numbering_cleanup=font_normalized_after_numbering_cleanup,
                             )
                         append_body_indent_debug_log(
                             summary,
@@ -2003,6 +2178,7 @@ def fix_outline_paragraphs(
                             paragraph_style_for_log=body_paragraph_style,
                             run_style_for_log=body_run_style,
                             indent_result=indent_result,
+                            font_normalized_after_numbering_cleanup=font_normalized_after_numbering_cleanup,
                         )
                         append_paragraph_change_log(
                             change_logs,
