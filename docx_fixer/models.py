@@ -21,7 +21,7 @@ class ProcessOptions:
     skip_all_under_chapter_three: bool = False
     skip_log_output: bool = True
     skip_nested_tables: bool = True
-    table_keep_colors: tuple[str, ...] = ("DDEBF7",)
+    table_keep_colors: tuple[str, ...] = ("D9D9D9", "F2F2F2")
     table_gray_colors: tuple[str, ...] = ("BFBFBF", "C0C0C0", "A6A6A6", "808080")
     table_gray_target: str = "D9D9D9"
     skip_special_color_tables: bool = False

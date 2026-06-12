@@ -1601,9 +1601,19 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(table_setting(header_tables[0], "jc"), "center")
 
     def test_keep_color_list_preserves_fill_in_process_table(self):
+        # Built-in keep defaults are D9D9D9 and F2F2F2 only.
+        tbl = make_shaded_table([3, 3], fill="D9D9D9")
+        process_table(tbl, ProcessOptions(False, True, False, False))
+        self.assertEqual(first_table_fill(tbl), "D9D9D9")
+
+        tbl = make_shaded_table([3, 3], fill="F2F2F2")
+        process_table(tbl, ProcessOptions(False, True, False, False))
+        self.assertEqual(first_table_fill(tbl), "F2F2F2")
+
+        # DDEBF7 is no longer a built-in keep color, so it is cleared by default.
         tbl = make_shaded_table([3, 3], fill="DDEBF7")
         process_table(tbl, ProcessOptions(False, True, False, False))
-        self.assertEqual(first_table_fill(tbl), "DDEBF7")
+        self.assertEqual(first_table_fill(tbl), "auto")
 
         tbl = make_shaded_table([3, 3], fill="FCE4D6")
         process_table(

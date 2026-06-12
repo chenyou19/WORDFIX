@@ -19,7 +19,7 @@ def get_table_color_settings_path() -> Path:
 
 def built_in_table_color_settings() -> dict[str, object]:
     return {
-        "keep_colors": ["DDEBF7"],
+        "keep_colors": ["D9D9D9", "F2F2F2"],
         "gray_colors": ["BFBFBF", "C0C0C0", "A6A6A6", "808080"],
         "gray_target": "D9D9D9",
         "special_color_skip_colors": [],

@@ -21,7 +21,7 @@ class TableColorSettingsTests(unittest.TestCase):
     def test_built_in_defaults(self):
         settings = built_in_table_color_settings()
 
-        self.assertEqual(settings["keep_colors"], ["DDEBF7"])
+        self.assertEqual(settings["keep_colors"], ["D9D9D9", "F2F2F2"])
         self.assertEqual(settings["gray_colors"], ["BFBFBF", "C0C0C0", "A6A6A6", "808080"])
         self.assertEqual(settings["gray_target"], "D9D9D9")
         self.assertEqual(settings["special_color_skip_colors"], [])

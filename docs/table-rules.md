@@ -129,7 +129,7 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 7. fill hex 不可用時保留。
 8. 其餘明確的非灰色十六進位底色清除成無色。
 
-內建預設：保留 `DDEBF7`；轉灰色清單 `BFBFBF`、`C0C0C0`、`A6A6A6`、`808080`；目標灰色 `D9D9D9`，與舊版寫死規則行為一致。
+內建預設：保留 `D9D9D9`、`F2F2F2`；轉灰色清單 `BFBFBF`、`C0C0C0`、`A6A6A6`、`808080`；目標灰色 `D9D9D9`。其他顏色不在預設保留清單內，明確的非灰色底色預設會被清除。
 
 `table_log` 會記錄 `changed_to_gray`、`cleared_colors`、`shading_debug`，以及生效中的 `table_keep_colors`、`table_gray_colors`、`table_gray_target`。
 
