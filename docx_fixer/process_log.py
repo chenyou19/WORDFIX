@@ -371,6 +371,12 @@ def _bool_text(value: object) -> str:
     return "true" if bool(value) else "false"
 
 
+def _optional_int_text(value: object) -> str:
+    if value is None:
+        return "none"
+    return str(value)
+
+
 def format_table_log_lines(summary: ProcessSummary) -> list[str]:
     lines = ["表格處理紀錄："]
     if not summary.table_log_records:
@@ -398,6 +404,13 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"chapter_three_table_color_skipped: {_bool_text(record.get('chapter_three_table_color_skipped', False))}",
                 f"word_com_autofit_applied: {_bool_text(record.get('word_com_autofit_applied', False))}",
                 f"word_com_autofit_sequence: {record.get('word_com_autofit_sequence', 'none')}",
+                f"word_com_autofit_fallback_applied: {_bool_text(record.get('word_com_autofit_fallback_applied', False))}",
+                f"word_com_autofit_status: {record.get('word_com_autofit_status', 'not_needed')}",
+                f"special_left_indent_twips: {_optional_int_text(record.get('special_left_indent_twips'))}",
+                f"special_width_twips: {_optional_int_text(record.get('special_width_twips'))}",
+                f"special_text_width_twips: {_optional_int_text(record.get('special_text_width_twips'))}",
+                f"special_right_edge_twips: {_optional_int_text(record.get('special_right_edge_twips'))}",
+                f"special_overflow_twips: {_optional_int_text(record.get('special_overflow_twips'))}",
                 f"changed_to_gray: {record['changed_to_gray']}",
                 f"cleared_colors: {record['cleared_colors']}",
                 f"shading_debug: {' | '.join(record.get('shading_debug', [])) if record.get('shading_debug') else 'none'}",
@@ -442,6 +455,9 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         f"跨頁處理失敗的表格數：{summary.failed_cross_page_tables}",
         f"套用特殊版面表格數：{summary.special_autofit_right_tables}",
         f"一般表格處理數：{summary.normal_processed_tables}",
+        f"Word COM AutoFit 成功表格數：{summary.word_com_table_autofit_applied_count}",
+        f"Word COM 失敗改用 XML fallback 修復表格數：{summary.word_com_table_autofit_fallback_count}",
+        f"Word COM 與 XML fallback 都失敗表格數：{summary.word_com_table_autofit_failed_count}",
         "",
         "段落摘要：",
         f"段落總數：{summary.total_paragraphs}",

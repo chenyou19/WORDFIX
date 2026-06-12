@@ -64,8 +64,19 @@ def build_table_log_record(
     chapter_three_table_color_skipped: bool = False,
     word_com_autofit_applied: bool = False,
     word_com_autofit_sequence: str = "none",
+    word_com_autofit_fallback_applied: bool = False,
+    word_com_autofit_status: str = "not_needed",
     shading_debug: list[str] | None = None,
+    special_left_indent_twips: int | None = None,
+    special_width_twips: int | None = None,
+    special_text_width_twips: int | None = None,
 ) -> dict[str, object]:
+    special_right_edge_twips: int | None = None
+    special_overflow_twips: int | None = None
+    if special_left_indent_twips is not None and special_width_twips is not None:
+        special_right_edge_twips = special_left_indent_twips + special_width_twips
+        if special_text_width_twips is not None:
+            special_overflow_twips = max(0, special_right_edge_twips - special_text_width_twips)
     return {
         "part_name": part_name,
         "table_index": table_index,
@@ -86,6 +97,13 @@ def build_table_log_record(
         "chapter_three_table_color_skipped": chapter_three_table_color_skipped,
         "word_com_autofit_applied": word_com_autofit_applied,
         "word_com_autofit_sequence": word_com_autofit_sequence,
+        "word_com_autofit_fallback_applied": word_com_autofit_fallback_applied,
+        "word_com_autofit_status": word_com_autofit_status,
+        "special_left_indent_twips": special_left_indent_twips,
+        "special_width_twips": special_width_twips,
+        "special_text_width_twips": special_text_width_twips,
+        "special_right_edge_twips": special_right_edge_twips,
+        "special_overflow_twips": special_overflow_twips,
         "shading_debug": list(shading_debug or []),
     }
 
@@ -186,9 +204,13 @@ def _find_previous_effective_paragraph(tbl, style_numbering_lookup):
 
 
 def _find_table_section_properties(tbl):
-    preceding_sect_pr = tbl.xpath("preceding::w:sectPr", namespaces=NS)
-    if preceding_sect_pr:
-        return preceding_sect_pr[-1]
+    # OOXML places a section's sectPr at the end of that section, so the
+    # sectPr governing this table is the first one after the table. Using a
+    # preceding sectPr would pick up the previous section's page geometry in
+    # multi-section documents.
+    following_sect_pr = tbl.xpath("following::w:sectPr", namespaces=NS)
+    if following_sect_pr:
+        return following_sect_pr[0]
 
     body_sect_pr = tbl.xpath("ancestor::w:body/w:sectPr", namespaces=NS)
     if body_sect_pr:
@@ -222,7 +244,7 @@ def _resolve_special_table_geometry(
     tbl,
     numbering_level_lookup,
     style_numbering_lookup,
-) -> tuple[int, int] | None:
+) -> tuple[int, int, int] | None:
     anchor_paragraph = _find_previous_effective_paragraph(tbl, style_numbering_lookup)
     if anchor_paragraph is None:
         return None
@@ -232,18 +254,22 @@ def _resolve_special_table_geometry(
         numbering_level_lookup,
         style_numbering_lookup,
     )
-    if left_indent_twips is None or left_indent_twips < 0:
+    if left_indent_twips is None:
         return None
 
     text_width_twips = _page_text_width_twips(_find_table_section_properties(tbl))
     if text_width_twips is None:
         return None
 
+    left_indent_twips = max(left_indent_twips, 0)
+    if left_indent_twips >= text_width_twips:
+        return None
+
     width_twips = text_width_twips - left_indent_twips
     if width_twips <= 0:
         return None
 
-    return left_indent_twips, width_twips
+    return left_indent_twips, width_twips, text_width_twips
 
 
 def process_tables_in_part(
@@ -406,12 +432,16 @@ def process_tables_in_part(
 
         special_layout = effective_options.fix_table_layout and column_count <= 4
         special_table_geometry = None
+        special_text_width_twips = None
         if special_layout:
-            special_table_geometry = _resolve_special_table_geometry(
+            resolved_geometry = _resolve_special_table_geometry(
                 tbl,
                 numbering_level_lookup,
                 style_numbering_lookup,
             )
+            if resolved_geometry is not None:
+                geometry_left, geometry_width, special_text_width_twips = resolved_geometry
+                special_table_geometry = (geometry_left, geometry_width)
         changed_to_gray, cleared_colors, shading_debug = process_table(
             tbl,
             effective_options,
@@ -471,6 +501,10 @@ def process_tables_in_part(
             summary.special_autofit_right_tables += 1
         else:
             summary.normal_processed_tables += 1
+        special_left_indent_twips = None
+        special_width_twips = None
+        if special_table_geometry is not None:
+            special_left_indent_twips, special_width_twips = special_table_geometry
         summary.table_log_records.append(
             build_table_log_record(
                 part_name=part_name,
@@ -490,6 +524,9 @@ def process_tables_in_part(
                 cleared_colors=cleared_colors,
                 chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
                 chapter_three_table_color_skipped=chapter_three_table_color_skipped,
+                special_left_indent_twips=special_left_indent_twips,
+                special_width_twips=special_width_twips,
+                special_text_width_twips=special_text_width_twips,
                 shading_debug=shading_debug,
             )
         )

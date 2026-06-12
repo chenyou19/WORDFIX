@@ -81,3 +81,22 @@ class ProcessSummary:
     @property
     def changed_colors(self) -> int:
         return self.changed_to_gray + self.cleared_colors
+
+    def _count_word_com_autofit_status(self, status: str) -> int:
+        return sum(
+            1
+            for record in self.table_log_records
+            if record.get("word_com_autofit_status") == status
+        )
+
+    @property
+    def word_com_table_autofit_applied_count(self) -> int:
+        return self._count_word_com_autofit_status("word_com")
+
+    @property
+    def word_com_table_autofit_fallback_count(self) -> int:
+        return self._count_word_com_autofit_status("xml_fallback")
+
+    @property
+    def word_com_table_autofit_failed_count(self) -> int:
+        return self._count_word_com_autofit_status("failed")

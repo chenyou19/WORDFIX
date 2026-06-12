@@ -784,6 +784,17 @@ class DocxFixerApp:
                     self.append_log(f"skipped_table_paragraphs={summary.skipped_table_paragraphs}")
                     self.append_log(f"removed_all_outline_paragraphs={summary.removed_all_outline_paragraphs}")
                     self.append_log(f"unknown_paragraphs={summary.unknown_paragraphs}")
+                    autofit_applied = summary.word_com_table_autofit_applied_count
+                    autofit_fallback = summary.word_com_table_autofit_fallback_count
+                    autofit_failed = summary.word_com_table_autofit_failed_count
+                    self.append_log(f"word_com_table_autofit_applied_count={autofit_applied}")
+                    self.append_log(f"word_com_table_autofit_fallback_count={autofit_fallback}")
+                    self.append_log(f"word_com_table_autofit_failed_count={autofit_failed}")
+                    if autofit_failed:
+                        self.append_log(
+                            "警告: 一般表格 Word COM AutoFit 失敗且 XML fallback 也失敗 "
+                            f"{autofit_failed} 張，請檢查輸出檔案的表格寬度"
+                        )
                     self.append_log(f"output={output_path}")
                     if log_path is not None:
                         self.append_log(f"process_log={log_path}")
@@ -792,14 +803,28 @@ class DocxFixerApp:
                     if heading_suffix_log_path is not None:
                         self.append_log(f"heading_suffix_log={heading_suffix_log_path}")
                     self.set_running_state(False)
-                    messagebox.showinfo(
-                        "處理完成",
+                    autofit_summary_text = (
+                        "一般表格 AutoFit：Word COM 成功 "
+                        f"{autofit_applied} 張，XML fallback 修復 {autofit_fallback} 張，"
+                        f"仍失敗 {autofit_failed} 張\n\n"
+                    )
+                    done_message = (
                         "DOCX 處理完成。\n\n"
                         f"輸出檔案：\n{output_path}\n\n"
-                        f"處理 log：\n{log_path if log_path is not None else '未產生'}\n\n"
+                        + autofit_summary_text
+                        + f"處理 log：\n{log_path if log_path is not None else '未產生'}\n\n"
                         f"表格 log：\n{table_log_path if table_log_path is not None else '未產生'}\n\n"
-                        f"標題後方分隔符 log：\n{heading_suffix_log_path if heading_suffix_log_path is not None else '未產生'}",
+                        f"標題後方分隔符 log：\n{heading_suffix_log_path if heading_suffix_log_path is not None else '未產生'}"
                     )
+                    if autofit_failed:
+                        messagebox.showwarning(
+                            "處理完成（表格 AutoFit 有失敗）",
+                            done_message
+                            + "\n\n警告：有一般表格的 Word COM AutoFit 失敗且 XML fallback 也失敗，"
+                            "請檢查輸出檔案的表格寬度。",
+                        )
+                    else:
+                        messagebox.showinfo("處理完成", done_message)
 
                 elif kind == "stopped":
                     self.current_temp_output = None

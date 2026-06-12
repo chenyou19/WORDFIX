@@ -112,6 +112,15 @@ def run_cli(args) -> int:
     print(f"failed_cross_page_tables={summary.failed_cross_page_tables}")
     print(f"special_autofit_right_tables={summary.special_autofit_right_tables}")
     print(f"normal_processed_tables={summary.normal_processed_tables}")
+    print(f"word_com_table_autofit_applied_count={summary.word_com_table_autofit_applied_count}")
+    print(f"word_com_table_autofit_fallback_count={summary.word_com_table_autofit_fallback_count}")
+    print(f"word_com_table_autofit_failed_count={summary.word_com_table_autofit_failed_count}")
+    if summary.word_com_table_autofit_failed_count:
+        print(
+            "WARNING: word_com_table_autofit_failed_count="
+            f"{summary.word_com_table_autofit_failed_count} "
+            "(Word COM AutoFit failed and XML fallback could not repair these tables)"
+        )
     print(f"changed_colors={summary.changed_colors}")
     print(f"changed_to_gray_{DEFAULT_GRAY}={summary.changed_to_gray}")
     print(f"cleared_colors={summary.cleared_colors}")

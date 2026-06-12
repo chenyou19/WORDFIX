@@ -6,6 +6,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from lxml import etree
 
 from .constants import NS
+from .exceptions import ProcessStopped
 from .indent_settings import twips_to_cm
 from .indent_sanitizer import (
     remove_character_indent_attrs_from_numbering_root_excluding_protected,
@@ -38,6 +39,7 @@ from .protected_region import (
 )
 from .stop_controller import StopController
 from .style_resolver import build_style_font_size_lookup
+from .table_fallback import fallback_normal_table_autofit_in_docx
 from .table_pipeline import process_tables_in_part
 from .table_word_com import WORD_COM_AUTOFIT_SEQUENCE, apply_table_autofit_with_word_com
 from . import word_com_indent
@@ -354,6 +356,30 @@ def _mark_word_com_table_autofit_applied(
             continue
         record["word_com_autofit_applied"] = True
         record["word_com_autofit_sequence"] = WORD_COM_AUTOFIT_SEQUENCE
+        record["word_com_autofit_status"] = "word_com"
+
+
+def _mark_word_com_table_autofit_fallback(
+    summary: ProcessSummary,
+    fallback_applied_indices: set[int],
+    failed_indices: set[int],
+) -> None:
+    if not failed_indices:
+        return
+
+    for record in summary.table_log_records:
+        try:
+            global_table_index = int(record.get("global_table_index", 0))
+        except (TypeError, ValueError):
+            continue
+        if global_table_index not in failed_indices:
+            continue
+        if global_table_index in fallback_applied_indices:
+            record["word_com_autofit_fallback_applied"] = True
+            record["word_com_autofit_status"] = "xml_fallback"
+        else:
+            record["word_com_autofit_fallback_applied"] = False
+            record["word_com_autofit_status"] = "failed"
 
 
 
@@ -683,13 +709,47 @@ def fix_docx_fast(
     if options.normalize_with_word_com:
         table_autofit_records = list(summary.word_com_table_autofit_records)
         if table_autofit_records:
-            table_autofit_logs, applied_indices = apply_table_autofit_with_word_com(
-                output_docx,
-                table_autofit_records,
-                stop=stop,
-            )
+            requested_indices = {
+                int(record.get("global_table_index", 0)) for record in table_autofit_records
+            }
+            try:
+                table_autofit_logs, applied_indices, failed_indices = (
+                    apply_table_autofit_with_word_com(
+                        output_docx,
+                        table_autofit_records,
+                        stop=stop,
+                    )
+                )
+            except ProcessStopped:
+                raise
+            except Exception as exc:
+                table_autofit_logs = [
+                    "WORD_COM_TABLE_AUTOFIT_SKIPPED "
+                    f"reason=runner_failed:{type(exc).__name__}:{exc}"
+                ]
+                applied_indices = set()
+                failed_indices = set(requested_indices)
             summary.word_com_table_autofit_logs.extend(table_autofit_logs)
             _mark_word_com_table_autofit_applied(summary, applied_indices)
+            if failed_indices:
+                failed_records = [
+                    record
+                    for record in table_autofit_records
+                    if int(record.get("global_table_index", 0)) in failed_indices
+                ]
+                fallback_logs: list[str] = []
+                fallback_applied_indices = fallback_normal_table_autofit_in_docx(
+                    output_docx,
+                    failed_records,
+                    fallback_logs,
+                    stop=stop,
+                )
+                summary.word_com_table_autofit_logs.extend(fallback_logs)
+                _mark_word_com_table_autofit_fallback(
+                    summary,
+                    fallback_applied_indices,
+                    failed_indices,
+                )
         else:
             summary.word_com_table_autofit_logs.append(
                 "WORD_COM_TABLE_AUTOFIT_SKIPPED reason=no_records"

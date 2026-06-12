@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from lxml import etree
+
 from .constants import NS
 from .models import ProcessOptions
 from .shading import (
@@ -106,6 +108,44 @@ def apply_table_format(tbl, stop: StopController | None = None) -> None:
     _apply_table_content_format(tbl, stop=stop)
 
 
+def _rebuild_fixed_column_widths(tbl, width_twips: int) -> list[int]:
+    column_count = table_column_count(tbl)
+    if column_count <= 0 or width_twips <= 0:
+        return []
+
+    base_width = width_twips // column_count
+    remainder = width_twips - base_width * column_count
+    column_widths = [
+        base_width + (1 if index < remainder else 0)
+        for index in range(column_count)
+    ]
+
+    tblPr = get_or_add(tbl, "tblPr", first=True)
+    tbl_grid = etree.Element(qn("tblGrid"))
+    for column_width in column_widths:
+        grid_col = etree.SubElement(tbl_grid, qn("gridCol"))
+        grid_col.set(qn("w"), str(column_width))
+    tbl.insert(tbl.index(tblPr) + 1, tbl_grid)
+
+    for tr in tbl.findall("w:tr", NS):
+        cursor = 0
+        for tc in tr.findall("w:tc", NS):
+            span = _cell_grid_span(tc)
+            cell_width = sum(column_widths[cursor : cursor + span])
+            cursor += span
+            if cell_width <= 0:
+                continue
+            tcPr = get_or_add(tc, "tcPr", first=True)
+            tcW = tcPr.find("w:tcW", NS)
+            if tcW is None:
+                tcW = etree.Element(qn("tcW"))
+                tcPr.insert(0, tcW)
+            tcW.set(qn("type"), "dxa")
+            tcW.set(qn("w"), str(cell_width))
+
+    return column_widths
+
+
 def apply_special_table_format(
     tbl,
     *,
@@ -115,6 +155,8 @@ def apply_special_table_format(
 ) -> None:
     if stop:
         stop.check()
+
+    _clear_fixed_width_constraints(tbl)
 
     tblPr = get_or_add(tbl, "tblPr", first=True)
 
@@ -131,6 +173,8 @@ def apply_special_table_format(
     tblInd = get_or_add(tblPr, "tblInd")
     tblInd.set(qn("type"), "dxa")
     tblInd.set(qn("w"), str(left_indent_twips))
+
+    _rebuild_fixed_column_widths(tbl, width_twips)
 
     _apply_table_content_format(tbl, stop=stop)
 

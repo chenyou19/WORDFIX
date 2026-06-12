@@ -111,13 +111,32 @@ def _parse_applied_indices(logs: list[str]) -> set[int]:
     return applied
 
 
+def _requested_indices(records: list[dict[str, object]]) -> set[int]:
+    requested: set[int] = set()
+    for record in records:
+        try:
+            requested.add(int(record.get("global_table_index", 0)))
+        except (TypeError, ValueError):
+            continue
+    return requested
+
+
 def apply_table_autofit_with_word_com(
     output_docx: str | Path,
     records: list[dict[str, object]],
     stop: StopController | None = None,
-) -> tuple[list[str], set[int]]:
+) -> tuple[list[str], set[int], set[int]]:
+    """Run Word COM AutoFit for the given table records.
+
+    Returns (logs, applied_indices, failed_indices). failed_indices are the
+    requested global_table_index values that did not get a
+    WORD_COM_TABLE_AUTOFIT_APPLIED confirmation, which covers per-table
+    errors, missing tables, COM exceptions, and runner failures.
+    """
     if not records:
-        return ["WORD_COM_TABLE_AUTOFIT_SKIPPED reason=no_records"], set()
+        return ["WORD_COM_TABLE_AUTOFIT_SKIPPED reason=no_records"], set(), set()
+
+    requested_indices = _requested_indices(records)
 
     script_path, records_path = _table_autofit_temp_paths()
     logs = [
@@ -154,12 +173,12 @@ def apply_table_autofit_with_word_com(
             log.startswith("WORD_COM_TABLE_AUTOFIT_EXCEPTION") for log in script_logs
         ):
             logs.append("WORD_COM_TABLE_AUTOFIT_FAILED reason=powershell_nonzero_exit")
-        return logs, applied_indices
+        return logs, applied_indices, requested_indices - applied_indices
     except ProcessStopped:
         raise
     except Exception as exc:
         logs.append(f"WORD_COM_TABLE_AUTOFIT_SKIPPED reason=runner_failed:{type(exc).__name__}:{exc}")
-        return logs, set()
+        return logs, set(), set(requested_indices)
     finally:
         for temp_path in (script_path, records_path):
             try:

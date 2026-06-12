@@ -13,6 +13,7 @@ from docx_fixer.docx_processor import fix_docx_fast
 from docx_fixer.models import ProcessOptions, ProcessSummary
 from docx_fixer.table_cross_page import apply_cross_page_stats
 from docx_fixer.table_format import (
+    apply_special_table_format,
     apply_table_format,
     process_table,
     table_cell_count,
@@ -141,6 +142,108 @@ def make_style_numbering_xml(style_id: str, *, num_id: str, ilvl: int = 0) -> by
     )
 
 
+def make_sect_pr(page_width: int, left_margin: int, right_margin: int):
+    sect_pr = etree.Element(qn("sectPr"))
+    pg_sz = etree.SubElement(sect_pr, qn("pgSz"))
+    pg_sz.set(qn("w"), str(page_width))
+    pg_sz.set(qn("h"), "16838")
+    pg_mar = etree.SubElement(sect_pr, qn("pgMar"))
+    pg_mar.set(qn("top"), "1440")
+    pg_mar.set(qn("bottom"), "1440")
+    pg_mar.set(qn("left"), str(left_margin))
+    pg_mar.set(qn("right"), str(right_margin))
+    return sect_pr
+
+
+def make_section_break_paragraph(page_width: int, left_margin: int, right_margin: int):
+    p = etree.Element(qn("p"))
+    p_pr = etree.SubElement(p, qn("pPr"))
+    p_pr.append(make_sect_pr(page_width, left_margin, right_margin))
+    return p
+
+
+def make_indented_paragraph(text: str, left_twips: str):
+    p = make_paragraph(text)
+    p_pr = etree.Element(qn("pPr"))
+    p.insert(0, p_pr)
+    ind = etree.SubElement(p_pr, qn("ind"))
+    ind.set(qn("left"), left_twips)
+    return p
+
+
+def add_wide_fixed_widths(tbl, grid_width: str = "8000"):
+    tbl_grid = etree.SubElement(tbl, qn("tblGrid"))
+    for _ in range(table_column_count(tbl)):
+        grid_col = etree.SubElement(tbl_grid, qn("gridCol"))
+        grid_col.set(qn("w"), grid_width)
+    for tc in tbl.xpath(".//w:tc", namespaces=NS):
+        tc_pr = tc.find("w:tcPr", NS)
+        if tc_pr is None:
+            tc_pr = etree.Element(qn("tcPr"))
+            tc.insert(0, tc_pr)
+        tc_w = etree.SubElement(tc_pr, qn("tcW"))
+        tc_w.set(qn("type"), "dxa")
+        tc_w.set(qn("w"), grid_width)
+    return tbl
+
+
+def grid_column_widths(tbl) -> list[int]:
+    return [
+        int(grid_col.get(qn("w")))
+        for grid_col in tbl.findall("w:tblGrid/w:gridCol", NS)
+    ]
+
+
+def cell_widths(tbl) -> list[int]:
+    return [
+        int(tc_w.get(qn("w")))
+        for tc_w in tbl.xpath(".//w:tc/w:tcPr/w:tcW", namespaces=NS)
+    ]
+
+
+def set_fixed_widths_in_docx(docx_path, table_indices: list[int]) -> None:
+    """Simulate a partial Word COM run that saved fixed table widths."""
+    with ZipFile(docx_path) as zin:
+        items = zin.infolist()
+        data = {item.filename: zin.read(item.filename) for item in items}
+
+    root = etree.fromstring(data["word/document.xml"])
+    tables = root.xpath(".//w:tbl", namespaces=NS)
+    for table_index in table_indices:
+        tbl = tables[table_index - 1]
+        tbl_pr = tbl.find("w:tblPr", NS)
+        if tbl_pr is None:
+            tbl_pr = etree.Element(qn("tblPr"))
+            tbl.insert(0, tbl_pr)
+        tbl_w = tbl_pr.find("w:tblW", NS)
+        if tbl_w is None:
+            tbl_w = etree.SubElement(tbl_pr, qn("tblW"))
+        tbl_w.set(qn("type"), "dxa")
+        tbl_w.set(qn("w"), "20000")
+        tbl_grid = etree.SubElement(tbl, qn("tblGrid"))
+        for _ in range(table_column_count(tbl)):
+            grid_col = etree.SubElement(tbl_grid, qn("gridCol"))
+            grid_col.set(qn("w"), "4000")
+        first_tc = tbl.find("w:tr/w:tc", NS)
+        tc_pr = first_tc.find("w:tcPr", NS)
+        if tc_pr is None:
+            tc_pr = etree.Element(qn("tcPr"))
+            first_tc.insert(0, tc_pr)
+        tc_w = etree.SubElement(tc_pr, qn("tcW"))
+        tc_w.set(qn("type"), "dxa")
+        tc_w.set(qn("w"), "4000")
+
+    data["word/document.xml"] = etree.tostring(
+        root,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
+    with ZipFile(docx_path, "w", ZIP_DEFLATED) as zout:
+        for item in items:
+            zout.writestr(item, data[item.filename])
+
+
 def table_pr_element(tbl, name: str):
     return tbl.find(f"w:tblPr/w:{name}", NS)
 
@@ -178,6 +281,234 @@ class TableFormatTests(unittest.TestCase):
         self.assertEqual(table_setting(tbl, "tblInd", "type"), "dxa")
         self.assertEqual(table_setting(tbl, "tblInd", "w"), "720")
         self.assertEqual(table_setting(tbl, "tblLayout", "type"), "fixed")
+
+    def test_apply_special_table_format_clears_old_widths_and_rebuilds_grid(self):
+        tbl = add_wide_fixed_widths(make_table([3, 3]), grid_width="8000")
+
+        apply_special_table_format(tbl, left_indent_twips=720, width_twips=7586)
+
+        widths = grid_column_widths(tbl)
+        self.assertEqual(len(widths), 3)
+        self.assertNotIn(8000, widths)
+        self.assertEqual(sum(widths), 7586)
+        self.assertLessEqual(sum(widths), 7586)
+
+        tbl_pr = tbl.find("w:tblPr", NS)
+        tbl_grid = tbl.find("w:tblGrid", NS)
+        self.assertEqual(tbl.index(tbl_grid), tbl.index(tbl_pr) + 1)
+
+        per_cell_widths = cell_widths(tbl)
+        self.assertEqual(len(per_cell_widths), 6)
+        self.assertNotIn(8000, per_cell_widths)
+        for tc_w in tbl.xpath(".//w:tc/w:tcPr/w:tcW", namespaces=NS):
+            self.assertEqual(tc_w.get(qn("type")), "dxa")
+        for row_index, tr in enumerate(tbl.findall("w:tr", NS)):
+            row_widths = [
+                int(tc.find("w:tcPr/w:tcW", NS).get(qn("w")))
+                for tc in tr.findall("w:tc", NS)
+            ]
+            self.assertEqual(row_widths, widths, f"row {row_index} cell widths mismatch")
+
+    def test_apply_special_table_format_grid_span_uses_column_width_sum(self):
+        tbl = make_table([2, 1])
+        spanning_tc = tbl.findall("w:tr", NS)[1].find("w:tc", NS)
+        tc_pr = etree.SubElement(spanning_tc, qn("tcPr"))
+        grid_span = etree.SubElement(tc_pr, qn("gridSpan"))
+        grid_span.set(qn("val"), "2")
+
+        apply_special_table_format(tbl, left_indent_twips=0, width_twips=4001)
+
+        widths = grid_column_widths(tbl)
+        self.assertEqual(widths, [2001, 2000])
+        self.assertEqual(sum(widths), 4001)
+
+        first_row_widths = [
+            int(tc.find("w:tcPr/w:tcW", NS).get(qn("w")))
+            for tc in tbl.findall("w:tr", NS)[0].findall("w:tc", NS)
+        ]
+        self.assertEqual(first_row_widths, [2001, 2000])
+        spanning_width = int(spanning_tc.find("w:tcPr/w:tcW", NS).get(qn("w")))
+        self.assertEqual(spanning_width, 4001)
+
+    def test_special_table_right_edge_matches_page_text_width(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_indented_paragraph("表格上方說明", "720"))
+        body.append(add_wide_fixed_widths(make_table([3, 3, 3]), grid_width="8000"))
+        body.append(make_sect_pr(11906, 1800, 1800))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(True, False, False, False, normalize_with_word_com=False)
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            text_width_twips = 11906 - 1800 - 1800
+            record = summary.table_log_records[1]
+            self.assertEqual(record["table_type"], "special_table")
+            self.assertEqual(record["special_left_indent_twips"], 720)
+            self.assertEqual(record["special_width_twips"], text_width_twips - 720)
+            self.assertEqual(record["special_text_width_twips"], text_width_twips)
+            self.assertEqual(record["special_right_edge_twips"], text_width_twips)
+            self.assertEqual(record["special_overflow_twips"], 0)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+            self.assertEqual(table_setting(tbl, "jc"), "left")
+            self.assertEqual(table_setting(tbl, "tblLayout", "type"), "fixed")
+            tbl_ind = int(table_setting(tbl, "tblInd", "w"))
+            tbl_w = int(table_setting(tbl, "tblW", "w"))
+            self.assertEqual(tbl_ind, 720)
+            self.assertLessEqual(tbl_ind + tbl_w, text_width_twips)
+            self.assertEqual(tbl_ind + tbl_w, text_width_twips)
+
+            widths = grid_column_widths(tbl)
+            self.assertEqual(len(widths), 3)
+            self.assertNotIn(8000, widths)
+            self.assertLessEqual(sum(widths), tbl_w)
+            self.assertNotIn(8000, cell_widths(tbl))
+
+    def test_special_table_uses_current_section_properties_not_previous_section(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        # Section 1 ends here with a much wider page than section 2.
+        body.append(make_section_break_paragraph(20000, 1000, 1000))
+        body.append(make_indented_paragraph("表格上方說明", "720"))
+        body.append(make_table([3, 3, 3]))
+        body.append(make_sect_pr(11906, 1800, 1800))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(True, False, False, False, normalize_with_word_com=False)
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            section_two_text_width = 11906 - 1800 - 1800
+            record = summary.table_log_records[1]
+            self.assertEqual(record["table_type"], "special_table")
+            self.assertEqual(record["special_text_width_twips"], section_two_text_width)
+            self.assertEqual(record["special_width_twips"], section_two_text_width - 720)
+            self.assertEqual(record["special_overflow_twips"], 0)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+            tbl_ind = int(table_setting(tbl, "tblInd", "w"))
+            tbl_w = int(table_setting(tbl, "tblW", "w"))
+            self.assertEqual(tbl_ind, 720)
+            self.assertEqual(tbl_w, section_two_text_width - 720)
+            self.assertLessEqual(tbl_ind + tbl_w, section_two_text_width)
+
+    def test_special_table_falls_back_when_left_indent_reaches_page_right_edge(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_indented_paragraph("表格上方說明", "9000"))
+        body.append(make_table([3, 3, 3]))
+        body.append(make_sect_pr(11906, 1800, 1800))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(True, False, False, False, normalize_with_word_com=False)
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            record = summary.table_log_records[1]
+            self.assertEqual(record["table_type"], "special_table")
+            self.assertIsNone(record["special_left_indent_twips"])
+            self.assertIsNone(record["special_width_twips"])
+            self.assertIsNone(record["special_text_width_twips"])
+            self.assertIsNone(record["special_right_edge_twips"])
+            self.assertIsNone(record["special_overflow_twips"])
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+            self.assertEqual(table_setting(tbl, "jc"), "right")
+            self.assertEqual(table_setting(tbl, "tblW", "type"), "auto")
+            self.assertEqual(table_setting(tbl, "tblLayout", "type"), "autofit")
+            self.assertIsNone(table_pr_element(tbl, "tblInd"))
+
+    def test_special_table_clamps_negative_left_indent_to_zero(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_indented_paragraph("表格上方說明", "-200"))
+        body.append(make_table([3, 3, 3]))
+        body.append(make_sect_pr(11906, 1800, 1800))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(True, False, False, False, normalize_with_word_com=False)
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            text_width_twips = 11906 - 1800 - 1800
+            record = summary.table_log_records[1]
+            self.assertEqual(record["special_left_indent_twips"], 0)
+            self.assertEqual(record["special_width_twips"], text_width_twips)
+            self.assertEqual(record["special_overflow_twips"], 0)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+            self.assertEqual(table_setting(tbl, "tblInd", "w"), "0")
+            self.assertEqual(table_setting(tbl, "tblW", "w"), str(text_width_twips))
 
     def test_apply_table_format_keeps_existing_borders_and_sets_run_size_to_11pt(self):
         tbl = make_table([2, 2, 2])
@@ -347,6 +678,7 @@ class TableFormatTests(unittest.TestCase):
                 return (
                     ["WORD_COM_TABLE_AUTOFIT_APPLIED global_table_index=4 sequence=content_then_window"],
                     {4},
+                    set(),
                 )
 
             with patch(
@@ -380,6 +712,341 @@ class TableFormatTests(unittest.TestCase):
         self.assertFalse(summary.table_log_records[2]["word_com_autofit_applied"])
         self.assertTrue(summary.table_log_records[3]["word_com_autofit_applied"])
         self.assertEqual(summary.table_log_records[3]["word_com_autofit_sequence"], "content_then_window")
+        self.assertEqual(summary.table_log_records[3]["word_com_autofit_status"], "word_com")
+        self.assertEqual(summary.word_com_table_autofit_applied_count, 1)
+        self.assertEqual(summary.word_com_table_autofit_fallback_count, 0)
+        self.assertEqual(summary.word_com_table_autofit_failed_count, 0)
+
+    def test_word_com_autofit_failure_triggers_xml_fallback(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("一般表格"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            def fake_table_autofit(docx_path, records, stop=None):
+                # Word COM saved fixed widths into the document before failing.
+                set_fixed_widths_in_docx(docx_path, [int(r["table_index"]) for r in records])
+                failed = {int(r["global_table_index"]) for r in records}
+                return (
+                    ["WORD_COM_TABLE_AUTOFIT_EXCEPTION type=Test message=word_not_installed"],
+                    set(),
+                    failed,
+                )
+
+            with patch(
+                "docx_fixer.docx_processor.apply_table_autofit_with_word_com",
+                side_effect=fake_table_autofit,
+            ):
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(True, False, False, False, normalize_with_word_com=True),
+                )
+
+            record = summary.table_log_records[1]
+            self.assertEqual(record["table_type"], "normal_table")
+            self.assertFalse(record["word_com_autofit_applied"])
+            self.assertTrue(record["word_com_autofit_fallback_applied"])
+            self.assertEqual(record["word_com_autofit_status"], "xml_fallback")
+            self.assertEqual(summary.word_com_table_autofit_applied_count, 0)
+            self.assertEqual(summary.word_com_table_autofit_fallback_count, 1)
+            self.assertEqual(summary.word_com_table_autofit_failed_count, 0)
+
+            logs = "\n".join(summary.word_com_table_autofit_logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_STARTED failed_records_count=1", logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_APPLIED global_table_index=2", logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_DONE applied=1", logs)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+            self.assertEqual(table_setting(tbl, "tblW", "type"), "pct")
+            self.assertEqual(table_setting(tbl, "tblW", "w"), "5000")
+            self.assertEqual(table_setting(tbl, "tblLayout", "type"), "autofit")
+            self.assertIsNone(tbl.find("w:tblGrid", NS))
+            self.assertIsNone(tbl.find(".//w:tcPr/w:tcW", NS))
+
+    def test_partial_word_com_failure_fallback_only_failed_tables(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("一般表格A"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("一般表格B"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            def fake_table_autofit(docx_path, records, stop=None):
+                # Word COM rewrote both tables with fixed widths, but only
+                # confirmed AutoFit for global index 2.
+                set_fixed_widths_in_docx(docx_path, [int(r["table_index"]) for r in records])
+                return (
+                    ["WORD_COM_TABLE_AUTOFIT_APPLIED global_table_index=2 sequence=content_then_window"],
+                    {2},
+                    {3},
+                )
+
+            with patch(
+                "docx_fixer.docx_processor.apply_table_autofit_with_word_com",
+                side_effect=fake_table_autofit,
+            ):
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(True, False, False, False, normalize_with_word_com=True),
+                )
+
+            applied_record = summary.table_log_records[1]
+            failed_record = summary.table_log_records[2]
+            self.assertEqual(applied_record["word_com_autofit_status"], "word_com")
+            self.assertTrue(applied_record["word_com_autofit_applied"])
+            self.assertFalse(applied_record["word_com_autofit_fallback_applied"])
+            self.assertEqual(failed_record["word_com_autofit_status"], "xml_fallback")
+            self.assertFalse(failed_record["word_com_autofit_applied"])
+            self.assertTrue(failed_record["word_com_autofit_fallback_applied"])
+            self.assertEqual(summary.word_com_table_autofit_applied_count, 1)
+            self.assertEqual(summary.word_com_table_autofit_fallback_count, 1)
+            self.assertEqual(summary.word_com_table_autofit_failed_count, 0)
+
+            logs = "\n".join(summary.word_com_table_autofit_logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_STARTED failed_records_count=1", logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_APPLIED global_table_index=3", logs)
+            self.assertNotIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_APPLIED global_table_index=2", logs)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+
+            # The Word COM "success" table keeps the widths Word saved.
+            self.assertEqual(table_setting(tables[1], "tblW", "type"), "dxa")
+            self.assertEqual(table_setting(tables[1], "tblW", "w"), "20000")
+            self.assertIsNotNone(tables[1].find("w:tblGrid", NS))
+
+            # The failed table is repaired back to the safe window format.
+            self.assertEqual(table_setting(tables[2], "tblW", "type"), "pct")
+            self.assertEqual(table_setting(tables[2], "tblW", "w"), "5000")
+            self.assertEqual(table_setting(tables[2], "tblLayout", "type"), "autofit")
+            self.assertIsNone(tables[2].find("w:tblGrid", NS))
+            self.assertIsNone(tables[2].find(".//w:tcPr/w:tcW", NS))
+
+    def test_word_com_runner_exception_triggers_fallback(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("一般表格"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            with patch(
+                "docx_fixer.docx_processor.apply_table_autofit_with_word_com",
+                side_effect=RuntimeError("word_com_unavailable"),
+            ):
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(True, False, False, False, normalize_with_word_com=True),
+                )
+
+            record = summary.table_log_records[1]
+            self.assertEqual(record["word_com_autofit_status"], "xml_fallback")
+            self.assertTrue(record["word_com_autofit_fallback_applied"])
+            self.assertEqual(summary.word_com_table_autofit_fallback_count, 1)
+            self.assertEqual(summary.word_com_table_autofit_failed_count, 0)
+
+            logs = "\n".join(summary.word_com_table_autofit_logs)
+            self.assertIn("reason=runner_failed:RuntimeError:word_com_unavailable", logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_STARTED", logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_DONE applied=1", logs)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+            self.assertEqual(table_setting(tbl, "tblW", "type"), "pct")
+            self.assertEqual(table_setting(tbl, "tblW", "w"), "5000")
+            self.assertEqual(table_setting(tbl, "tblLayout", "type"), "autofit")
+            self.assertIsNone(tbl.find("w:tblGrid", NS))
+            self.assertIsNone(tbl.find(".//w:tcPr/w:tcW", NS))
+
+    def test_fallback_does_not_touch_special_table_or_skipped_table(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("第一張表格"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("特殊表格"))
+        body.append(make_table([4, 4]))
+        body.append(make_paragraph("小表格"))
+        body.append(make_table([2, 2]))
+        body.append(make_paragraph("一般表格"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            def fake_table_autofit(docx_path, records, stop=None):
+                failed = {int(r["global_table_index"]) for r in records}
+                return (["WORD_COM_TABLE_AUTOFIT_FAILED reason=powershell_nonzero_exit"], set(), failed)
+
+            with patch(
+                "docx_fixer.docx_processor.apply_table_autofit_with_word_com",
+                side_effect=fake_table_autofit,
+            ):
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(True, False, False, False, normalize_with_word_com=True),
+                )
+
+            self.assertEqual(
+                [record["table_type"] for record in summary.table_log_records],
+                ["skipped_first_table", "special_table", "skipped_small_table", "normal_table"],
+            )
+            self.assertEqual(summary.table_log_records[0]["word_com_autofit_status"], "not_needed")
+            self.assertEqual(summary.table_log_records[1]["word_com_autofit_status"], "not_needed")
+            self.assertEqual(summary.table_log_records[2]["word_com_autofit_status"], "not_needed")
+            self.assertEqual(summary.table_log_records[3]["word_com_autofit_status"], "xml_fallback")
+
+            logs = "\n".join(summary.word_com_table_autofit_logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_STARTED failed_records_count=1", logs)
+            self.assertIn("WORD_COM_TABLE_AUTOFIT_FALLBACK_APPLIED global_table_index=4", logs)
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+
+            # First table stays untouched by both passes.
+            self.assertIsNone(tables[0].find("w:tblPr", NS))
+            # Special table keeps the special right-aligned fallback layout.
+            self.assertEqual(table_setting(tables[1], "jc"), "right")
+            self.assertEqual(table_setting(tables[1], "tblW", "type"), "auto")
+            # Small table stays untouched.
+            self.assertIsNone(tables[2].find("w:tblPr", NS))
+            # Only the normal table is repaired by the fallback.
+            self.assertEqual(table_setting(tables[3], "jc"), "center")
+            self.assertEqual(table_setting(tables[3], "tblW", "type"), "pct")
+            self.assertEqual(table_setting(tables[3], "tblW", "w"), "5000")
+
+    def test_fallback_respects_chapter_three_table_layout_skip(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("壹、序言"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("參、價格形成之主要因素分析"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("肆、第四章"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            captured: dict[str, object] = {}
+
+            def fake_table_autofit(docx_path, records, stop=None):
+                captured["records"] = list(records)
+                failed = {int(r["global_table_index"]) for r in records}
+                return (["WORD_COM_TABLE_AUTOFIT_EXCEPTION type=Test message=boom"], set(), failed)
+
+            with patch(
+                "docx_fixer.docx_processor.apply_table_autofit_with_word_com",
+                side_effect=fake_table_autofit,
+            ):
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(
+                        fix_table_layout=True,
+                        fix_color=False,
+                        fix_paragraph=False,
+                        normalize_with_word_com=True,
+                        skip_chapter_three_table_layout=True,
+                    ),
+                )
+
+            self.assertEqual(
+                [record["global_table_index"] for record in captured["records"]],
+                [3],
+            )
+            chapter_three_record = summary.table_log_records[1]
+            self.assertEqual(chapter_three_record["table_type"], "skipped_chapter_three_table")
+            self.assertEqual(chapter_three_record["word_com_autofit_status"], "not_needed")
+            self.assertFalse(chapter_three_record["word_com_autofit_fallback_applied"])
+            self.assertEqual(summary.table_log_records[2]["word_com_autofit_status"], "xml_fallback")
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+
+            # The chapter three protected table is untouched by the fallback.
+            self.assertIsNone(tables[1].find("w:tblPr", NS))
+            self.assertIsNone(tables[1].find("w:tblGrid", NS))
+            # The normal table outside the protected region is repaired.
+            self.assertEqual(table_setting(tables[2], "tblW", "type"), "pct")
+            self.assertEqual(table_setting(tables[2], "tblW", "w"), "5000")
 
     def test_processor_skips_nested_tables_when_protection_is_enabled(self):
         document = make_nested_table_document()
