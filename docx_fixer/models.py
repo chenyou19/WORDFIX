@@ -20,6 +20,7 @@ class ProcessOptions:
     skip_chapter_three_indents: bool = False
     skip_all_under_chapter_three: bool = False
     skip_log_output: bool = True
+    skip_nested_tables: bool = True
 
     def __post_init__(self) -> None:
         # Backward compatibility for older callers. The GUI no longer exposes
@@ -40,6 +41,7 @@ class ProcessSummary:
     tables: int = 0
     skipped_first_page_tables: int = 0
     skipped_small_tables: int = 0
+    skipped_nested_tables: int = 0
     special_autofit_right_tables: int = 0
     normal_processed_tables: int = 0
     cross_page_tables: int = 0
@@ -69,6 +71,8 @@ class ProcessSummary:
     body_indent_debug_logs: list[str] = field(default_factory=list)
     body_indent_records: list[dict[str, object]] = field(default_factory=list)
     table_log_records: list[dict[str, object]] = field(default_factory=list)
+    word_com_table_autofit_records: list[dict[str, object]] = field(default_factory=list)
+    word_com_table_autofit_logs: list[str] = field(default_factory=list)
     heading_suffix_before_records: list[dict[str, object]] = field(default_factory=list)
     heading_suffix_after_records: list[dict[str, object]] = field(default_factory=list)
     word_com_body_indent_logs: list[str] = field(default_factory=list)

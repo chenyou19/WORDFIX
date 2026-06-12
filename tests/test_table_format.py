@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
@@ -51,6 +52,21 @@ def first_table_fill(tbl) -> str | None:
     if shd is None:
         return None
     return shd.get(qn("fill"))
+
+
+def make_nested_table_document():
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+    body.append(make_paragraph("first table"))
+    body.append(make_table([5, 5]))
+    body.append(make_paragraph("nested table"))
+
+    outer = make_table([3, 3])
+    inner = make_shaded_table([3, 3], fill="FF0000")
+    first_tc = outer.find("w:tr/w:tc", NS)
+    first_tc.append(inner)
+    body.append(outer)
+    return document
 
 
 def make_paragraph(
@@ -296,6 +312,217 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(table_setting(tables[3], "tblLayout", "type"), "autofit")
             self.assertEqual(table_setting(tables[3], "tblW", "type"), "pct")
             self.assertEqual(table_setting(tables[3], "tblW", "w"), "5000")
+
+    def test_normal_tables_are_queued_for_word_com_autofit_only(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("first table"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("special table"))
+        body.append(make_table([4, 4]))
+        body.append(make_paragraph("small table"))
+        body.append(make_table([2, 2]))
+        body.append(make_paragraph("normal table"))
+        body.append(make_table([5, 5]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            captured: dict[str, object] = {}
+
+            def fake_table_autofit(docx_path, records, stop=None):
+                captured["docx_path"] = docx_path
+                captured["records"] = list(records)
+                return (
+                    ["WORD_COM_TABLE_AUTOFIT_APPLIED global_table_index=4 sequence=content_then_window"],
+                    {4},
+                )
+
+            with patch(
+                "docx_fixer.docx_processor.apply_table_autofit_with_word_com",
+                side_effect=fake_table_autofit,
+            ) as autofit:
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(
+                        fix_table_layout=True,
+                        fix_color=False,
+                        fix_paragraph=False,
+                        normalize_with_word_com=True,
+                    ),
+                )
+
+        autofit.assert_called_once()
+        self.assertEqual(captured["docx_path"], output_docx)
+        self.assertEqual(
+            [(record["global_table_index"], record["table_name"]) for record in captured["records"]],
+            [(4, "normal table")],
+        )
+        self.assertEqual(summary.word_com_table_autofit_records, captured["records"])
+        self.assertEqual(
+            [record["table_type"] for record in summary.table_log_records],
+            ["skipped_first_table", "special_table", "skipped_small_table", "normal_table"],
+        )
+        self.assertFalse(summary.table_log_records[0]["word_com_autofit_applied"])
+        self.assertFalse(summary.table_log_records[1]["word_com_autofit_applied"])
+        self.assertFalse(summary.table_log_records[2]["word_com_autofit_applied"])
+        self.assertTrue(summary.table_log_records[3]["word_com_autofit_applied"])
+        self.assertEqual(summary.table_log_records[3]["word_com_autofit_sequence"], "content_then_window")
+
+    def test_processor_skips_nested_tables_when_protection_is_enabled(self):
+        document = make_nested_table_document()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=True,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_nested_tables=True,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.tables, 3)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+            self.assertEqual(summary.skipped_nested_tables, 2)
+            nested_records = [
+                record
+                for record in summary.table_log_records
+                if record["table_type"] == "skipped_nested_table"
+            ]
+            self.assertEqual(len(nested_records), 2)
+            self.assertTrue(all(record["action"] == "skipped" for record in nested_records))
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            outer = tables[1]
+            inner = tables[2]
+
+            for tbl in (outer, inner):
+                self.assertIsNone(table_pr_element(tbl, "jc"))
+                self.assertIsNone(table_pr_element(tbl, "tblW"))
+                self.assertIsNone(table_pr_element(tbl, "tblLayout"))
+
+            for run in inner.xpath(".//w:r", namespaces=NS):
+                r_pr = run.find("w:rPr", NS)
+                if r_pr is not None:
+                    self.assertIsNone(r_pr.find("w:sz", NS))
+                    self.assertIsNone(r_pr.find("w:szCs", NS))
+            self.assertEqual(first_table_fill(inner), "FF0000")
+
+    def test_nested_tables_are_not_queued_for_word_com_autofit_when_protected(self):
+        document = make_nested_table_document()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            with patch("docx_fixer.docx_processor.apply_table_autofit_with_word_com") as autofit:
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(
+                        fix_table_layout=True,
+                        fix_color=True,
+                        fix_paragraph=False,
+                        normalize_with_word_com=True,
+                        skip_nested_tables=True,
+                    ),
+                )
+
+        autofit.assert_not_called()
+        self.assertEqual(summary.word_com_table_autofit_records, [])
+        self.assertEqual(
+            [record["table_type"] for record in summary.table_log_records],
+            ["skipped_first_table", "skipped_nested_table", "skipped_nested_table"],
+        )
+        self.assertTrue(
+            all(not record["word_com_autofit_applied"] for record in summary.table_log_records)
+        )
+
+    def test_processor_allows_nested_tables_when_protection_is_disabled(self):
+        document = make_nested_table_document()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            options = ProcessOptions(
+                fix_table_layout=True,
+                fix_color=True,
+                fix_paragraph=False,
+                normalize_with_word_com=False,
+                skip_nested_tables=False,
+            )
+            summary = fix_docx_fast(input_docx, output_docx, options)
+
+            self.assertEqual(summary.tables, 3)
+            self.assertEqual(summary.skipped_first_page_tables, 1)
+            self.assertEqual(summary.skipped_nested_tables, 0)
+            self.assertFalse(
+                any(record["table_type"] == "skipped_nested_table" for record in summary.table_log_records)
+            )
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            outer = tables[1]
+            inner = tables[2]
+
+            self.assertEqual(table_setting(outer, "jc"), "right")
+            self.assertEqual(table_setting(inner, "jc"), "right")
+            self.assertEqual(table_setting(inner, "tblLayout", "type"), "autofit")
+            self.assertEqual(first_table_fill(inner), "auto")
+            for run in inner.xpath(".//w:r", namespaces=NS):
+                r_pr = run.find("w:rPr", NS)
+                self.assertIsNotNone(r_pr)
+                self.assertEqual(r_pr.find("w:sz", NS).get(qn("val")), "22")
 
     def test_processor_skips_all_table_processing_under_chapter_three(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})

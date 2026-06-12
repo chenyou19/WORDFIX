@@ -32,6 +32,14 @@ def find_previous_paragraph_text_for_table(root, tbl) -> str:
     return "(empty)"
 
 
+def is_nested_table(tbl) -> bool:
+    return bool(tbl.xpath("ancestor::w:tbl", namespaces=NS))
+
+
+def contains_nested_table(tbl) -> bool:
+    return bool(tbl.xpath(".//w:tc//w:tbl", namespaces=NS))
+
+
 
 
 
@@ -54,6 +62,8 @@ def build_table_log_record(
     cleared_colors: int,
     chapter_three_table_layout_skipped: bool = False,
     chapter_three_table_color_skipped: bool = False,
+    word_com_autofit_applied: bool = False,
+    word_com_autofit_sequence: str = "none",
     shading_debug: list[str] | None = None,
 ) -> dict[str, object]:
     return {
@@ -74,6 +84,8 @@ def build_table_log_record(
         "cleared_colors": cleared_colors,
         "chapter_three_table_layout_skipped": chapter_three_table_layout_skipped,
         "chapter_three_table_color_skipped": chapter_three_table_color_skipped,
+        "word_com_autofit_applied": word_com_autofit_applied,
+        "word_com_autofit_sequence": word_com_autofit_sequence,
         "shading_debug": list(shading_debug or []),
     }
 
@@ -296,6 +308,32 @@ def process_tables_in_part(
             summary.skipped_first_page_tables += 1
             continue
 
+        if getattr(options, "skip_nested_tables", True) and (
+            is_nested_table(tbl) or contains_nested_table(tbl)
+        ):
+            summary.skipped_nested_tables += 1
+            summary.table_log_records.append(
+                build_table_log_record(
+                    part_name=part_name,
+                    table_index=table_index,
+                    global_table_index=global_table_index,
+                    table_name=table_name,
+                    first_level_heading=first_level_heading,
+                    cell_count=cell_count,
+                    column_count=column_count,
+                    table_type="skipped_nested_table",
+                    action="skipped",
+                    reason="nested table protected; table contains or is inside another table",
+                    special_layout_used=False,
+                    layout_fixed=False,
+                    color_fixed=False,
+                    changed_to_gray=0,
+                    cleared_colors=0,
+                    shading_debug=[],
+                )
+            )
+            continue
+
         is_chapter_three_table = protected_context.is_table_protected(tbl, part_name)
         chapter_three_table_layout_skipped = bool(
             is_chapter_three_table and getattr(options, "skip_chapter_three_table_layout", False)
@@ -414,6 +452,18 @@ def process_tables_in_part(
             reason = _chapter_three_table_skip_reason(
                 layout_skipped=chapter_three_table_layout_skipped,
                 color_skipped=chapter_three_table_color_skipped,
+            )
+        if table_type == "normal_table":
+            summary.word_com_table_autofit_records.append(
+                {
+                    "part_name": part_name,
+                    "table_index": table_index,
+                    "global_table_index": global_table_index,
+                    "table_name": table_name,
+                    "first_level_heading": first_level_heading,
+                    "cell_count": cell_count,
+                    "column_count": column_count,
+                }
             )
         summary.changed_to_gray += changed_to_gray
         summary.cleared_colors += cleared_colors

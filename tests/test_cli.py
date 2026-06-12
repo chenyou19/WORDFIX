@@ -26,6 +26,7 @@ class CliOptionTests(unittest.TestCase):
         options = ProcessOptions(True, True, True)
 
         self.assertTrue(options.skip_log_output)
+        self.assertTrue(options.skip_nested_tables)
 
     def test_cli_preserves_log_output_by_default_and_supports_no_log_aliases(self):
         args = parse_args(["input.docx", "output.docx"])
@@ -117,6 +118,18 @@ class CliOptionTests(unittest.TestCase):
         self.assertTrue(options.skip_chapter_three_table_layout)
         self.assertTrue(options.skip_chapter_three_table_color)
         self.assertTrue(options.skip_chapter_three_indents)
+
+    def test_nested_table_protection_is_enabled_by_default_and_can_be_disabled(self):
+        args = parse_args(["input.docx", "output.docx"])
+        options = _build_process_options(args)
+
+        self.assertTrue(args.skip_nested_tables)
+        self.assertTrue(options.skip_nested_tables)
+
+        disabled_args = parse_args(["input.docx", "output.docx", "--no-skip-nested-tables"])
+        disabled_options = _build_process_options(disabled_args)
+        self.assertFalse(disabled_args.skip_nested_tables)
+        self.assertFalse(disabled_options.skip_nested_tables)
 
     def test_new_chapter_three_table_options_can_be_disabled_independently(self):
         args = parse_args([

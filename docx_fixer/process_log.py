@@ -358,6 +358,15 @@ def format_word_com_body_indent_log_lines(summary: ProcessSummary) -> list[str]:
     return lines
 
 
+def format_word_com_table_autofit_log_lines(summary: ProcessSummary) -> list[str]:
+    lines = ["Word COM table AutoFit:"]
+    if not summary.word_com_table_autofit_logs:
+        lines.append("No Word COM table AutoFit logs.")
+        return lines
+    lines.extend(summary.word_com_table_autofit_logs)
+    return lines
+
+
 def _bool_text(value: object) -> str:
     return "true" if bool(value) else "false"
 
@@ -387,6 +396,8 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"color_fixed: {_bool_text(record['color_fixed'])}",
                 f"chapter_three_table_layout_skipped: {_bool_text(record.get('chapter_three_table_layout_skipped', False))}",
                 f"chapter_three_table_color_skipped: {_bool_text(record.get('chapter_three_table_color_skipped', False))}",
+                f"word_com_autofit_applied: {_bool_text(record.get('word_com_autofit_applied', False))}",
+                f"word_com_autofit_sequence: {record.get('word_com_autofit_sequence', 'none')}",
                 f"changed_to_gray: {record['changed_to_gray']}",
                 f"cleared_colors: {record['cleared_colors']}",
                 f"shading_debug: {' | '.join(record.get('shading_debug', [])) if record.get('shading_debug') else 'none'}",
@@ -419,6 +430,7 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         f"表格總數：{summary.tables}",
         f"跳過第一張表格數：{summary.skipped_first_page_tables}",
         f"因格子數小於等於 4 而跳過的表格數：{summary.skipped_small_tables}",
+        f"因表格中有表格而跳過的表格數：{summary.skipped_nested_tables}",
         f"跨頁表格數：{summary.cross_page_tables}",
         f"跨頁已解決的表格數：{summary.cross_page_resolved_tables}",
         f"跨頁未解決的表格數：{summary.cross_page_still_split_tables}",
@@ -452,6 +464,8 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         *format_numbering_debug_log_lines(summary),
         "",
         *format_body_indent_debug_log_lines(summary),
+        "",
+        *format_word_com_table_autofit_log_lines(summary),
         "",
         *format_word_com_body_indent_log_lines(summary),
         "",

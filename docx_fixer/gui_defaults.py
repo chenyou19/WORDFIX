@@ -24,6 +24,7 @@ def built_in_gui_defaults() -> dict[str, bool]:
         "level1_level2_body_first_line_indent": True,
         "word_com_check_body_font": False,
         "skip_log_output": True,
+        "skip_nested_tables": True,
         "skip_chapter_three_table_layout": True,
         "skip_chapter_three_table_color": True,
         "skip_chapter_three_indents": False,

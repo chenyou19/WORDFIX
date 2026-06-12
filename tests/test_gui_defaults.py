@@ -27,6 +27,7 @@ class GuiDefaultsTests(unittest.TestCase):
         settings["skip_chapter_three_table_layout"] = False
         settings["skip_chapter_three_table_color"] = True
         settings["skip_chapter_three_indents"] = True
+        settings["skip_nested_tables"] = False
         settings["skip_log_output"] = False
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -41,6 +42,7 @@ class GuiDefaultsTests(unittest.TestCase):
         self.assertFalse(loaded["skip_chapter_three_table_layout"])
         self.assertTrue(loaded["skip_chapter_three_table_color"])
         self.assertTrue(loaded["skip_chapter_three_indents"])
+        self.assertFalse(loaded["skip_nested_tables"])
         self.assertFalse(loaded["skip_log_output"])
 
     def test_save_preserves_existing_indent_settings_in_shared_file(self):
@@ -70,6 +72,7 @@ class GuiDefaultsTests(unittest.TestCase):
             normalized["skip_chapter_three_indents"],
             built_in_gui_defaults()["skip_chapter_three_indents"],
         )
+        self.assertTrue(normalized["skip_nested_tables"])
         self.assertTrue(normalized["skip_log_output"])
 
     def test_built_in_defaults_skip_log_output(self):

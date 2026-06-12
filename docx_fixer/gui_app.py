@@ -117,6 +117,7 @@ class DocxFixerApp:
         )
         self.word_com_check_body_font_var = tk.BooleanVar(value=gui_defaults["word_com_check_body_font"])
         self.skip_log_output_var = tk.BooleanVar(value=gui_defaults["skip_log_output"])
+        self.skip_nested_tables_var = tk.BooleanVar(value=gui_defaults["skip_nested_tables"])
         self.skip_chapter_three_table_layout_var = tk.BooleanVar(
             value=gui_defaults["skip_chapter_three_table_layout"]
         )
@@ -241,21 +242,27 @@ class DocxFixerApp:
 
         ttk.Checkbutton(
             advanced_option_frame,
+            text="表格中有表格不調整",
+            variable=self.skip_nested_tables_var,
+        ).grid(row=1, column=0, pady=4, sticky="w")
+
+        ttk.Checkbutton(
+            advanced_option_frame,
             text="參、價格形成之主要因素分析：表格版面不調整",
             variable=self.skip_chapter_three_table_layout_var,
-        ).grid(row=1, column=0, pady=4, sticky="w")
+        ).grid(row=2, column=0, pady=4, sticky="w")
 
         ttk.Checkbutton(
             advanced_option_frame,
             text="參、價格形成之主要因素分析：表格顏色不調整",
             variable=self.skip_chapter_three_table_color_var,
-        ).grid(row=2, column=0, pady=4, sticky="w")
+        ).grid(row=3, column=0, pady=4, sticky="w")
 
         ttk.Checkbutton(
             advanced_option_frame,
             text="參、價格形成之主要因素分析：縮排不調整",
             variable=self.skip_chapter_three_indents_var,
-        ).grid(row=3, column=0, pady=4, sticky="w")
+        ).grid(row=4, column=0, pady=4, sticky="w")
 
         defaults_button_frame = ttk.Frame(option_frame)
         defaults_button_frame.grid(row=3, column=0, columnspan=2, padx=(12, 16), pady=(0, 10), sticky="w")
@@ -453,6 +460,7 @@ class DocxFixerApp:
             "level1_level2_body_first_line_indent": self.level1_level2_body_first_line_indent_var.get(),
             "word_com_check_body_font": self.word_com_check_body_font_var.get(),
             "skip_log_output": self.skip_log_output_var.get(),
+            "skip_nested_tables": self.skip_nested_tables_var.get(),
             "skip_chapter_three_table_layout": self.skip_chapter_three_table_layout_var.get(),
             "skip_chapter_three_table_color": self.skip_chapter_three_table_color_var.get(),
             "skip_chapter_three_indents": self.skip_chapter_three_indents_var.get(),
@@ -481,6 +489,7 @@ class DocxFixerApp:
         )
         self.word_com_check_body_font_var.set(defaults["word_com_check_body_font"])
         self.skip_log_output_var.set(defaults["skip_log_output"])
+        self.skip_nested_tables_var.set(defaults["skip_nested_tables"])
         self.skip_chapter_three_table_layout_var.set(defaults["skip_chapter_three_table_layout"])
         self.skip_chapter_three_table_color_var.set(defaults["skip_chapter_three_table_color"])
         self.skip_chapter_three_indents_var.set(defaults["skip_chapter_three_indents"])
@@ -602,6 +611,7 @@ class DocxFixerApp:
             skip_chapter_three_table_layout=self.skip_chapter_three_table_layout_var.get(),
             skip_chapter_three_table_color=self.skip_chapter_three_table_color_var.get(),
             skip_chapter_three_indents=self.skip_chapter_three_indents_var.get(),
+            skip_nested_tables=self.skip_nested_tables_var.get(),
             skip_log_output=self.skip_log_output_var.get(),
         )
 

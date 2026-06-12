@@ -39,6 +39,7 @@ from .protected_region import (
 from .stop_controller import StopController
 from .style_resolver import build_style_font_size_lookup
 from .table_pipeline import process_tables_in_part
+from .table_word_com import WORD_COM_AUTOFIT_SEQUENCE, apply_table_autofit_with_word_com
 from . import word_com_indent
 from .xml_utils import paragraph_text, qn, remove_character_indent_attrs_from_root
 
@@ -335,6 +336,24 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
                 )
 
     return records
+
+
+def _mark_word_com_table_autofit_applied(
+    summary: ProcessSummary,
+    applied_global_table_indices: set[int],
+) -> None:
+    if not applied_global_table_indices:
+        return
+
+    for record in summary.table_log_records:
+        try:
+            global_table_index = int(record.get("global_table_index", 0))
+        except (TypeError, ValueError):
+            continue
+        if global_table_index not in applied_global_table_indices:
+            continue
+        record["word_com_autofit_applied"] = True
+        record["word_com_autofit_sequence"] = WORD_COM_AUTOFIT_SEQUENCE
 
 
 
@@ -660,6 +679,23 @@ def fix_docx_fast(
                 )
 
             zout.writestr(item, data)
+
+    if options.normalize_with_word_com:
+        table_autofit_records = list(summary.word_com_table_autofit_records)
+        if table_autofit_records:
+            table_autofit_logs, applied_indices = apply_table_autofit_with_word_com(
+                output_docx,
+                table_autofit_records,
+                stop=stop,
+            )
+            summary.word_com_table_autofit_logs.extend(table_autofit_logs)
+            _mark_word_com_table_autofit_applied(summary, applied_indices)
+        else:
+            summary.word_com_table_autofit_logs.append(
+                "WORD_COM_TABLE_AUTOFIT_SKIPPED reason=no_records"
+            )
+    else:
+        summary.word_com_table_autofit_logs.append("WORD_COM_TABLE_AUTOFIT_SKIPPED reason=disabled")
 
     if options.normalize_with_word_com:
         word_com_records = word_com_indent.filter_word_com_body_indent_records(summary.body_indent_records)

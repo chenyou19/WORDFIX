@@ -52,6 +52,7 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         skip_chapter_three_table_layout=skip_chapter_three_table_layout,
         skip_chapter_three_table_color=skip_chapter_three_table_color,
         skip_chapter_three_indents=skip_chapter_three_indents,
+        skip_nested_tables=args.skip_nested_tables,
         skip_log_output=args.skip_log_output,
     )
 
@@ -99,6 +100,7 @@ def run_cli(args) -> int:
     print(f"tables={summary.tables}")
     print(f"skipped_first_page_tables={summary.skipped_first_page_tables}")
     print(f"skipped_small_tables={summary.skipped_small_tables}")
+    print(f"skipped_nested_tables={summary.skipped_nested_tables}")
     print(f"cross_page_tables={summary.cross_page_tables}")
     print(f"cross_page_resolved_tables={summary.cross_page_resolved_tables}")
     print(f"cross_page_still_split_tables={summary.cross_page_still_split_tables}")
@@ -225,6 +227,19 @@ def parse_args(argv: list[str]):
         action="store_false",
         dest="skip_chapter_three_indents",
         help="Allow paragraph indent changes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--skip-nested-tables",
+        action="store_true",
+        default=True,
+        dest="skip_nested_tables",
+        help="Do not modify tables that contain another table or are inside another table",
+    )
+    parser.add_argument(
+        "--no-skip-nested-tables",
+        action="store_false",
+        dest="skip_nested_tables",
+        help="Allow changes to nested tables and tables that contain nested tables",
     )
     parser.add_argument(
         "--skip-all-under-chapter-three",

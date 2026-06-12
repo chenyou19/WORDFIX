@@ -92,6 +92,8 @@ class GuiAppTests(unittest.TestCase):
         self.assertIn("command=self.restore_builtin_gui_defaults", gui_source)
         self.assertIn("skip_log_output_var", gui_source)
         self.assertIn("不要輸出 log 檔", gui_source)
+        self.assertIn("skip_nested_tables_var", gui_source)
+        self.assertIn("表格中有表格不調整", gui_source)
 
     def test_write_logs_if_enabled_skips_all_external_log_writers(self):
         summary = ProcessSummary()
