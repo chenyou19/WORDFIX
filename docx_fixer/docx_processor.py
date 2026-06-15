@@ -458,11 +458,6 @@ def fix_docx_fast(
         indent_excluded_num_ids = set(protected_context.toc_num_ids)
         indent_excluded_abstract_ids = set(protected_context.toc_abstract_ids)
         indent_excluded_style_ids: set[str] = set()
-        if options.skip_chapter_three_indents:
-            indent_excluded_numbering_pairs.update(protected_context.chapter_three_numbering_pairs)
-            indent_excluded_num_ids.update(protected_context.chapter_three_num_ids)
-            indent_excluded_abstract_ids.update(protected_context.chapter_three_abstract_ids)
-            indent_excluded_style_ids.update(protected_context.chapter_three_style_ids)
 
         final_suffix_excluded_numbering_pairs = protected_context.excluded_numbering_pairs
         final_suffix_excluded_num_ids = protected_context.excluded_num_ids

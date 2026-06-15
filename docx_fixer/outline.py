@@ -49,12 +49,12 @@ def body_first_line_twips_for_heading(
     return None
 
 
-def starts_with_note_marker(text: str) -> bool:
-    return (text or "").lstrip().startswith(NOTE_MARKER_PREFIXES)
-
-
 def normalize_visible_text(text: str) -> str:
     return " ".join((text or "").split())
+
+
+def is_note_paragraph(text: str) -> bool:
+    return normalize_visible_text(text).startswith(NOTE_MARKER_PREFIXES)
 
 
 def should_skip_style_numbering(text: str) -> bool:
@@ -66,7 +66,7 @@ def should_skip_style_numbering(text: str) -> bool:
     based only on style association.
     """
     normalized = normalize_visible_text(text)
-    if starts_with_note_marker(normalized):
+    if is_note_paragraph(normalized):
         return True
     return len(normalized) > STYLE_NUMBERING_MAX_TEXT_LENGTH and not normalized.endswith(HEADING_ENDINGS)
 
@@ -1870,6 +1870,18 @@ def fix_outline_paragraphs(
                     before_outline,
                     before_outline,
                     "skipped chapter 參、價格形成之主要因素分析 content; no formatting applied",
+                )
+                continue
+
+            if is_note_paragraph(text):
+                append_paragraph_change_log(
+                    change_logs,
+                    part_name,
+                    paragraph_index,
+                    text,
+                    before_outline,
+                    before_outline,
+                    "skipped note paragraph; no formatting applied",
                 )
                 continue
 

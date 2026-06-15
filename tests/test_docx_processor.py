@@ -674,6 +674,101 @@ def make_chapter_three_options_document_xml() -> bytes:
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_shared_chapter_three_indent_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+    add_test_paragraph(
+        body,
+        "\u76ee\u9304\u9805\u76ee",
+        style="TOC1",
+        num_id="7",
+        ilvl=0,
+        ind_attrs={"left": "101", "leftChars": "701", "firstLineChars": "702"},
+    )
+    add_test_paragraph(
+        body,
+        "\u58f9\u3001\u5e8f\u8a00",
+        style="SharedPara",
+        ind_attrs={"left": "201", "leftChars": "801", "firstLineChars": "802"},
+    )
+    add_test_paragraph(
+        body,
+        "\u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790",
+        style="SharedPara",
+        num_id="42",
+        ilvl=0,
+        ind_attrs={"left": "321", "leftChars": "111", "firstLineChars": "222"},
+    )
+    add_test_paragraph(
+        body,
+        "\u53c3\u7ae0\u5167\u6587",
+        style="SharedPara",
+        ind_attrs={"left": "777", "leftChars": "555", "firstLineChars": "666"},
+    )
+    add_test_paragraph(
+        body,
+        "\u8086\u3001\u7b2c\u56db\u7ae0",
+        style="SharedPara",
+        num_id="99",
+        ilvl=0,
+        ind_attrs={"left": "987", "leftChars": "887", "firstLineChars": "787"},
+    )
+    add_test_paragraph(
+        body,
+        "\u8086\u7ae0\u5171\u7528\u6a23\u5f0f\u5167\u6587",
+        style="SharedPara",
+        ind_attrs={"left": "654", "leftChars": "754", "firstLineChars": "755"},
+    )
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_shared_chapter_three_indent_styles_xml() -> bytes:
+    styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
+
+    toc_style = etree.SubElement(styles, qn("style"))
+    toc_style.set(qn("type"), "paragraph")
+    toc_style.set(qn("styleId"), "TOC1")
+    toc_name = etree.SubElement(toc_style, qn("name"))
+    toc_name.set(qn("val"), "Table of Contents 1")
+    toc_pPr = etree.SubElement(toc_style, qn("pPr"))
+    make_ind(toc_pPr, left="111", leftChars="333", firstLineChars="555")
+
+    shared_style = etree.SubElement(styles, qn("style"))
+    shared_style.set(qn("type"), "paragraph")
+    shared_style.set(qn("styleId"), "SharedPara")
+    shared_pPr = etree.SubElement(shared_style, qn("pPr"))
+    make_ind(shared_pPr, left="720", leftChars="888", firstLineChars="999", hangingChars="777")
+
+    return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_shared_chapter_three_indent_numbering_xml() -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+
+    for abstract_id, num_ids, left, chars in [
+        ("1", ("42", "99"), "1440", "444"),
+        ("7", ("7",), "360", "777"),
+    ]:
+        abstract = etree.SubElement(numbering, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), abstract_id)
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "ideographLegalTraditional")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1\u3001 ")
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        make_ind(pPr, left=left, hanging="120", leftChars=chars, firstLineChars="555")
+
+        for num_id in num_ids:
+            num = etree.SubElement(numbering, qn("num"))
+            num.set(qn("numId"), num_id)
+            abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+            abstract_ref.set(qn("val"), abstract_id)
+
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def make_manual_heading_with_numpr_document_xml() -> bytes:
     document = etree.Element(qn("document"), nsmap={"w": W_NS})
     body = etree.SubElement(document, qn("body"))
@@ -732,6 +827,12 @@ def assert_no_character_indent_attrs(test_case: unittest.TestCase, root) -> None
     for ind in root.xpath(".//w:ind", namespaces=NS):
         for attr in FORBIDDEN_ATTRS:
             test_case.assertIsNone(ind.get(qn(attr)), attr)
+
+
+def assert_ind_has_no_character_indent_attrs(test_case: unittest.TestCase, ind) -> None:
+    test_case.assertIsNotNone(ind)
+    for attr in FORBIDDEN_ATTRS:
+        test_case.assertIsNone(ind.get(qn(attr)), attr)
 
 
 def assert_body_indent_hard_override(
@@ -975,6 +1076,147 @@ class DocxProcessorTests(unittest.TestCase):
             )
             self.assertIn("restored protected chapter outline level only", joined_logs)
             self.assertIn("CHAR_INDENT_SANITIZE_SKIP_EXCLUDED", joined_logs)
+
+    def test_character_indent_sanitize_cleans_non_toc_when_chapter_three_indent_skip_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            make_docx(
+                input_docx,
+                make_shared_chapter_three_indent_document_xml(),
+                styles_xml=make_shared_chapter_three_indent_styles_xml(),
+                numbering_xml=make_shared_chapter_three_indent_numbering_xml(),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=False,
+                    normalize_with_word_com=False,
+                    skip_chapter_three_indents=False,
+                ),
+            )
+
+            output_document_root = read_document_root(output_docx)
+            output_styles_root = read_part_root(output_docx, "word/styles.xml")
+            output_numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            paragraphs = output_document_root.xpath(".//w:p", namespaces=NS)
+
+            toc_paragraph_ind = paragraphs[0].find("./w:pPr/w:ind", NS)
+            self.assertEqual(toc_paragraph_ind.get(qn("leftChars")), "701")
+            self.assertEqual(toc_paragraph_ind.get(qn("firstLineChars")), "702")
+            for paragraph in paragraphs[1:]:
+                assert_ind_has_no_character_indent_attrs(
+                    self,
+                    paragraph.find("./w:pPr/w:ind", NS),
+                )
+
+            toc_style_ind = output_styles_root.xpath(
+                "./w:style[@w:styleId='TOC1']/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(toc_style_ind.get(qn("leftChars")), "333")
+            self.assertEqual(toc_style_ind.get(qn("firstLineChars")), "555")
+            shared_style_ind = output_styles_root.xpath(
+                "./w:style[@w:styleId='SharedPara']/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(shared_style_ind.get(qn("left")), "720")
+            assert_ind_has_no_character_indent_attrs(self, shared_style_ind)
+
+            toc_numbering_ind = output_numbering_root.xpath(
+                "./w:abstractNum[@w:abstractNumId='7']/w:lvl/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(toc_numbering_ind.get(qn("leftChars")), "777")
+            self.assertEqual(toc_numbering_ind.get(qn("firstLineChars")), "555")
+            shared_numbering_ind = output_numbering_root.xpath(
+                "./w:abstractNum[@w:abstractNumId='1']/w:lvl/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(shared_numbering_ind.get(qn("left")), "1440")
+            assert_ind_has_no_character_indent_attrs(self, shared_numbering_ind)
+
+            self.assertGreater(summary.character_indent_attrs_removed, 0)
+
+    def test_skip_chapter_three_indents_only_excludes_document_chapter_paragraphs_from_character_indent_sanitize(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            make_docx(
+                input_docx,
+                make_shared_chapter_three_indent_document_xml(),
+                styles_xml=make_shared_chapter_three_indent_styles_xml(),
+                numbering_xml=make_shared_chapter_three_indent_numbering_xml(),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=False,
+                    normalize_with_word_com=False,
+                    skip_chapter_three_indents=True,
+                ),
+            )
+
+            output_document_root = read_document_root(output_docx)
+            output_styles_root = read_part_root(output_docx, "word/styles.xml")
+            output_numbering_root = read_part_root(output_docx, "word/numbering.xml")
+            paragraphs = output_document_root.xpath(".//w:p", namespaces=NS)
+
+            toc_paragraph_ind = paragraphs[0].find("./w:pPr/w:ind", NS)
+            self.assertEqual(toc_paragraph_ind.get(qn("leftChars")), "701")
+            self.assertEqual(toc_paragraph_ind.get(qn("firstLineChars")), "702")
+
+            assert_ind_has_no_character_indent_attrs(self, paragraphs[1].find("./w:pPr/w:ind", NS))
+
+            chapter_heading_ind = paragraphs[2].find("./w:pPr/w:ind", NS)
+            chapter_body_ind = paragraphs[3].find("./w:pPr/w:ind", NS)
+            self.assertEqual(chapter_heading_ind.get(qn("leftChars")), "111")
+            self.assertEqual(chapter_heading_ind.get(qn("firstLineChars")), "222")
+            self.assertEqual(chapter_body_ind.get(qn("leftChars")), "555")
+            self.assertEqual(chapter_body_ind.get(qn("firstLineChars")), "666")
+
+            assert_ind_has_no_character_indent_attrs(self, paragraphs[4].find("./w:pPr/w:ind", NS))
+            assert_ind_has_no_character_indent_attrs(self, paragraphs[5].find("./w:pPr/w:ind", NS))
+
+            shared_style_ind = output_styles_root.xpath(
+                "./w:style[@w:styleId='SharedPara']/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(shared_style_ind.get(qn("left")), "720")
+            assert_ind_has_no_character_indent_attrs(self, shared_style_ind)
+
+            shared_numbering_ind = output_numbering_root.xpath(
+                "./w:abstractNum[@w:abstractNumId='1']/w:lvl/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(shared_numbering_ind.get(qn("left")), "1440")
+            assert_ind_has_no_character_indent_attrs(self, shared_numbering_ind)
+
+            toc_style_ind = output_styles_root.xpath(
+                "./w:style[@w:styleId='TOC1']/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(toc_style_ind.get(qn("leftChars")), "333")
+            self.assertEqual(toc_style_ind.get(qn("firstLineChars")), "555")
+            toc_numbering_ind = output_numbering_root.xpath(
+                "./w:abstractNum[@w:abstractNumId='7']/w:lvl/w:pPr/w:ind",
+                namespaces=NS,
+            )[0]
+            self.assertEqual(toc_numbering_ind.get(qn("leftChars")), "777")
+            self.assertEqual(toc_numbering_ind.get(qn("firstLineChars")), "555")
+
+            joined_logs = "\n".join(summary.numbering_xml_logs)
+            self.assertIn("CHAPTER_THREE_SKIP_IDS collected=2", joined_logs)
+            self.assertIn("CHAR_INDENT_SANITIZE_SKIP_EXCLUDED", joined_logs)
+            self.assertNotIn("CHAR_INDENT_SANITIZE_SKIP_EXCLUDED_STYLE", joined_logs)
 
     def test_manual_heading_with_existing_numpr_removes_list_numbering_tabs_and_keeps_text(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -28,6 +28,7 @@ from docx_fixer.outline import (
     detect_outline_level,
     fix_outline_paragraphs,
     force_all_paragraphs_to_body_outline_level,
+    is_note_paragraph,
     preface_indent_level_from_detected_level,
     remove_all_outline_levels_from_any_root,
     remove_all_outline_levels_from_root,
@@ -1055,6 +1056,64 @@ class OutlineFixTests(unittest.TestCase):
         )
         self.assertTrue(
             all(float(record["number_size_cm"]) > 0 for record in summary.numbering_measurements.values())
+        )
+
+    def test_note_paragraphs_skip_body_indent_without_affecting_body_or_manual_headings(self):
+        marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
+        heading = make_paragraph("\u4e00\u3001\u7814\u7a76\u76ee\u7684")
+        note_colon = make_paragraph("\u8a3b\uff1a\u9019\u662f\u8aaa\u660e", font_size_pt=14)
+        note_number = make_paragraph("  \u8a3b1\uff1a\u9019\u662f\u8aaa\u660e", font_size_pt=14)
+        note_chinese = make_paragraph("\u8a3b\u4e00\uff1a\u9019\u662f\u8aaa\u660e", font_size_pt=14)
+        body = make_paragraph("\u9019\u662f\u666e\u901a 14pt \u5167\u6587", font_size_pt=14)
+        manual_heading = make_paragraph("\uff08\u4e00\uff09\u4e00\u822c\u624b\u52d5\u7de8\u865f\u6a19\u984c")
+
+        for note in (note_colon, note_number, note_chinese):
+            add_ind_with_char_attrs(note)
+            add_tab_stop(note, pos="1480")
+
+        root = make_root(
+            make_paragraph("\u58f9\u3001\u5e8f\u8a00"),
+            marker,
+            heading,
+            note_colon,
+            note_number,
+            note_chinese,
+            body,
+            manual_heading,
+        )
+        summary = ProcessSummary()
+
+        fix_outline_paragraphs(root, include_tables=True, summary=summary)
+
+        self.assertTrue(is_note_paragraph("\u8a3b"))
+        self.assertTrue(is_note_paragraph("\u8a3b\uff1a"))
+        self.assertTrue(is_note_paragraph("\u8a3b1"))
+        self.assertTrue(is_note_paragraph("\u8a3b1\uff1a"))
+        self.assertTrue(is_note_paragraph("\u8a3b\u4e00"))
+        self.assertTrue(is_note_paragraph("\u8a3b\u4e00\uff1a"))
+        self.assertTrue(is_note_paragraph("\u8a3b\u3001\u9019\u662f\u8aaa\u660e"))
+        self.assertTrue(is_note_paragraph("  \u8a3b \u9019\u662f\u8aaa\u660e"))
+
+        for note in (note_colon, note_number, note_chinese):
+            ind = note.find("./w:pPr/w:ind", NS)
+            self.assertEqual(ind.get(qn("left")), "123")
+            self.assertEqual(ind.get(qn("hanging")), "45")
+            self.assertEqual(ind.get(qn("leftChars")), "99")
+            self.assertEqual(ind.get(qn("firstLineChars")), "99")
+            self.assertIsNotNone(note.find("./w:pPr/w:tabs", NS))
+
+        assert_body_indent_hard_override(self, body, TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
+        self.assertEqual(paragraph_outline(heading), "1")
+        self.assertEqual(paragraph_left_indent(heading), TEMPLATE_OUTLINE_INDENTS[1]["left"])
+        self.assertEqual(paragraph_outline(manual_heading), "2")
+        self.assertEqual(paragraph_left_indent(manual_heading), TEMPLATE_OUTLINE_INDENTS[2]["left"])
+
+        body_indent_texts = {record["text_preview"] for record in summary.body_indent_records}
+        self.assertIn("\u9019\u662f\u666e\u901a 14pt \u5167\u6587", body_indent_texts)
+        self.assertFalse(any(text.lstrip().startswith("\u8a3b") for text in body_indent_texts))
+        self.assertGreaterEqual(
+            "\n".join(summary.paragraph_logs).count("skipped note paragraph; no formatting applied"),
+            3,
         )
 
     def test_body_after_level_one_heading_aligns_to_heading_text_start_only(self):
