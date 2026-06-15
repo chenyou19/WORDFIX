@@ -170,6 +170,13 @@ def paragraph_style(p):
     return style.get(qn("val"))
 
 
+def paragraph_jc(p):
+    jc = p.find("./w:pPr/w:jc", NS)
+    if jc is None:
+        return None
+    return jc.get(qn("val"))
+
+
 def paragraph_text_run_sizes(p):
     sizes = []
     for run in p.findall("./w:r", NS):
@@ -1061,15 +1068,27 @@ class OutlineFixTests(unittest.TestCase):
     def test_note_paragraphs_skip_body_indent_without_affecting_body_or_manual_headings(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\u4e00\u3001\u7814\u7a76\u76ee\u7684")
-        note_colon = make_paragraph("\u8a3b\uff1a\u9019\u662f\u8aaa\u660e", font_size_pt=14)
-        note_number = make_paragraph("  \u8a3b1\uff1a\u9019\u662f\u8aaa\u660e", font_size_pt=14)
-        note_chinese = make_paragraph("\u8a3b\u4e00\uff1a\u9019\u662f\u8aaa\u660e", font_size_pt=14)
+        note_colon = make_paragraph("\u8a3b\uff1a\u9019\u662f\u8aaa\u660e", style="NoteStyle", font_size_pt=14)
+        note_number = make_paragraph(
+            "  \u8a3b1\uff1a\u9019\u662f\u8aaa\u660e",
+            style="NoteStyle",
+            num_id="9",
+            ilvl=0,
+            font_size_pt=14,
+        )
+        note_chinese = make_paragraph("\u8a3b\u4e00\uff1a\u9019\u662f\u8aaa\u660e", style="NoteStyle", font_size_pt=14)
         body = make_paragraph("\u9019\u662f\u666e\u901a 14pt \u5167\u6587", font_size_pt=14)
         manual_heading = make_paragraph("\uff08\u4e00\uff09\u4e00\u822c\u624b\u52d5\u7de8\u865f\u6a19\u984c")
+        table, table_note = make_table_paragraph("\u8a3b\uff1a\u8868\u683c\u5167\u8aaa\u660e")
 
         for note in (note_colon, note_number, note_chinese):
             add_ind_with_char_attrs(note)
             add_tab_stop(note, pos="1480")
+
+        self.assertIsNone(paragraph_jc(note_colon))
+        self.assertIsNone(paragraph_jc(note_number))
+        self.assertIsNone(paragraph_jc(note_chinese))
+        self.assertIsNone(paragraph_jc(table_note))
 
         root = make_root(
             make_paragraph("\u58f9\u3001\u5e8f\u8a00"),
@@ -1080,6 +1099,7 @@ class OutlineFixTests(unittest.TestCase):
             note_chinese,
             body,
             manual_heading,
+            table,
         )
         summary = ProcessSummary()
 
@@ -1101,6 +1121,11 @@ class OutlineFixTests(unittest.TestCase):
             self.assertEqual(ind.get(qn("leftChars")), "99")
             self.assertEqual(ind.get(qn("firstLineChars")), "99")
             self.assertIsNotNone(note.find("./w:pPr/w:tabs", NS))
+            self.assertEqual(paragraph_style(note), "NoteStyle")
+            self.assertEqual(paragraph_jc(note), "left")
+
+        self.assertIsNotNone(note_number.find("./w:pPr/w:numPr", NS))
+        self.assertIsNone(paragraph_jc(table_note))
 
         assert_body_indent_hard_override(self, body, TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
         self.assertEqual(paragraph_outline(heading), "1")
@@ -1111,10 +1136,10 @@ class OutlineFixTests(unittest.TestCase):
         body_indent_texts = {record["text_preview"] for record in summary.body_indent_records}
         self.assertIn("\u9019\u662f\u666e\u901a 14pt \u5167\u6587", body_indent_texts)
         self.assertFalse(any(text.lstrip().startswith("\u8a3b") for text in body_indent_texts))
-        self.assertGreaterEqual(
-            "\n".join(summary.paragraph_logs).count("skipped note paragraph; no formatting applied"),
-            3,
-        )
+        joined_logs = "\n".join(summary.paragraph_logs)
+        self.assertEqual(joined_logs.count("skipped note paragraph; forced left alignment"), 3)
+        self.assertIn("before_jc=none; after_jc=left; paragraph_style_id=NoteStyle; has_numPr=False", joined_logs)
+        self.assertIn("before_jc=none; after_jc=left; paragraph_style_id=NoteStyle; has_numPr=True", joined_logs)
 
     def test_body_after_level_one_heading_aligns_to_heading_text_start_only(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")

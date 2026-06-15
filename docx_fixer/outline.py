@@ -54,7 +54,19 @@ def normalize_visible_text(text: str) -> str:
 
 
 def is_note_paragraph(text: str) -> bool:
-    return normalize_visible_text(text).startswith(NOTE_MARKER_PREFIXES)
+    normalized = normalize_visible_text(text)
+    return normalized.lstrip().startswith("註")
+
+
+def force_paragraph_left_alignment(p) -> tuple[str | None, str]:
+    pPr = get_or_add(p, "pPr", first=True)
+    jc = pPr.find("w:jc", NS)
+    before = jc.get(qn("val")) if jc is not None else None
+    if jc is None:
+        jc = etree.Element(qn("jc"))
+        pPr.append(jc)
+    jc.set(qn("val"), "left")
+    return before, "left"
 
 
 def should_skip_style_numbering(text: str) -> bool:
@@ -1874,6 +1886,9 @@ def fix_outline_paragraphs(
                 continue
 
             if is_note_paragraph(text):
+                before_jc, after_jc = force_paragraph_left_alignment(p)
+                note_style_id = paragraph_style_id(p) or "none"
+                note_has_num_pr = p.find("./w:pPr/w:numPr", NS) is not None
                 append_paragraph_change_log(
                     change_logs,
                     part_name,
@@ -1881,7 +1896,11 @@ def fix_outline_paragraphs(
                     text,
                     before_outline,
                     before_outline,
-                    "skipped note paragraph; no formatting applied",
+                    "skipped note paragraph; forced left alignment; "
+                    f"before_jc={before_jc or 'none'}; "
+                    f"after_jc={after_jc}; "
+                    f"paragraph_style_id={note_style_id}; "
+                    f"has_numPr={note_has_num_pr}",
                 )
                 continue
 
