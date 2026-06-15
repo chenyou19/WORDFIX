@@ -17,6 +17,7 @@ from .constants import (
     TEMPLATE_OUTLINE_INDENTS,
 )
 from .indent_settings import twips_to_cm
+from .note_detection import is_note_text, note_source_for_paragraph
 from .numbering import (
     detect_auto_number_level,
     detect_style_number_level,
@@ -29,7 +30,6 @@ from .stop_controller import StopController
 from .style_resolver import half_points_to_pt
 from .xml_utils import CHAR_INDENT_ATTRS, get_or_add, paragraph_text, qn
 
-NOTE_MARKER_PREFIXES = ("註",)
 PARAGRAPH_JC_FOLLOWING_TAGS = {
     qn("textDirection"),
     qn("textAlignment"),
@@ -65,8 +65,7 @@ def normalize_visible_text(text: str) -> str:
 
 
 def is_note_paragraph(text: str) -> bool:
-    normalized = normalize_visible_text(text)
-    return normalized.lstrip().startswith("註")
+    return is_note_text(text)
 
 
 def set_paragraph_jc(p, value: str) -> tuple[str | None, str]:
@@ -1912,7 +1911,13 @@ def fix_outline_paragraphs(
                 )
                 continue
 
-            if is_note_paragraph(text):
+            note_source = note_source_for_paragraph(
+                p,
+                text,
+                numbering_format_lookup=numbering_format_lookup,
+                style_numbering_lookup=style_numbering_lookup,
+            )
+            if note_source is not None:
                 before_jc, after_jc = force_paragraph_left_alignment(p)
                 note_style_id = paragraph_style_id(p) or "none"
                 note_has_num_pr = p.find("./w:pPr/w:numPr", NS) is not None
@@ -1924,6 +1929,7 @@ def fix_outline_paragraphs(
                     before_outline,
                     before_outline,
                     "skipped note paragraph; forced left alignment; "
+                    f"source={note_source}; "
                     f"before_jc={before_jc or 'none'}; "
                     f"after_jc={after_jc}; "
                     f"paragraph_style_id={note_style_id}; "

@@ -7,8 +7,10 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from lxml import etree
 
 from .constants import NS
+from .note_detection import note_source_for_paragraph
+from .numbering import build_numbering_format_lookup, build_style_numbering_lookup
 from .numbering_cleanup import _long_path_compatible_str
-from .outline import is_note_paragraph, set_paragraph_jc, summarize_paragraph_text
+from .outline import set_paragraph_jc, summarize_paragraph_text
 from .xml_utils import paragraph_text
 
 
@@ -28,13 +30,21 @@ def force_note_paragraph_left_alignment_in_root(
     root,
     *,
     part_name: str,
+    numbering_format_lookup=None,
+    style_numbering_lookup=None,
     logs: list[str] | None = None,
 ) -> int:
     fixed_count = 0
     paragraphs = root.xpath(".//w:p[not(ancestor::w:tbl)]", namespaces=NS)
     for paragraph_index, p in enumerate(paragraphs, start=1):
         text = paragraph_text(p)
-        if not is_note_paragraph(text):
+        source = note_source_for_paragraph(
+            p,
+            text,
+            numbering_format_lookup=numbering_format_lookup,
+            style_numbering_lookup=style_numbering_lookup,
+        )
+        if source is None:
             continue
 
         before_jc, after_jc = set_paragraph_jc(p, "left")
@@ -44,6 +54,7 @@ def force_note_paragraph_left_alignment_in_root(
                 "FINAL_NOTE_ALIGNMENT_FIX "
                 f"part={part_name} "
                 f"paragraph_index={paragraph_index} "
+                f"source={source} "
                 f"before_jc={before_jc or 'none'} "
                 f"after_jc={after_jc} "
                 f"text={summarize_paragraph_text(text)}"
@@ -63,6 +74,12 @@ def force_note_paragraph_left_alignment_in_docx(
 
     try:
         with ZipFile(docx_path, "r") as zin, ZipFile(temp_docx, "w", ZIP_DEFLATED) as zout:
+            names = set(zin.namelist())
+            numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in names else None
+            styles_xml = zin.read("word/styles.xml") if "word/styles.xml" in names else None
+            numbering_format_lookup = build_numbering_format_lookup(numbering_xml)
+            style_numbering_lookup = build_style_numbering_lookup(styles_xml)
+
             for item in zin.infolist():
                 data = zin.read(item.filename)
                 if should_fix_note_alignment_part(item.filename):
@@ -78,6 +95,8 @@ def force_note_paragraph_left_alignment_in_docx(
                         fixed_count = force_note_paragraph_left_alignment_in_root(
                             root,
                             part_name=item.filename,
+                            numbering_format_lookup=numbering_format_lookup,
+                            style_numbering_lookup=style_numbering_lookup,
                             logs=logs,
                         )
                         if fixed_count:

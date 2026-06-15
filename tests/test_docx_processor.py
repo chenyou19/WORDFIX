@@ -802,7 +802,31 @@ def make_note_alignment_document_xml() -> bytes:
         tab_pos="1680",
         font_size_pt=14,
     )
+    add_test_paragraph(
+        body,
+        "\u81ea\u52d5\u7de8\u865f\u8a3b\u89e3\u5167\u5bb9",
+        num_id="10",
+        ilvl=0,
+        ind_attrs={"left": "423", "leftChars": "66", "firstLineChars": "65"},
+        tab_pos="1780",
+        font_size_pt=14,
+    )
+    add_test_paragraph(
+        body,
+        "\u6a23\u5f0f\u7de8\u865f\u8a3b\u89e3\u5167\u5bb9",
+        style="StyleNoteNumbered",
+        ind_attrs={"left": "523", "leftChars": "55", "firstLineChars": "54"},
+        tab_pos="1880",
+        font_size_pt=14,
+    )
     add_test_paragraph(body, "\u9019\u662f\u666e\u901a 14pt \u5167\u6587", font_size_pt=14)
+    add_test_paragraph(
+        body,
+        "\u4e0d\u662f\u8a3b\u89e3\u7684\u7de8\u865f\u5167\u5bb9",
+        num_id="12",
+        ilvl=0,
+        font_size_pt=14,
+    )
 
     tbl = etree.SubElement(body, qn("tbl"))
     tr = etree.SubElement(tbl, qn("tr"))
@@ -810,6 +834,52 @@ def make_note_alignment_document_xml() -> bytes:
     add_test_paragraph(tc, "\u8a3b\uff1a\u8868\u683c\u5167\u8aaa\u660e", font_size_pt=14)
 
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_note_alignment_styles_xml() -> bytes:
+    styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
+
+    plain_note = etree.SubElement(styles, qn("style"))
+    plain_note.set(qn("type"), "paragraph")
+    plain_note.set(qn("styleId"), "NoteStyle")
+
+    numbered_note = etree.SubElement(styles, qn("style"))
+    numbered_note.set(qn("type"), "paragraph")
+    numbered_note.set(qn("styleId"), "StyleNoteNumbered")
+    pPr = etree.SubElement(numbered_note, qn("pPr"))
+    num_pr = etree.SubElement(pPr, qn("numPr"))
+    ilvl = etree.SubElement(num_pr, qn("ilvl"))
+    ilvl.set(qn("val"), "0")
+    num_id = etree.SubElement(num_pr, qn("numId"))
+    num_id.set(qn("val"), "11")
+
+    return etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_note_alignment_numbering_xml() -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    for num_id, abstract_id, lvl_text_value in [
+        ("10", "10", "\u8a3b%1\uff1a"),
+        ("11", "11", "\u8a3b %1"),
+        ("12", "12", "%1."),
+    ]:
+        abstract = etree.SubElement(numbering, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), abstract_id)
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), lvl_text_value)
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        make_ind(pPr, left="720", hanging="120")
+
+        num = etree.SubElement(numbering, qn("num"))
+        num.set(qn("numId"), num_id)
+        abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+        abstract_ref.set(qn("val"), abstract_id)
+
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
 def make_manual_heading_with_numpr_document_xml() -> bytes:
@@ -3220,7 +3290,12 @@ class DocxProcessorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_docx = Path(temp_dir) / "input.docx"
             output_docx = Path(temp_dir) / "output.docx"
-            make_docx(input_docx, make_note_alignment_document_xml())
+            make_docx(
+                input_docx,
+                make_note_alignment_document_xml(),
+                styles_xml=make_note_alignment_styles_xml(),
+                numbering_xml=make_note_alignment_numbering_xml(),
+            )
 
             def fake_word_com(docx_path, records, stop=None):
                 del records, stop
@@ -3249,6 +3324,9 @@ class DocxProcessorTests(unittest.TestCase):
             note_colon = find_paragraph_by_exact_text(root, "\u8a3b\uff1a\u9019\u662f\u8aaa\u660e")
             note_number = find_paragraph_by_exact_text(root, "  \u8a3b1\uff1a\u9019\u662f\u8aaa\u660e")
             note_chinese = find_paragraph_by_exact_text(root, "\u8a3b\u4e00\uff1a\u9019\u662f\u8aaa\u660e")
+            auto_note = find_paragraph_by_exact_text(root, "\u81ea\u52d5\u7de8\u865f\u8a3b\u89e3\u5167\u5bb9")
+            style_note = find_paragraph_by_exact_text(root, "\u6a23\u5f0f\u7de8\u865f\u8a3b\u89e3\u5167\u5bb9")
+            non_note_numbered = find_paragraph_by_exact_text(root, "\u4e0d\u662f\u8a3b\u89e3\u7684\u7de8\u865f\u5167\u5bb9")
             body = find_paragraph_by_exact_text(root, "\u9019\u662f\u666e\u901a 14pt \u5167\u6587")
             table_note = find_paragraph_by_exact_text(root, "\u8a3b\uff1a\u8868\u683c\u5167\u8aaa\u660e")
 
@@ -3269,14 +3347,27 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIsNone(note_chinese.find("./w:pPr/w:outlineLvl", NS))
             self.assertEqual(note_chinese.find("./w:pPr/w:ind", NS).get(qn("left")), "323")
 
+            self.assertEqual(paragraph_jc_value(auto_note), "left")
+            self.assertIsNotNone(auto_note.find("./w:pPr/w:numPr", NS))
+            self.assertEqual(auto_note.find("./w:pPr/w:ind", NS).get(qn("left")), "423")
+
+            self.assertEqual(paragraph_jc_value(style_note), "left")
+            self.assertEqual(paragraph_style_value(style_note), "StyleNoteNumbered")
+            self.assertIsNone(style_note.find("./w:pPr/w:numPr", NS))
+            self.assertEqual(style_note.find("./w:pPr/w:ind", NS).get(qn("left")), "523")
+
+            self.assertIsNone(paragraph_jc_value(non_note_numbered))
             assert_body_indent_hard_override(self, body, TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
             self.assertIsNone(paragraph_jc_value(table_note))
 
             joined_paragraph_logs = "\n".join(summary.paragraph_logs)
             self.assertIn("WORD_COM_FAKE_DIRTIED_NOTE_ALIGNMENT", "\n".join(summary.word_com_body_indent_logs))
             self.assertIn("FINAL_NOTE_ALIGNMENT_FIX part=word/document.xml", joined_paragraph_logs)
+            self.assertIn("source=text", joined_paragraph_logs)
+            self.assertIn("source=numPr", joined_paragraph_logs)
+            self.assertIn("source=styleNumPr", joined_paragraph_logs)
             self.assertIn("before_jc=center after_jc=left", joined_paragraph_logs)
-            self.assertEqual(joined_paragraph_logs.count("FINAL_NOTE_ALIGNMENT_FIX part=word/document.xml"), 3)
+            self.assertEqual(joined_paragraph_logs.count("FINAL_NOTE_ALIGNMENT_FIX part=word/document.xml"), 5)
 
 
 if __name__ == "__main__":
