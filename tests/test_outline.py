@@ -1068,7 +1068,12 @@ class OutlineFixTests(unittest.TestCase):
     def test_note_paragraphs_skip_body_indent_without_affecting_body_or_manual_headings(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00")
         heading = make_paragraph("\u4e00\u3001\u7814\u7a76\u76ee\u7684")
-        note_colon = make_paragraph("\u8a3b\uff1a\u9019\u662f\u8aaa\u660e", style="NoteStyle", font_size_pt=14)
+        note_colon = make_paragraph(
+            "\u8a3b\uff1a\u9019\u662f\u8aaa\u660e",
+            style="NoteStyle",
+            outline=5,
+            font_size_pt=14,
+        )
         note_number = make_paragraph(
             "  \u8a3b1\uff1a\u9019\u662f\u8aaa\u660e",
             style="NoteStyle",
@@ -1124,6 +1129,9 @@ class OutlineFixTests(unittest.TestCase):
             self.assertEqual(paragraph_style(note), "NoteStyle")
             self.assertEqual(paragraph_jc(note), "left")
 
+        note_colon_ppr_tags = [child.tag for child in note_colon.find("./w:pPr", NS)]
+        self.assertLess(note_colon_ppr_tags.index(qn("jc")), note_colon_ppr_tags.index(qn("outlineLvl")))
+        self.assertEqual(paragraph_outline(note_colon), "5")
         self.assertIsNotNone(note_number.find("./w:pPr/w:numPr", NS))
         self.assertIsNone(paragraph_jc(table_note))
 

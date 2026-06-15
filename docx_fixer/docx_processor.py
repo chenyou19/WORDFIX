@@ -13,6 +13,7 @@ from .indent_sanitizer import (
     remove_character_indent_attrs_from_styles_root_excluding_protected,
 )
 from .models import ProcessOptions, ProcessSummary
+from .note_alignment import force_note_paragraph_left_alignment_in_docx
 from .numbering_cleanup import force_clean_numbering_suffix_tabs_in_docx
 from .numbering import (
     apply_numbering_outline_format,
@@ -787,6 +788,10 @@ def fix_docx_fast(
         included_numbering_pairs=protected_context.body_heading_numbering_pairs,
         included_num_ids=protected_context.body_heading_num_ids,
         included_abstract_ids=protected_context.body_heading_abstract_ids,
+    )
+    force_note_paragraph_left_alignment_in_docx(
+        output_docx,
+        logs=summary.paragraph_logs,
     )
 
     try:

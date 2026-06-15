@@ -769,6 +769,49 @@ def make_shared_chapter_three_indent_numbering_xml() -> bytes:
     return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_note_alignment_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(body, "\u58f9\u3001\u5e8f\u8a00")
+    add_test_paragraph(body, "\u4e00\u3001\u7814\u7a76\u76ee\u7684")
+    add_test_paragraph(
+        body,
+        "\u8a3b\uff1a\u9019\u662f\u8aaa\u660e",
+        style="NoteStyle",
+        outline=5,
+        ind_attrs={"left": "123", "leftChars": "99", "firstLineChars": "98"},
+        tab_pos="1480",
+        font_size_pt=14,
+    )
+    add_test_paragraph(
+        body,
+        "  \u8a3b1\uff1a\u9019\u662f\u8aaa\u660e",
+        style="NoteStyle",
+        num_id="9",
+        ilvl=0,
+        ind_attrs={"left": "223", "leftChars": "88", "firstLineChars": "87"},
+        tab_pos="1580",
+        font_size_pt=14,
+    )
+    add_test_paragraph(
+        body,
+        "\u8a3b\u4e00\uff1a\u9019\u662f\u8aaa\u660e",
+        style="NoteStyle",
+        ind_attrs={"left": "323", "leftChars": "77", "firstLineChars": "76"},
+        tab_pos="1680",
+        font_size_pt=14,
+    )
+    add_test_paragraph(body, "\u9019\u662f\u666e\u901a 14pt \u5167\u6587", font_size_pt=14)
+
+    tbl = etree.SubElement(body, qn("tbl"))
+    tr = etree.SubElement(tbl, qn("tr"))
+    tc = etree.SubElement(tr, qn("tc"))
+    add_test_paragraph(tc, "\u8a3b\uff1a\u8868\u683c\u5167\u8aaa\u660e", font_size_pt=14)
+
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def make_manual_heading_with_numpr_document_xml() -> bytes:
     document = etree.Element(qn("document"), nsmap={"w": W_NS})
     body = etree.SubElement(document, qn("body"))
@@ -792,6 +835,53 @@ def read_part_root(path: Path, part_name: str):
 
 def read_document_root(path: Path):
     return read_part_root(path, "word/document.xml")
+
+
+def find_paragraph_by_exact_text(root, text: str):
+    for p in root.xpath(".//w:p", namespaces=NS):
+        if "".join(p.xpath(".//w:t/text()", namespaces=NS)) == text:
+            return p
+    raise AssertionError(f"paragraph not found: {text}")
+
+
+def paragraph_style_value(p) -> str | None:
+    style = p.find("./w:pPr/w:pStyle", NS)
+    return style.get(qn("val")) if style is not None else None
+
+
+def paragraph_jc_value(p) -> str | None:
+    jc = p.find("./w:pPr/w:jc", NS)
+    return jc.get(qn("val")) if jc is not None else None
+
+
+def paragraph_ppr_child_tags(p) -> list[str]:
+    pPr = p.find("./w:pPr", NS)
+    return [child.tag for child in pPr] if pPr is not None else []
+
+
+def dirty_note_alignment_center_after_outline_in_docx(path: Path) -> None:
+    temp_path = path.with_suffix(path.suffix + ".dirty_note_alignment.tmp")
+    with ZipFile(path, "r") as zin, ZipFile(temp_path, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "word/document.xml":
+                root = etree.fromstring(data)
+                for p in root.xpath(".//w:p[not(ancestor::w:tbl)]", namespaces=NS):
+                    text = "".join(p.xpath(".//w:t/text()", namespaces=NS))
+                    if not text.lstrip().startswith("\u8a3b"):
+                        continue
+                    pPr = p.find("./w:pPr", NS)
+                    if pPr is None:
+                        pPr = etree.SubElement(p, qn("pPr"))
+                    jc = pPr.find("w:jc", NS)
+                    if jc is not None:
+                        pPr.remove(jc)
+                    jc = etree.Element(qn("jc"))
+                    jc.set(qn("val"), "center")
+                    pPr.append(jc)
+                data = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            zout.writestr(item, data)
+    temp_path.replace(path)
 
 
 def dirty_numbering_suffix_tabs_in_docx(path: Path) -> None:
@@ -3125,6 +3215,68 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(lvl.find("w:suff", NS).get(qn("val")), "nothing")
             self.assertEqual(lvl.find("w:lvlText", NS).get(qn("val")), "%5.")
             self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
+
+    def test_final_note_alignment_runs_after_word_com_and_keeps_notes_out_of_indent_processing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(input_docx, make_note_alignment_document_xml())
+
+            def fake_word_com(docx_path, records, stop=None):
+                del records, stop
+                dirty_note_alignment_center_after_outline_in_docx(Path(docx_path))
+                return ["WORD_COM_FAKE_DIRTIED_NOTE_ALIGNMENT"]
+
+            with patch(
+                "docx_fixer.word_com_indent.filter_word_com_body_indent_records",
+                return_value=[{"paragraph_index": 99}],
+            ), patch(
+                "docx_fixer.word_com_indent.verify_and_fix_body_indents_with_word_com",
+                side_effect=fake_word_com,
+            ):
+                summary = fix_docx_fast(
+                    input_docx,
+                    output_docx,
+                    ProcessOptions(
+                        fix_table_layout=False,
+                        fix_color=False,
+                        fix_paragraph=True,
+                        normalize_with_word_com=True,
+                    ),
+                )
+
+            root = read_document_root(output_docx)
+            note_colon = find_paragraph_by_exact_text(root, "\u8a3b\uff1a\u9019\u662f\u8aaa\u660e")
+            note_number = find_paragraph_by_exact_text(root, "  \u8a3b1\uff1a\u9019\u662f\u8aaa\u660e")
+            note_chinese = find_paragraph_by_exact_text(root, "\u8a3b\u4e00\uff1a\u9019\u662f\u8aaa\u660e")
+            body = find_paragraph_by_exact_text(root, "\u9019\u662f\u666e\u901a 14pt \u5167\u6587")
+            table_note = find_paragraph_by_exact_text(root, "\u8a3b\uff1a\u8868\u683c\u5167\u8aaa\u660e")
+
+            self.assertEqual(paragraph_jc_value(note_colon), "left")
+            note_colon_tags = paragraph_ppr_child_tags(note_colon)
+            self.assertLess(note_colon_tags.index(qn("jc")), note_colon_tags.index(qn("outlineLvl")))
+            self.assertEqual(paragraph_style_value(note_colon), "NoteStyle")
+            self.assertEqual(note_colon.find("./w:pPr/w:ind", NS).get(qn("left")), "123")
+            self.assertIsNotNone(note_colon.find("./w:pPr/w:tabs", NS))
+
+            self.assertEqual(paragraph_jc_value(note_number), "left")
+            self.assertEqual(paragraph_style_value(note_number), "NoteStyle")
+            self.assertIsNotNone(note_number.find("./w:pPr/w:numPr", NS))
+            self.assertEqual(note_number.find("./w:pPr/w:ind", NS).get(qn("left")), "223")
+
+            self.assertEqual(paragraph_jc_value(note_chinese), "left")
+            self.assertEqual(paragraph_style_value(note_chinese), "NoteStyle")
+            self.assertIsNone(note_chinese.find("./w:pPr/w:outlineLvl", NS))
+            self.assertEqual(note_chinese.find("./w:pPr/w:ind", NS).get(qn("left")), "323")
+
+            assert_body_indent_hard_override(self, body, TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
+            self.assertIsNone(paragraph_jc_value(table_note))
+
+            joined_paragraph_logs = "\n".join(summary.paragraph_logs)
+            self.assertIn("WORD_COM_FAKE_DIRTIED_NOTE_ALIGNMENT", "\n".join(summary.word_com_body_indent_logs))
+            self.assertIn("FINAL_NOTE_ALIGNMENT_FIX part=word/document.xml", joined_paragraph_logs)
+            self.assertIn("before_jc=center after_jc=left", joined_paragraph_logs)
+            self.assertEqual(joined_paragraph_logs.count("FINAL_NOTE_ALIGNMENT_FIX part=word/document.xml"), 3)
 
 
 if __name__ == "__main__":

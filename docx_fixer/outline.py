@@ -30,6 +30,17 @@ from .style_resolver import half_points_to_pt
 from .xml_utils import CHAR_INDENT_ATTRS, get_or_add, paragraph_text, qn
 
 NOTE_MARKER_PREFIXES = ("註",)
+PARAGRAPH_JC_FOLLOWING_TAGS = {
+    qn("textDirection"),
+    qn("textAlignment"),
+    qn("textboxTightWrap"),
+    qn("outlineLvl"),
+    qn("divId"),
+    qn("cnfStyle"),
+    qn("rPr"),
+    qn("sectPr"),
+    qn("pPrChange"),
+}
 STYLE_NUMBERING_MAX_TEXT_LENGTH = 35
 HEADING_ENDINGS = ("：", ":")
 PROCESSING_START_TITLE = "序言"
@@ -58,15 +69,31 @@ def is_note_paragraph(text: str) -> bool:
     return normalized.lstrip().startswith("註")
 
 
-def force_paragraph_left_alignment(p) -> tuple[str | None, str]:
+def set_paragraph_jc(p, value: str) -> tuple[str | None, str]:
     pPr = get_or_add(p, "pPr", first=True)
     jc = pPr.find("w:jc", NS)
     before = jc.get(qn("val")) if jc is not None else None
     if jc is None:
         jc = etree.Element(qn("jc"))
+    else:
+        pPr.remove(jc)
+
+    inserted = False
+    for child in list(pPr):
+        if child.tag in PARAGRAPH_JC_FOLLOWING_TAGS:
+            pPr.insert(pPr.index(child), jc)
+            inserted = True
+            break
+
+    if not inserted:
         pPr.append(jc)
-    jc.set(qn("val"), "left")
-    return before, "left"
+
+    jc.set(qn("val"), value)
+    return before, value
+
+
+def force_paragraph_left_alignment(p) -> tuple[str | None, str]:
+    return set_paragraph_jc(p, "left")
 
 
 def should_skip_style_numbering(text: str) -> bool:
