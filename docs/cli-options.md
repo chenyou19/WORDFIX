@@ -59,6 +59,22 @@ python main.py input.docx output.docx --table --color --paragraph
 
 CLI 與 GUI 的參章縮排預設不同：CLI 的 `--skip-chapter-three-indents` 預設是開啟；GUI 內建的 `skip_chapter_three_indents` 預設是不勾選。
 
+## 參、不要調整（整章保護）
+
+| 參數 | 狀態 | 預設 | 說明 |
+| --- | --- | --- | --- |
+| `--skip-chapter-three-adjustments` | 目前參數 | 關閉 | 「參、不要調整」：以章節編號（第 3 章 參）判斷正文中的「參、」章節，整段不調整版面、顏色、字體、黑色雙線外框、註記搬移、縮排、標題大綱與 Word COM 補救；目錄中的「參、」不會觸發。會連帶把三個 `--skip-chapter-three-*` 都設為跳過。 |
+| `--protect-section-three` | 相容別名 | | 與 `--skip-chapter-three-adjustments` 相同。 |
+| `--no-skip-chapter-three-adjustments` | 目前參數 | | 不啟用整章保護。 |
+| `--no-protect-section-three` | 相容別名 | | 與 `--no-skip-chapter-three-adjustments` 相同。 |
+
+## 表格內註記搬移參數
+
+| 參數 | 狀態 | 預設 | 說明 |
+| --- | --- | --- | --- |
+| `--move-table-notes-below` | 目前參數 | 關閉 | 把每張表格中以 `註：`、`註1：`、`註一、` 等開頭的儲存格搬到表格正下方，成為標楷體 10pt 段落。 |
+| `--no-move-table-notes-below` | 目前參數 | | 保留表格內的註記儲存格。 |
+
 ## 巢狀表格參數
 
 | 參數 | 狀態 | 預設 | 說明 |

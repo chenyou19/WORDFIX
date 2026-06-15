@@ -13,6 +13,37 @@ def _ps_single_quoted(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _hidden_window_popen_kwargs() -> dict[str, object]:
+    """Build Popen kwargs that hide the PowerShell console window on Windows.
+
+    On Windows the launched ``powershell.exe`` would otherwise flash a black
+    console window when the GUI/exe is double-clicked. ``CREATE_NO_WINDOW``
+    plus a ``STARTUPINFO`` with ``STARTF_USESHOWWINDOW`` / ``SW_HIDE`` keeps it
+    hidden without affecting stdout/stderr capture.
+
+    The relevant ``subprocess`` constants only exist on Windows, so on other
+    platforms (and during Linux/macOS test runs) an empty mapping is returned
+    and ``Popen`` behaves exactly as before.
+    """
+    if os.name != "nt":
+        return {}
+
+    kwargs: dict[str, object] = {}
+
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if creation_flags:
+        kwargs["creationflags"] = creation_flags
+
+    startupinfo_cls = getattr(subprocess, "STARTUPINFO", None)
+    if startupinfo_cls is not None:
+        startupinfo = startupinfo_cls()
+        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+        kwargs["startupinfo"] = startupinfo
+
+    return kwargs
+
+
 def _run_powershell_process(
     command: list[str],
     *,
@@ -48,6 +79,7 @@ def _run_powershell_process(
         encoding="utf-8",
         errors="replace",
         env=process_env,
+        **_hidden_window_popen_kwargs(),
     )
 
     start_time = time.monotonic()
@@ -113,7 +145,16 @@ function Test-CodexStop {{
 {script}
 """
     return _run_powershell_process(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", wrapped_script],
+        [
+            "powershell",
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            wrapped_script,
+        ],
         stop=stop,
         timeout=timeout,
         stop_grace_seconds=stop_grace_seconds,
@@ -133,6 +174,8 @@ def run_powershell_file(
         [
             "powershell",
             "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
             "-ExecutionPolicy",
             "Bypass",
             "-File",

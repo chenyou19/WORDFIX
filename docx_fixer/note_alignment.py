@@ -11,7 +11,7 @@ from .note_detection import note_source_for_paragraph
 from .numbering import build_numbering_format_lookup, build_style_numbering_lookup
 from .numbering_cleanup import _long_path_compatible_str
 from .outline import set_paragraph_jc, summarize_paragraph_text
-from .xml_utils import paragraph_text
+from .xml_utils import paragraph_text, qn
 
 
 def should_fix_note_alignment_part(name: str) -> bool:
@@ -26,6 +26,11 @@ def should_fix_note_alignment_part(name: str) -> bool:
     return False
 
 
+def _paragraph_jc(p) -> str | None:
+    jc = p.find("./w:pPr/w:jc", NS)
+    return jc.get(qn("val")) if jc is not None else None
+
+
 def force_note_paragraph_left_alignment_in_root(
     root,
     *,
@@ -35,7 +40,14 @@ def force_note_paragraph_left_alignment_in_root(
     logs: list[str] | None = None,
 ) -> int:
     fixed_count = 0
-    paragraphs = root.xpath(".//w:p[not(ancestor::w:tbl)]", namespaces=NS)
+    total_candidate_paragraphs = 0
+    matched_counts = {"text": 0, "numPr": 0, "styleNumPr": 0}
+    skipped_table = 0
+    skipped_non_note = 0
+    center_after_fix_count = 0
+    still_center_records: list[str] = []
+
+    paragraphs = root.xpath(".//w:p", namespaces=NS)
     for paragraph_index, p in enumerate(paragraphs, start=1):
         text = paragraph_text(p)
         source = note_source_for_paragraph(
@@ -45,10 +57,25 @@ def force_note_paragraph_left_alignment_in_root(
             style_numbering_lookup=style_numbering_lookup,
         )
         if source is None:
+            skipped_non_note += 1
+            continue
+
+        total_candidate_paragraphs += 1
+        if source in matched_counts:
+            matched_counts[source] += 1
+
+        if p.xpath("ancestor::w:tbl", namespaces=NS):
+            skipped_table += 1
             continue
 
         before_jc, after_jc = set_paragraph_jc(p, "left")
         fixed_count += 1
+        final_jc = _paragraph_jc(p) or after_jc
+        if str(final_jc).lower() == "center":
+            center_after_fix_count += 1
+            still_center_records.append(
+                f"{part_name}:{paragraph_index}:{summarize_paragraph_text(text)}"
+            )
         if logs is not None:
             logs.append(
                 "FINAL_NOTE_ALIGNMENT_FIX "
@@ -59,6 +86,21 @@ def force_note_paragraph_left_alignment_in_root(
                 f"after_jc={after_jc} "
                 f"text={summarize_paragraph_text(text)}"
             )
+
+    if logs is not None:
+        logs.append(
+            "FINAL_NOTE_ALIGNMENT_SUMMARY "
+            f"part={part_name} "
+            f"total_candidate_paragraphs={total_candidate_paragraphs} "
+            f"matched_text={matched_counts['text']} "
+            f"matched_numPr={matched_counts['numPr']} "
+            f"matched_styleNumPr={matched_counts['styleNumPr']} "
+            f"fixed_count={fixed_count} "
+            f"skipped_table={skipped_table} "
+            f"skipped_non_note={skipped_non_note} "
+            f"center_after_fix_count={center_after_fix_count} "
+            f"still_center_records={';'.join(still_center_records) if still_center_records else 'none'}"
+        )
 
     return fixed_count
 

@@ -103,6 +103,32 @@ class GuiDefaultsTests(unittest.TestCase):
         self.assertTrue(loaded["skip_special_color_tables"])
         self.assertTrue(loaded["clear_special_colors_after_skip"])
 
+    def test_section_three_and_note_defaults_are_off(self):
+        defaults = built_in_gui_defaults()
+        self.assertFalse(defaults["skip_chapter_three_adjustments"])
+        self.assertFalse(defaults["move_table_notes_below"])
+
+    def test_old_settings_without_section_three_and_note_fields_get_built_in_defaults(self):
+        normalized = normalize_gui_defaults({"fix_table": True})
+
+        self.assertIn("skip_chapter_three_adjustments", normalized)
+        self.assertIn("move_table_notes_below", normalized)
+        self.assertFalse(normalized["skip_chapter_three_adjustments"])
+        self.assertFalse(normalized["move_table_notes_below"])
+
+    def test_section_three_and_note_checkboxes_round_trip(self):
+        settings = built_in_gui_defaults()
+        settings["skip_chapter_three_adjustments"] = True
+        settings["move_table_notes_below"] = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "indent_defaults.json"
+            save_gui_defaults(settings, path)
+            loaded = load_saved_gui_defaults(path)
+
+        self.assertTrue(loaded["skip_chapter_three_adjustments"])
+        self.assertTrue(loaded["move_table_notes_below"])
+
     def test_built_in_defaults_skip_log_output(self):
         self.assertTrue(built_in_gui_defaults()["skip_log_output"])
 

@@ -50,6 +50,30 @@ class CliOptionTests(unittest.TestCase):
 
         self.assertNotIn("skip_special_table_layout_under_chapter_three", field_names)
 
+    def test_section_three_adjustments_and_note_move_arguments(self):
+        defaults = _build_process_options(parse_args(["input.docx", "output.docx"]))
+        self.assertFalse(defaults.skip_chapter_three_adjustments)
+        self.assertFalse(defaults.move_table_notes_below)
+
+        args = parse_args([
+            "input.docx",
+            "output.docx",
+            "--skip-chapter-three-adjustments",
+            "--move-table-notes-below",
+        ])
+        options = _build_process_options(args)
+
+        self.assertTrue(options.skip_chapter_three_adjustments)
+        self.assertTrue(options.move_table_notes_below)
+        # 參、不要調整 implies every granular chapter-three skip.
+        self.assertTrue(options.skip_chapter_three_table_layout)
+        self.assertTrue(options.skip_chapter_three_table_color)
+        self.assertTrue(options.skip_chapter_three_indents)
+
+    def test_protect_section_three_alias(self):
+        args = parse_args(["input.docx", "output.docx", "--protect-section-three"])
+        self.assertTrue(args.skip_chapter_three_adjustments)
+
     def test_new_body_indent_arguments_are_supported(self):
         args = parse_args([
             "input.docx",

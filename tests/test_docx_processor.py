@@ -13,6 +13,7 @@ from lxml import etree
 
 from docx_fixer.constants import NS, TEMPLATE_OUTLINE_INDENTS, W_NS
 from docx_fixer.docx_processor import fix_docx_fast
+from docx_fixer.note_debug_log import collect_note_debug_records_from_docx
 from docx_fixer.outline import collect_all_toc_paragraph_ids
 from docx_fixer.protected_region import ProtectedRegionContext, collect_chapter_three_paragraph_ids
 from docx_fixer.numbering import (
@@ -831,7 +832,10 @@ def make_note_alignment_document_xml() -> bytes:
     tbl = etree.SubElement(body, qn("tbl"))
     tr = etree.SubElement(tbl, qn("tr"))
     tc = etree.SubElement(tr, qn("tc"))
-    add_test_paragraph(tc, "\u8a3b\uff1a\u8868\u683c\u5167\u8aaa\u660e", font_size_pt=14)
+    table_note = add_test_paragraph(tc, "\u8a3b\uff1a\u8868\u683c\u5167\u8aaa\u660e", font_size_pt=14)
+    table_note_pPr = table_note.find("./w:pPr", NS)
+    table_note_jc = etree.SubElement(table_note_pPr, qn("jc"))
+    table_note_jc.set(qn("val"), "center")
 
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
@@ -839,13 +843,28 @@ def make_note_alignment_document_xml() -> bytes:
 def make_note_alignment_styles_xml() -> bytes:
     styles = etree.Element(qn("styles"), nsmap={"w": W_NS})
 
+    centered_note_base = etree.SubElement(styles, qn("style"))
+    centered_note_base.set(qn("type"), "paragraph")
+    centered_note_base.set(qn("styleId"), "CenteredNoteBase")
+    centered_note_name = etree.SubElement(centered_note_base, qn("name"))
+    centered_note_name.set(qn("val"), "Centered Note Base")
+    centered_note_pPr = etree.SubElement(centered_note_base, qn("pPr"))
+    centered_note_jc = etree.SubElement(centered_note_pPr, qn("jc"))
+    centered_note_jc.set(qn("val"), "center")
+
     plain_note = etree.SubElement(styles, qn("style"))
     plain_note.set(qn("type"), "paragraph")
     plain_note.set(qn("styleId"), "NoteStyle")
+    plain_note_name = etree.SubElement(plain_note, qn("name"))
+    plain_note_name.set(qn("val"), "Note Text")
+    plain_note_based_on = etree.SubElement(plain_note, qn("basedOn"))
+    plain_note_based_on.set(qn("val"), "CenteredNoteBase")
 
     numbered_note = etree.SubElement(styles, qn("style"))
     numbered_note.set(qn("type"), "paragraph")
     numbered_note.set(qn("styleId"), "StyleNoteNumbered")
+    numbered_note_name = etree.SubElement(numbered_note, qn("name"))
+    numbered_note_name.set(qn("val"), "Style Note Numbered")
     pPr = etree.SubElement(numbered_note, qn("pPr"))
     num_pr = etree.SubElement(pPr, qn("numPr"))
     ilvl = etree.SubElement(num_pr, qn("ilvl"))
@@ -858,10 +877,10 @@ def make_note_alignment_styles_xml() -> bytes:
 
 def make_note_alignment_numbering_xml() -> bytes:
     numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
-    for num_id, abstract_id, lvl_text_value in [
-        ("10", "10", "\u8a3b%1\uff1a"),
-        ("11", "11", "\u8a3b %1"),
-        ("12", "12", "%1."),
+    for num_id, abstract_id, lvl_text_value, lvl_jc_value in [
+        ("10", "10", "\u8a3b%1\uff1a", "center"),
+        ("11", "11", "\u8a3b %1", None),
+        ("12", "12", "%1.", None),
     ]:
         abstract = etree.SubElement(numbering, qn("abstractNum"))
         abstract.set(qn("abstractNumId"), abstract_id)
@@ -871,6 +890,9 @@ def make_note_alignment_numbering_xml() -> bytes:
         num_fmt.set(qn("val"), "decimal")
         lvl_text = etree.SubElement(lvl, qn("lvlText"))
         lvl_text.set(qn("val"), lvl_text_value)
+        if lvl_jc_value is not None:
+            lvl_jc = etree.SubElement(lvl, qn("lvlJc"))
+            lvl_jc.set(qn("val"), lvl_jc_value)
         pPr = etree.SubElement(lvl, qn("pPr"))
         make_ind(pPr, left="720", hanging="120")
 
@@ -3286,6 +3308,32 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(lvl.find("w:lvlText", NS).get(qn("val")), "%5.")
             self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
 
+    def test_note_debug_log_records_note_sources_and_center_inheritance(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            make_docx(
+                input_docx,
+                make_note_alignment_document_xml(),
+                styles_xml=make_note_alignment_styles_xml(),
+                numbering_xml=make_note_alignment_numbering_xml(),
+            )
+
+            note_debug_log = "\n".join(
+                collect_note_debug_records_from_docx(input_docx, "debug_unit")
+            )
+
+            self.assertIn("stage=debug_unit", note_debug_log)
+            self.assertIn("note_source=text", note_debug_log)
+            self.assertIn("note_source=numPr", note_debug_log)
+            self.assertIn("note_source=styleNumPr", note_debug_log)
+            self.assertIn("style_jc_effective=center", note_debug_log)
+            self.assertIn("style_based_on_chain=NoteStyle>CenteredNoteBase", note_debug_log)
+            self.assertIn("numbering_lvlJc=center", note_debug_log)
+            self.assertIn("WARNING: numbering level alignment is center", note_debug_log)
+            self.assertIn("decision=SKIPPED_TABLE", note_debug_log)
+            self.assertIn("final_paragraph_jc=center", note_debug_log)
+            self.assertIn("WARNING: final paragraph alignment is center", note_debug_log)
+
     def test_final_note_alignment_runs_after_word_com_and_keeps_notes_out_of_indent_processing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_docx = Path(temp_dir) / "input.docx"
@@ -3358,7 +3406,7 @@ class DocxProcessorTests(unittest.TestCase):
 
             self.assertIsNone(paragraph_jc_value(non_note_numbered))
             assert_body_indent_hard_override(self, body, TEMPLATE_OUTLINE_INDENTS[1]["body_left"])
-            self.assertIsNone(paragraph_jc_value(table_note))
+            self.assertEqual(paragraph_jc_value(table_note), "center")
 
             joined_paragraph_logs = "\n".join(summary.paragraph_logs)
             self.assertIn("WORD_COM_FAKE_DIRTIED_NOTE_ALIGNMENT", "\n".join(summary.word_com_body_indent_logs))
@@ -3368,6 +3416,27 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIn("source=styleNumPr", joined_paragraph_logs)
             self.assertIn("before_jc=center after_jc=left", joined_paragraph_logs)
             self.assertEqual(joined_paragraph_logs.count("FINAL_NOTE_ALIGNMENT_FIX part=word/document.xml"), 5)
+            self.assertIn("FINAL_NOTE_ALIGNMENT_SUMMARY part=word/document.xml", joined_paragraph_logs)
+            self.assertIn("matched_text=4", joined_paragraph_logs)
+            self.assertIn("matched_numPr=1", joined_paragraph_logs)
+            self.assertIn("matched_styleNumPr=1", joined_paragraph_logs)
+            self.assertIn("fixed_count=5", joined_paragraph_logs)
+            self.assertIn("skipped_table=1", joined_paragraph_logs)
+            self.assertIn("center_after_fix_count=0", joined_paragraph_logs)
+
+            note_debug_log_path = output_docx.with_name("output_note_debug_log.txt")
+            self.assertTrue(note_debug_log_path.exists())
+            note_debug_log = note_debug_log_path.read_text(encoding="utf-8")
+            self.assertIn("stage=after_xml_pipeline_before_word_com", note_debug_log)
+            self.assertIn("stage=after_final_output", note_debug_log)
+            self.assertIn("note_source=text", note_debug_log)
+            self.assertIn("note_source=numPr", note_debug_log)
+            self.assertIn("note_source=styleNumPr", note_debug_log)
+            self.assertIn("style_jc_effective=center", note_debug_log)
+            self.assertIn("style_based_on_chain=NoteStyle>CenteredNoteBase", note_debug_log)
+            self.assertIn("decision=SKIPPED_TABLE", note_debug_log)
+            self.assertIn("final_paragraph_jc=center", note_debug_log)
+            self.assertIn("WARNING: final paragraph alignment is center", note_debug_log)
 
 
 if __name__ == "__main__":

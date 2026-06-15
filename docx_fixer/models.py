@@ -19,8 +19,10 @@ class ProcessOptions:
     skip_chapter_three_tables: bool = False
     skip_chapter_three_indents: bool = False
     skip_all_under_chapter_three: bool = False
+    skip_chapter_three_adjustments: bool = False
     skip_log_output: bool = True
     skip_nested_tables: bool = True
+    move_table_notes_below: bool = False
     table_keep_colors: tuple[str, ...] = ("D9D9D9", "F2F2F2")
     table_gray_colors: tuple[str, ...] = ("BFBFBF", "C0C0C0", "A6A6A6", "808080")
     table_gray_target: str = "D9D9D9"
@@ -36,7 +38,10 @@ class ProcessOptions:
             self.skip_chapter_three_table_layout = True
             self.skip_chapter_three_table_color = True
 
-        if self.skip_all_under_chapter_three:
+        # "參、不要調整" (skip_chapter_three_adjustments) protects the entire 參、
+        # section from every adjustment, so it implies all granular chapter
+        # three skips. skip_all_under_chapter_three remains as a legacy alias.
+        if self.skip_all_under_chapter_three or self.skip_chapter_three_adjustments:
             self.skip_chapter_three_table_layout = True
             self.skip_chapter_three_table_color = True
             self.skip_chapter_three_indents = True
@@ -49,6 +54,13 @@ class ProcessSummary:
     skipped_small_tables: int = 0
     skipped_nested_tables: int = 0
     special_color_skipped_tables: int = 0
+    section_three_protected_tables: int = 0
+    double_border_tables: int = 0
+    note_cells_moved_tables: int = 0
+    moved_note_count: int = 0
+    deleted_note_cells: int = 0
+    deleted_note_rows: int = 0
+    inserted_note_paragraphs: int = 0
     special_autofit_right_tables: int = 0
     normal_processed_tables: int = 0
     cross_page_tables: int = 0

@@ -197,6 +197,37 @@ def is_chapter_three_start_marker(
     return level == 0
 
 
+SECTION_THREE_CHAPTER_TOKEN = "參"
+
+
+def is_section_three_chapter_marker(
+    p,
+    text=None,
+    *,
+    numbering_level_lookup=None,
+    numbering_format_lookup=None,
+    style_numbering_lookup=None,
+) -> bool:
+    """Generic detector for the body chapter 「參、」 by chapter number.
+
+    Unlike is_chapter_three_start_marker (which is tied to the specific title
+    「價格形成之主要因素分析」), this recognises any first-level heading whose
+    chapter number resolves to 參 (the 3rd 壹貳參 chapter). It reuses the same
+    first-level-heading resolution that already excludes TOC entries, so a 參、
+    line inside a table of contents does not trigger protection.
+    """
+    del text  # Accepted for predicate-signature parity; not needed here.
+    prefix = _first_level_heading_prefix_for_paragraph(
+        p,
+        numbering_level_lookup=numbering_level_lookup,
+        numbering_format_lookup=numbering_format_lookup,
+        style_numbering_lookup=style_numbering_lookup,
+    )
+    if not prefix:
+        return False
+    return prefix.lstrip().startswith(SECTION_THREE_CHAPTER_TOKEN)
+
+
 def is_table_under_chapter_three(
     tbl,
     numbering_level_lookup,
@@ -250,8 +281,17 @@ def collect_chapter_three_paragraph_ids(
     style_numbering_lookup,
     toc_paragraph_ids=None,
     paragraphs=None,
+    start_marker=None,
 ) -> set[int]:
-    """Collect paragraphs from the target chapter 參 title until the next first-level heading."""
+    """Collect paragraphs from the chapter 參 start marker until the next first-level heading.
+
+    start_marker selects which paragraph begins the protected region. It
+    defaults to the title-specific 「參、價格形成之主要因素分析」 detector; pass
+    is_section_three_chapter_marker for the generic 「參、不要調整」 behaviour.
+    """
+    if start_marker is None:
+        start_marker = is_chapter_three_start_marker
+
     skip_ids: set[int] = set()
     toc_ids = toc_paragraph_ids or set()
     in_chapter_three = False
@@ -283,7 +323,7 @@ def collect_chapter_three_paragraph_ids(
 
             is_first_level_heading = level == 0
 
-        if is_chapter_three_start_marker(
+        if start_marker(
             p,
             text,
             numbering_level_lookup=numbering_level_lookup,
@@ -401,6 +441,8 @@ class ProtectedRegionContext:
     body_heading_numbering_pairs: set[tuple[str, int]] = field(default_factory=set)
     body_heading_num_ids: set[str] = field(default_factory=set)
     body_heading_abstract_ids: set[str] = field(default_factory=set)
+    section_three_protection_enabled: bool = False
+    section_three_detection_source: str = "none"
     _document_paragraph_refs: list = field(default_factory=list, repr=False)
 
     @classmethod
@@ -414,6 +456,7 @@ class ProtectedRegionContext:
         style_numbering_lookup,
         numbering_xml: bytes | None,
         summary: Any | None = None,
+        use_generic_section_three: bool = False,
     ) -> "ProtectedRegionContext":
         paragraphs = document_root.xpath(".//w:p", namespaces=NS)
         toc_paragraph_ids = collect_all_toc_paragraph_ids(
@@ -460,6 +503,17 @@ class ProtectedRegionContext:
         if not protect_chapter_three:
             return context
 
+        context.section_three_protection_enabled = use_generic_section_three
+        start_marker = (
+            is_section_three_chapter_marker
+            if use_generic_section_three
+            else is_chapter_three_start_marker
+        )
+        context.section_three_detection_source = (
+            "generic_section_three_chapter_參"
+            if use_generic_section_three
+            else "title_specific_價格形成之主要因素分析"
+        )
         context.document_chapter_three_paragraph_ids = collect_chapter_three_paragraph_ids(
             document_root,
             numbering_level_lookup=numbering_level_lookup,
@@ -467,10 +521,12 @@ class ProtectedRegionContext:
             style_numbering_lookup=style_numbering_lookup,
             toc_paragraph_ids=toc_paragraph_ids,
             paragraphs=paragraphs,
+            start_marker=start_marker,
         )
         if summary is not None:
             summary.numbering_xml_logs.append(
-                f"CHAPTER_THREE_SKIP_IDS collected={len(context.document_chapter_three_paragraph_ids)}"
+                f"CHAPTER_THREE_SKIP_IDS collected={len(context.document_chapter_three_paragraph_ids)} "
+                f"detection_source={context.section_three_detection_source}"
             )
 
         (

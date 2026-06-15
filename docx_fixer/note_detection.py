@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import re
+
 from .constants import NS
 from .xml_utils import qn
 
 NOTE_PREFIX = "註"
+
+# A note cell starts with 註, an optional number (Arabic or Chinese), and a
+# separator. This deliberately excludes words such as 註冊/註銷/註明 where 註 is
+# followed directly by another character with no separator.
+NOTE_CELL_PATTERN = re.compile(r"^註(?:\d+|[一二三四五六七八九十]+)?\s*[：:、.．]")
 CONTROL_SPACE_CHARS = "\ufeff\u200b\u200c\u200d\u2060"
 
 
@@ -16,6 +23,15 @@ def normalize_note_text(text: str) -> str:
 
 def is_note_text(text: str) -> bool:
     return normalize_note_text(text).startswith(NOTE_PREFIX)
+
+
+def is_note_cell_text(text: str) -> bool:
+    """Strict matcher for moving in-table note cells below the table.
+
+    Matches 註：, 註1：, 註2., 註一、 etc., but not 註冊資料/註銷登記/註明事項
+    or text where 註 appears later (e.g. 本表註1如下).
+    """
+    return bool(NOTE_CELL_PATTERN.match(normalize_note_text(text)))
 
 
 def numbering_lvl_text_starts_with_note(

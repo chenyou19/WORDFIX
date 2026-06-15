@@ -12,9 +12,14 @@
 
 1. `word/document.xml` 的第一張表格會跳過，`table_type = skipped_first_table`，原因是 `first table in word/document.xml`。
 2. 若 `skip_nested_tables=True`，表格本身在另一張表格內，或表格內含另一張表格，會跳過。
-3. 若表格位在參章保護範圍，且版面與底色兩者都因選項被停用，會跳過。
-4. 儲存格數 `cell_count <= 4` 的表格會跳過，`table_type = skipped_small_table`。
-5. 其餘表格依欄數走特殊表格、一般表格或只處理顏色。
+3. 若表格位在參章保護範圍，且版面與底色兩者都因選項被停用，會跳過（「參、不要調整」會讓整個參、章節走這條路完全跳過）。
+4. 若啟用「將表格內註記儲存格移至表格下方」，先搬移註記並刪除 cell / row（受保護的參、表格不會到這步）。
+5. 搬移後重新計算 `cell_count`、`column_count` 與一般 / 特殊表格類型。
+6. 命中「指定顏色跳過整張表」清單的表格會跳過。
+7. 儲存格數 `cell_count <= 4` 的表格會跳過，`table_type = skipped_small_table`。
+8. 其餘表格依欄數走特殊表格、一般表格或只處理顏色，套用版面、字體、顏色後，最後對一般表格與特殊表格重新套用黑色雙線外框。
+
+註記搬移與黑色雙線外框的詳細規則見下方專節。
 
 ## 巢狀表格
 
@@ -144,3 +149,20 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 - `table_log` 另記 `special_color_skip_matched` 與命中的 `special_color_skip_colors`。
 
 顏色設定保存在與縮排設定共用的 `indent_defaults.json`（key 為 `table_color_settings`），EXE 版會放在執行檔同資料夾，可攜帶到其他電腦。
+
+## 將表格內註記儲存格移至表格下方
+
+由 GUI／CLI 的 `move_table_notes_below` 控制（預設關閉），實作在 `docx_fixer/table_notes.py` 的 `move_table_note_cells_below()`。這是獨立開關，與表格顏色、版面、特殊顏色跳過不耦合；只有受參、保護的表格（以及第一張表格、巢狀表格）不會搬移。
+
+- 註記判斷使用嚴格規則 `note_detection.is_note_cell_text()`，正規式 `^註(?:\d+|[一二三四五六七八九十]+)?\s*[：:、.．]`。會處理 `註：`、`註1：`、`註2.`、`註一：`；不會處理 `註冊資料`、`註銷登記`、`註明事項`、`本表註1如下`。
+- 掃描順序為由上到下、由左到右。命中的儲存格：若該列其他 cell 都空白則刪整列（`delete_row`），否則只刪該 cell（`delete_cell`）。
+- 搬出的註記依掃描順序，各自成為一個段落插入在表格正下方。段落格式：標楷體（eastAsia `標楷體`、ascii/hAnsi `DFKai-SB`）、10pt（`w:sz`/`w:szCs` 值 `20`）、`outlineLvl` 9（本文）、不帶編號、不設首行縮排。
+- 搬移在版面／字體／顏色／外框之前執行，之後才重算欄數、格數與表格類型，確保刪 cell / row 後新邊界仍能正確套用外框。
+
+## 表格外框線黑色雙線
+
+`table_format.apply_double_black_table_borders()` 會重建 `w:tblBorders`，把 `top`、`left`、`bottom`、`right`、`insideH`、`insideV` 都設成 `w:val="double"`、`w:color="000000"`、`w:sz="4"`、`w:space="0"`，等於黑色雙線外框與內框。
+
+- 一般表格與特殊表格在套完版面／字體／顏色後都會重新套用，發生在註記搬移與 cell / row 刪除「之後」，避免刪除後新邊界沒有雙線。
+- 受參、保護的表格不套外框（保留原框線）。第一張表格、巢狀表格、小表格、特殊顏色跳過表格不在此處理。
+- `table_log` 以 `double_border_applied` 記錄是否套用，摘要以 `套用黑色雙線外框的表格數` 統計。

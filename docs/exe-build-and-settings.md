@@ -26,6 +26,15 @@ pyinstaller DocxFixer.spec
 
 或在已有 PyInstaller 的環境中依專案流程執行同等指令。封裝完成後，輸出通常會在 `dist` 目錄。
 
+## 隱藏 PowerShell 視窗
+
+`console=False` 只隱藏主 EXE 的 console，不會自動隱藏 Word COM / 表格 fallback 流程啟動的 `powershell.exe` 子程序。隱藏子程序視窗的邏輯集中在 `docx_fixer/process_runner.py` 的 `_run_powershell_process()`：
+
+- Windows（`os.name == "nt"`）下對 `subprocess.Popen` 加上 `creationflags=CREATE_NO_WINDOW`，並設定 `STARTUPINFO`（`STARTF_USESHOWWINDOW` + `SW_HIDE`），避免黑色視窗閃出。
+- 指令另外帶 `-WindowStyle Hidden` 作為輔助，但主要靠 `Popen` 參數，避免視窗閃一下。
+- 非 Windows 環境不套用上述參數，`Popen` 行為與原本相同，Linux/macOS 測試不受影響。
+- stdout/stderr 擷取、timeout、stop/cancel、`CODEX_STOP_PATH`、`PYTHONUTF8`、`PYTHONIOENCODING` 與所有 `WORD_COM_*` log 均維持原樣。
+
 ## 設定檔位置
 
 EXE 執行時，`indent_defaults.json` 要放在 EXE 同層。程式不會把執行後保存的設定寫回 EXE 內部，而是讀寫外部 JSON。

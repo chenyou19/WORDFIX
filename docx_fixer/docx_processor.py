@@ -14,6 +14,7 @@ from .indent_sanitizer import (
 )
 from .models import ProcessOptions, ProcessSummary
 from .note_alignment import force_note_paragraph_left_alignment_in_docx
+from .note_debug_log import write_note_debug_log_for_docx
 from .numbering_cleanup import force_clean_numbering_suffix_tabs_in_docx
 from .numbering import (
     apply_numbering_outline_format,
@@ -383,6 +384,29 @@ def _mark_word_com_table_autofit_fallback(
             record["word_com_autofit_status"] = "failed"
 
 
+def _note_debug_log_path(output_docx: Path) -> Path:
+    return output_docx.with_name(f"{output_docx.stem}_note_debug_log.txt")
+
+
+def _write_note_debug_log_safely(
+    output_docx: Path,
+    summary: ProcessSummary,
+    stage: str,
+    *,
+    append: bool,
+) -> None:
+    try:
+        log_path = _note_debug_log_path(output_docx)
+        write_note_debug_log_for_docx(output_docx, log_path, stage, append=append)
+        summary.paragraph_logs.append(
+            f"NOTE_DEBUG_LOG_WRITTEN stage={stage} path={log_path}"
+        )
+    except Exception as exc:
+        summary.paragraph_logs.append(
+            f"NOTE_DEBUG_LOG_FAILED stage={stage} reason={type(exc).__name__}:{exc}"
+        )
+
+
 
 
 
@@ -451,6 +475,7 @@ def fix_docx_fast(
                     style_numbering_lookup=style_numbering_lookup,
                     numbering_xml=numbering_xml,
                     summary=summary,
+                    use_generic_section_three=options.skip_chapter_three_adjustments,
                 )
             except Exception:
                 document_root_for_toc = None
@@ -702,6 +727,13 @@ def fix_docx_fast(
 
             zout.writestr(item, data)
 
+    _write_note_debug_log_safely(
+        output_docx,
+        summary,
+        "after_xml_pipeline_before_word_com",
+        append=False,
+    )
+
     if options.normalize_with_word_com:
         table_autofit_records = list(summary.word_com_table_autofit_records)
         if table_autofit_records:
@@ -792,6 +824,12 @@ def fix_docx_fast(
     force_note_paragraph_left_alignment_in_docx(
         output_docx,
         logs=summary.paragraph_logs,
+    )
+    _write_note_debug_log_safely(
+        output_docx,
+        summary,
+        "after_final_output",
+        append=True,
     )
 
     try:

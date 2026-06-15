@@ -91,6 +91,32 @@ def _apply_table_content_format(tbl, stop: StopController | None = None) -> None
         szCs.set(qn("val"), "22")
 
 
+TABLE_BORDER_TAGS = ("top", "left", "bottom", "right", "insideH", "insideV")
+TABLE_DOUBLE_BORDER_SIZE = "4"
+
+
+def apply_double_black_table_borders(tbl) -> None:
+    """Apply a black double-line border to the whole table.
+
+    Rebuilds w:tblBorders so the outer frame (top/left/bottom/right) and the
+    inner gridlines (insideH/insideV) are all black double lines. This must run
+    after note cells/rows are removed so newly exposed edges still get borders.
+    """
+    tblPr = get_or_add(tbl, "tblPr", first=True)
+
+    tbl_borders = tblPr.find("w:tblBorders", NS)
+    if tbl_borders is not None:
+        tblPr.remove(tbl_borders)
+    tbl_borders = etree.SubElement(tblPr, qn("tblBorders"))
+
+    for tag in TABLE_BORDER_TAGS:
+        border = etree.SubElement(tbl_borders, qn(tag))
+        border.set(qn("val"), "double")
+        border.set(qn("sz"), TABLE_DOUBLE_BORDER_SIZE)
+        border.set(qn("space"), "0")
+        border.set(qn("color"), "000000")
+
+
 def apply_table_format(tbl, stop: StopController | None = None) -> None:
     tblPr = get_or_add(tbl, "tblPr", first=True)
 

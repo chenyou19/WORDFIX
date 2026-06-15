@@ -52,6 +52,9 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `chapter_three_table_color_skipped`
 - `word_com_autofit_applied`
 - `word_com_autofit_sequence`
+- `double_border_applied`：是否套用黑色雙線外框。
+- `skip_section_three_adjustments_enabled`、`in_section_three_protected`、`section_three_detection_source`、`skipped_by_section_three_protection`：「參、不要調整」整章保護狀態。
+- `move_table_notes_below_enabled`、`note_cells_moved`、`moved_note_count`、`deleted_note_cells`、`deleted_note_rows`、`inserted_note_paragraphs`、`moved_notes`、`note_move_warnings`：表格內註記搬移結果。
 - `changed_to_gray`
 - `cleared_colors`
 - `shading_debug`
@@ -62,9 +65,12 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `skipped_nested_table`
 - `skipped_chapter_three_table`
 - `skipped_small_table`
+- `special_color_skipped_table`
 - `special_table`
 - `normal_table`
 - `color_only_table`
+
+`process_log` 的表格摘要另含：因「參、不要調整」保護跳過的表格數、套用黑色雙線外框的表格數、搬移註記的表格數與筆數、刪除註記儲存格/整列數、表格下方新增註記段落數。
 
 ## heading_suffix_log
 

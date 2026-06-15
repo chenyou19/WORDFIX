@@ -383,6 +383,22 @@ def _color_list_text(value: object) -> str:
     return ",".join(str(item) for item in value)
 
 
+def _moved_notes_text(value: object) -> str:
+    if not value:
+        return "none"
+    parts = []
+    for note in value:
+        if not isinstance(note, dict):
+            continue
+        parts.append(
+            f"note_text={note.get('note_text', '')};"
+            f"delete_action={note.get('delete_action', '')};"
+            f"row_index={note.get('row_index', '')};"
+            f"cell_index={note.get('cell_index', '')}"
+        )
+    return " | ".join(parts) if parts else "none"
+
+
 def format_table_log_lines(summary: ProcessSummary) -> list[str]:
     lines = ["表格處理紀錄："]
     if not summary.table_log_records:
@@ -423,6 +439,19 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"table_keep_colors: {_color_list_text(record.get('table_keep_colors'))}",
                 f"table_gray_colors: {_color_list_text(record.get('table_gray_colors'))}",
                 f"table_gray_target: {record.get('table_gray_target', 'D9D9D9')}",
+                f"double_border_applied: {_bool_text(record.get('double_border_applied', False))}",
+                f"skip_section_three_adjustments_enabled: {_bool_text(record.get('skip_section_three_adjustments_enabled', False))}",
+                f"in_section_three_protected: {_bool_text(record.get('in_section_three_protected', False))}",
+                f"section_three_detection_source: {record.get('section_three_detection_source', 'none')}",
+                f"skipped_by_section_three_protection: {_bool_text(record.get('skipped_by_section_three_protection', False))}",
+                f"move_table_notes_below_enabled: {_bool_text(record.get('move_table_notes_below_enabled', False))}",
+                f"note_cells_moved: {_bool_text(record.get('note_cells_moved', False))}",
+                f"moved_note_count: {record.get('moved_note_count', 0)}",
+                f"deleted_note_cells: {record.get('deleted_note_cells', 0)}",
+                f"deleted_note_rows: {record.get('deleted_note_rows', 0)}",
+                f"inserted_note_paragraphs: {record.get('inserted_note_paragraphs', 0)}",
+                f"moved_notes: {_moved_notes_text(record.get('moved_notes'))}",
+                f"note_move_warnings: {' | '.join(record.get('note_move_warnings', [])) if record.get('note_move_warnings') else 'none'}",
                 f"changed_to_gray: {record['changed_to_gray']}",
                 f"cleared_colors: {record['cleared_colors']}",
                 f"shading_debug: {' | '.join(record.get('shading_debug', [])) if record.get('shading_debug') else 'none'}",
@@ -457,6 +486,13 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         f"因格子數小於等於 4 而跳過的表格數：{summary.skipped_small_tables}",
         f"因表格中有表格而跳過的表格數：{summary.skipped_nested_tables}",
         f"因特殊顏色而跳過的表格數：{summary.special_color_skipped_tables}",
+        f"因「參、不要調整」而保護跳過的表格數：{summary.section_three_protected_tables}",
+        f"套用黑色雙線外框的表格數：{summary.double_border_tables}",
+        f"搬移表格內註記的表格數：{summary.note_cells_moved_tables}",
+        f"搬移註記筆數：{summary.moved_note_count}",
+        f"刪除註記儲存格數：{summary.deleted_note_cells}",
+        f"刪除註記整列數：{summary.deleted_note_rows}",
+        f"表格下方新增註記段落數：{summary.inserted_note_paragraphs}",
         f"跨頁表格數：{summary.cross_page_tables}",
         f"跨頁已解決的表格數：{summary.cross_page_resolved_tables}",
         f"跨頁未解決的表格數：{summary.cross_page_still_split_tables}",

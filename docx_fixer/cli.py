@@ -89,6 +89,8 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         skip_chapter_three_table_layout=skip_chapter_three_table_layout,
         skip_chapter_three_table_color=skip_chapter_three_table_color,
         skip_chapter_three_indents=skip_chapter_three_indents,
+        skip_chapter_three_adjustments=args.skip_chapter_three_adjustments,
+        move_table_notes_below=args.move_table_notes_below,
         skip_nested_tables=args.skip_nested_tables,
         skip_log_output=args.skip_log_output,
         **_table_color_options_from_args(args),
@@ -275,6 +277,34 @@ def parse_args(argv: list[str]):
         action="store_false",
         dest="skip_chapter_three_indents",
         help="Allow paragraph indent changes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--skip-chapter-three-adjustments",
+        "--protect-section-three",
+        action="store_true",
+        default=False,
+        dest="skip_chapter_three_adjustments",
+        help="參、不要調整: protect the whole body chapter 參、 from every adjustment (layout, color, font, borders, note moving, indents, Word COM)",
+    )
+    parser.add_argument(
+        "--no-skip-chapter-three-adjustments",
+        "--no-protect-section-three",
+        action="store_false",
+        dest="skip_chapter_three_adjustments",
+        help="Allow adjustments inside chapter 參、",
+    )
+    parser.add_argument(
+        "--move-table-notes-below",
+        action="store_true",
+        default=False,
+        dest="move_table_notes_below",
+        help="Move note cells (註：/註1：/註一、 ...) out of each table into paragraphs below it",
+    )
+    parser.add_argument(
+        "--no-move-table-notes-below",
+        action="store_false",
+        dest="move_table_notes_below",
+        help="Keep note cells inside tables",
     )
     parser.add_argument(
         "--skip-nested-tables",
