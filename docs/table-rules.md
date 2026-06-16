@@ -17,9 +17,9 @@
 5. 搬移後重新計算 `cell_count`、`column_count` 與一般 / 特殊表格類型。
 6. 命中「指定顏色跳過整張表」清單的表格會跳過。
 7. 儲存格數 `cell_count <= 4` 的表格會跳過，`table_type = skipped_small_table`。
-8. 其餘表格依欄數走特殊表格、一般表格或只處理顏色，套用版面、字體、顏色後，**若隱藏選項 `enable_double_black_table_borders` 為 True**，會對一般表格與特殊表格套用黑色雙線外框（預設關閉，不套用）；接著**若選項 `enable_table_footer_source_format` 為 True 且該表格版面有被調整**，套用「表格基期/資料來源格式化」。
+8. 其餘表格依欄數走特殊表格、一般表格或只處理顏色，套用版面、字體、顏色後，**若隱藏選項 `enable_double_black_table_borders` 為 True**，會對一般表格與特殊表格套用黑色雙線外框（預設關閉，不套用）；接著**若選項 `enable_table_footer_source_format` 為 True 且該表格版面有被調整**，僅在此處「記錄」該表格，實際的「表格最後一列說明格式化」延後到 Word COM AutoFit 與 fallback 之後的最後 post-process 才套用（見下方專節）。
 
-註記搬移、黑色雙線外框與表格基期/資料來源格式化的詳細規則見下方專節。
+註記搬移、黑色雙線外框與表格最後一列說明格式化的詳細規則見下方專節。
 
 ## 巢狀表格
 
@@ -177,9 +177,13 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 ## 表格最後一列說明格式化（獨立功能，預設關閉）
 
-由 `ProcessOptions.enable_table_footer_source_format` 控制（**預設 `False`**），GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆可啟用，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**，只格式化最後一列中符合條件的 cell。實作在 `table_format.apply_table_footer_source_format()`。
+由 `ProcessOptions.enable_table_footer_source_format` 控制（**預設 `False`**），GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆可啟用，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**，只格式化最後一列中符合條件的 cell。元素層級實作在 `table_format.apply_table_footer_source_format()`。
 
-啟用且**該表格版面有被調整**時（見「與既有跳過邏輯的關係」），依固定順序處理：
+**執行時機（重要）**：本功能是**最後一個表格格式化步驟**。XML pipeline（`table_pipeline.py`）只在處理該表格時把它「記錄」到 `summary.table_footer_source_format_records`，實際格式化延後到 `docx_processor.py` 於 **Word COM AutoFit 與 XML fallback 之後、final note alignment 之前**呼叫 `table_footer_postprocess.apply_table_footer_source_format_in_docx()` 才套用。
+
+原因：一般表格會被加入 Word COM AutoFit 清單，AutoFit 會重存整份文件；若 AutoFit 失敗，fallback `fallback_normal_table_autofit_in_docx()` 會重跑 `apply_table_format()`，把整表 run 改回 11pt、段落改回置中。若 footer 在 XML pipeline 階段就套用（Word COM 之前），一般表格的 footer 會被 AutoFit／fallback 覆蓋（特殊表格不進 Word COM 所以原本正常）。改成最後 post-process 後，一般表格與特殊表格都正確。post-process 只用記錄中的 `(part_name, table_index)` 精準重新定位該表格（與 fallback 相同的定位方式），不會無差別掃全部表格。
+
+啟用且**該表格版面有被調整**時（見「與既有跳過邏輯的關係」），post-process 對每張記錄到的表格依固定順序處理：
 
 1. 整張表格內所有 run 字級設為 11pt（`w:sz`/`w:szCs` 值 `22`）。
 2. 表格外圍框線（`top`/`bottom`/`left`/`right`）設為黑色雙線（`w:val="double"`、`w:color="000000"`、`w:sz="4"`、`w:space="0"`），內框 `insideH`/`insideV` 不動。
@@ -208,7 +212,8 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 ### table_log 欄位
 
 - `table_footer_note_source_format_enabled`：選項是否啟用。
-- `table_footer_note_source_format_applied`：該表是否實際套用。
+- `table_footer_note_source_format_should_apply`：XML pipeline 判定該表需要 footer 格式化（已記錄、待 post-process 套用）。
+- `table_footer_note_source_format_applied`：final post-process 是否實際套用（由 post-process 回寫）。
 - `outer_double_border_applied_by_footer_source_format`：是否套用外圍黑色雙線。
 - `first_row_single_cell_border_adjusted`：第一列單 cell 是否被調整。
 - `footer_note_cells_adjusted`：最後一列命中的 cell 數。

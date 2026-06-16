@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
@@ -725,6 +726,188 @@ class FooterNoteCellUnitTests(unittest.TestCase):
         self.assertTrue(is_nil(tc_border(note_cell, "left")))
         self.assertTrue(is_nil(tc_border(note_cell, "right")))
         self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
+
+
+def special_footer_table(note_text="註：說明"):
+    """A 4-column (special) table: title row + header + data + footer row."""
+    return make_table(
+        [
+            ["報表標題"],
+            ["項目", "金額", "比率", "備註"],
+            ["土地", "100", "50%", "ok"],
+            [note_text, "基期：100年", "資料來源：本所", ""],
+        ]
+    )
+
+
+def reset_document_tables_to_11pt_center(docx_path) -> None:
+    """Simulate Word COM / fallback clobbering: force every run to 11 pt and
+    every paragraph to centered in word/document.xml, then re-save the docx."""
+    with ZipFile(docx_path) as zin:
+        items = zin.infolist()
+        data = {item.filename: zin.read(item.filename) for item in items}
+
+    root = etree.fromstring(data["word/document.xml"])
+    for run in root.xpath(".//w:r", namespaces=NS):
+        rpr = run.find("w:rPr", NS)
+        if rpr is None:
+            rpr = etree.SubElement(run, qn("rPr"))
+        sz = rpr.find("w:sz", NS)
+        if sz is None:
+            sz = etree.SubElement(rpr, qn("sz"))
+        sz.set(qn("val"), "22")
+    for p in root.xpath(".//w:p", namespaces=NS):
+        ppr = p.find("w:pPr", NS)
+        if ppr is None:
+            ppr = etree.Element(qn("pPr"))
+            p.insert(0, ppr)
+        jc = ppr.find("w:jc", NS)
+        if jc is None:
+            jc = etree.SubElement(ppr, qn("jc"))
+        jc.set(qn("val"), "center")
+
+    data["word/document.xml"] = etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    with ZipFile(docx_path, "w", ZIP_DEFLATED) as zout:
+        for item in items:
+            zout.writestr(item, data[item.filename])
+
+
+class FooterFormatSpecialTableTests(unittest.TestCase):
+    """Special tables (column_count <= 4) must also go through the final footer
+    formatting, exactly like normal tables."""
+
+    def _doc(self, note_text="註：說明"):
+        return build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("一、特殊表格"),
+            special_footer_table(note_text),
+        )
+
+    def test_special_table_note_cell_is_10pt_left(self):
+        summary, root = run_fix(self._doc("註：說明"), footer_options())
+        tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+        self.assertEqual(summary.table_log_records[1]["table_type"], "special_table")
+        note_cell = cell_at(tbl, 3, 0)
+        self.assertEqual(cell_run_sizes(note_cell), ["20"])
+        self.assertEqual(cell_paragraph_alignments(note_cell), ["left"])
+        self.assertTrue(is_double_black(tc_border(note_cell, "top")))
+        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
+
+    def test_special_table_data_source_cell_is_10pt_right(self):
+        summary, root = run_fix(self._doc(), footer_options())
+        tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+        source_cell = cell_at(tbl, 3, 2)
+        self.assertEqual(cell_run_sizes(source_cell), ["20"])
+        self.assertEqual(cell_paragraph_alignments(source_cell), ["right"])
+        record = summary.table_log_records[1]
+        self.assertTrue(record["table_footer_note_source_format_applied"])
+        self.assertCountEqual(
+            record["footer_note_cell_matches"], ["note", "base_period", "source"]
+        )
+
+
+class FooterFormatWordComOrderTests(unittest.TestCase):
+    """The footer format must be the FINAL table step: it must survive both a
+    Word COM AutoFit success (which re-saves the doc) and the XML fallback
+    (which re-applies apply_table_format -> 11 pt + center)."""
+
+    def _doc(self, note_text="基期：民國100年"):
+        # The footer table is a 5-column normal table, so it is queued for Word
+        # COM AutoFit (global_table_index = 2).
+        return build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("一、報表"),
+            note_last_row_table(note_text),
+        )
+
+    def _assert_footer_cell_ok(self, root):
+        tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+        note_cell = cell_at(tbl, 3, 0)
+        # Must NOT be left at 11 pt / center.
+        self.assertEqual(cell_run_sizes(note_cell), ["20"])
+        self.assertEqual(cell_paragraph_alignments(note_cell), ["left"])
+        self.assertTrue(is_nil(tc_border(note_cell, "left")))
+        self.assertTrue(is_nil(tc_border(note_cell, "right")))
+        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(note_cell, "top")))
+        return tbl
+
+    def test_no_word_com_footer_applies(self):
+        summary, root = run_fix(self._doc("註：說明"), footer_options())
+        self._assert_footer_cell_ok(root)
+        self.assertTrue(summary.table_log_records[1]["table_footer_note_source_format_applied"])
+
+    def test_word_com_success_does_not_clobber_footer(self):
+        def fake_autofit(docx_path, records, stop=None):
+            # Word COM "succeeds" but its re-save reset fonts/alignment.
+            reset_document_tables_to_11pt_center(docx_path)
+            return (
+                ["WORD_COM_TABLE_AUTOFIT_APPLIED global_table_index=2 sequence=content_then_window"],
+                {2},
+                set(),
+            )
+
+        with patch(
+            "docx_fixer.docx_processor.apply_table_autofit_with_word_com",
+            side_effect=fake_autofit,
+        ) as autofit:
+            summary, root = run_fix(
+                self._doc("基期：民國100年"),
+                footer_options(normalize_with_word_com=True),
+            )
+
+        autofit.assert_called_once()
+        # Even though Word COM clobbered to 11 pt/center, the final footer pass
+        # restored 10 pt/left and the borders.
+        self._assert_footer_cell_ok(root)
+        record = summary.table_log_records[1]
+        self.assertTrue(record["table_footer_note_source_format_applied"])
+        self.assertEqual(summary.table_footer_source_format_tables, 1)
+
+    def test_word_com_failure_fallback_does_not_clobber_footer(self):
+        def fake_autofit(docx_path, records, stop=None):
+            # Word COM fails -> the real XML fallback (apply_table_format) runs
+            # and resets the table to 11 pt / centered before the footer pass.
+            failed = {int(r["global_table_index"]) for r in records}
+            return (
+                ["WORD_COM_TABLE_AUTOFIT_EXCEPTION type=Test message=boom"],
+                set(),
+                failed,
+            )
+
+        with patch(
+            "docx_fixer.docx_processor.apply_table_autofit_with_word_com",
+            side_effect=fake_autofit,
+        ):
+            summary, root = run_fix(
+                self._doc("資料來源：本所"),
+                footer_options(normalize_with_word_com=True),
+            )
+
+        # The fallback ran (apply_table_format), yet the footer survived.
+        tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+        source_cell = cell_at(tbl, 3, 0)
+        self.assertEqual(cell_run_sizes(source_cell), ["20"])
+        self.assertEqual(cell_paragraph_alignments(source_cell), ["right"])
+        self.assertTrue(is_double_black(tc_border(source_cell, "top")))
+        record = summary.table_log_records[1]
+        self.assertTrue(record["table_footer_note_source_format_applied"])
+        self.assertTrue(record["word_com_autofit_fallback_applied"])
+
+    def test_table_log_marks_should_apply_and_final_applied(self):
+        summary, _ = run_fix(self._doc("註：說明"), footer_options())
+        record = summary.table_log_records[1]
+        self.assertTrue(record["table_footer_note_source_format_enabled"])
+        self.assertTrue(record["table_footer_note_source_format_should_apply"])
+        self.assertTrue(record["table_footer_note_source_format_applied"])
+        # The reapply ran in the final post-process.
+        logs = "\n".join(summary.table_footer_source_format_logs)
+        self.assertIn("FOOTER_SOURCE_FORMAT_REAPPLY_APPLIED", logs)
+        self.assertIn("FOOTER_SOURCE_FORMAT_REAPPLY_DONE applied=1", logs)
 
 
 class FooterNotePipelineTests(unittest.TestCase):

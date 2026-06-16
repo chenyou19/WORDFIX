@@ -42,6 +42,7 @@ from .protected_region import (
 from .stop_controller import StopController
 from .style_resolver import build_style_font_size_lookup
 from .table_fallback import fallback_normal_table_autofit_in_docx
+from .table_footer_postprocess import apply_table_footer_source_format_in_docx
 from .table_pipeline import process_tables_in_part
 from .table_word_com import WORD_COM_AUTOFIT_SEQUENCE, apply_table_autofit_with_word_com
 from . import word_com_indent
@@ -382,6 +383,40 @@ def _mark_word_com_table_autofit_fallback(
         else:
             record["word_com_autofit_fallback_applied"] = False
             record["word_com_autofit_status"] = "failed"
+
+
+def _mark_table_footer_source_format_applied(
+    summary: ProcessSummary,
+    footer_results: dict[int, dict[str, object]],
+) -> None:
+    if not footer_results:
+        return
+
+    for record in summary.table_log_records:
+        try:
+            global_table_index = int(record.get("global_table_index", 0))
+        except (TypeError, ValueError):
+            continue
+        result = footer_results.get(global_table_index)
+        if result is None:
+            continue
+        record["table_footer_note_source_format_applied"] = True
+        record["table_footer_note_source_format_skipped_reason"] = "none"
+        record["outer_double_border_applied_by_footer_source_format"] = bool(
+            result.get("outer_double_border_applied", False)
+        )
+        record["first_row_single_cell_border_adjusted"] = bool(
+            result.get("first_row_single_cell_border_adjusted", False)
+        )
+        record["footer_note_cells_adjusted"] = int(
+            result.get("footer_note_cells_adjusted", 0)
+        )
+        record["footer_note_cell_matches"] = list(
+            result.get("footer_note_cell_matches", [])
+        )
+        record["footer_note_cell_debug"] = list(result.get("footer_note_cell_debug", []))
+
+    summary.table_footer_source_format_tables = len(footer_results)
 
 
 def _note_debug_log_path(output_docx: Path) -> Path:
@@ -812,6 +847,30 @@ def fix_docx_fast(
             )
     else:
         summary.word_com_body_indent_logs.append("WORD_COM_BODY_INDENT_FIX_SKIPPED reason=disabled")
+
+    # 「表格最後一列說明格式化」 is the final table format step: it runs after Word
+    # COM AutoFit and the XML fallback (both of which can reset table fonts /
+    # alignment) so the last-row footer cells keep 10 pt + left/right alignment
+    # + the nil/double borders. Only the tables recorded during the XML pipeline
+    # are re-located and formatted, so unrelated tables are never touched.
+    if options.enable_table_footer_source_format and summary.table_footer_source_format_records:
+        if progress_callback:
+            progress_callback(percent=99, message="reapplying table footer formatting")
+        footer_results = apply_table_footer_source_format_in_docx(
+            output_docx,
+            summary.table_footer_source_format_records,
+            logs=summary.table_footer_source_format_logs,
+            stop=stop,
+        )
+        _mark_table_footer_source_format_applied(summary, footer_results)
+    elif options.enable_table_footer_source_format:
+        summary.table_footer_source_format_logs.append(
+            "FOOTER_SOURCE_FORMAT_REAPPLY_SKIPPED reason=no_eligible_tables"
+        )
+    else:
+        summary.table_footer_source_format_logs.append(
+            "FOOTER_SOURCE_FORMAT_REAPPLY_SKIPPED reason=disabled"
+        )
 
     if progress_callback:
         progress_callback(percent=99, message="word/numbering.xml: final suffix cleanup")

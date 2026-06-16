@@ -367,6 +367,15 @@ def format_word_com_table_autofit_log_lines(summary: ProcessSummary) -> list[str
     return lines
 
 
+def format_table_footer_source_format_log_lines(summary: ProcessSummary) -> list[str]:
+    lines = ["Table footer (最後一列說明) formatting (final post-process):"]
+    if not summary.table_footer_source_format_logs:
+        lines.append("No table footer formatting logs.")
+        return lines
+    lines.extend(summary.table_footer_source_format_logs)
+    return lines
+
+
 def _bool_text(value: object) -> str:
     return "true" if bool(value) else "false"
 
@@ -442,6 +451,7 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"double_border_enabled: {_bool_text(record.get('double_border_enabled', False))}",
                 f"double_border_applied: {_bool_text(record.get('double_border_applied', False))}",
                 f"table_footer_note_source_format_enabled: {_bool_text(record.get('table_footer_note_source_format_enabled', False))}",
+                f"table_footer_note_source_format_should_apply: {_bool_text(record.get('table_footer_note_source_format_should_apply', False))}",
                 f"table_footer_note_source_format_applied: {_bool_text(record.get('table_footer_note_source_format_applied', False))}",
                 f"outer_double_border_applied_by_footer_source_format: {_bool_text(record.get('outer_double_border_applied_by_footer_source_format', False))}",
                 f"first_row_single_cell_border_adjusted: {_bool_text(record.get('first_row_single_cell_border_adjusted', False))}",
@@ -547,6 +557,8 @@ def write_process_log(output_docx: str | Path, summary: ProcessSummary) -> Path:
         *format_body_indent_debug_log_lines(summary),
         "",
         *format_word_com_table_autofit_log_lines(summary),
+        "",
+        *format_table_footer_source_format_log_lines(summary),
         "",
         *format_word_com_body_indent_log_lines(summary),
         "",

@@ -12,7 +12,6 @@ from .protected_region import (
 )
 from .table_format import (
     apply_double_black_table_borders,
-    apply_table_footer_source_format,
     clear_matching_special_colors,
     process_table,
     table_cell_count,
@@ -83,19 +82,24 @@ def _section_three_fields(
 def _footer_source_log_fields(
     *,
     enabled: bool,
+    should_apply: bool,
     applied: bool,
-    result: dict[str, object] | None,
     skipped_reason: str,
 ) -> dict[str, object]:
-    if applied:
+    # 「表格最後一列說明格式化」 is applied as the *final* table step (after Word
+    # COM AutoFit and the XML fallback), so at table-pipeline time the record is
+    # only marked as enabled / should_apply. The post-process pass flips
+    # ``applied`` to True and fills the per-cell detail fields below.
+    if applied or should_apply:
         reason = "none"
     elif not enabled:
         reason = "feature_disabled"
     else:
         reason = skipped_reason or "not_applied"
 
-    fields = {
+    return {
         "table_footer_note_source_format_enabled": enabled,
+        "table_footer_note_source_format_should_apply": should_apply,
         "table_footer_note_source_format_applied": applied,
         "outer_double_border_applied_by_footer_source_format": False,
         "first_row_single_cell_border_adjusted": False,
@@ -104,21 +108,6 @@ def _footer_source_log_fields(
         "footer_note_cell_debug": [],
         "table_footer_note_source_format_skipped_reason": reason,
     }
-    if result is not None:
-        fields["outer_double_border_applied_by_footer_source_format"] = bool(
-            result.get("outer_double_border_applied", False)
-        )
-        fields["first_row_single_cell_border_adjusted"] = bool(
-            result.get("first_row_single_cell_border_adjusted", False)
-        )
-        fields["footer_note_cells_adjusted"] = int(
-            result.get("footer_note_cells_adjusted", 0)
-        )
-        fields["footer_note_cell_matches"] = list(
-            result.get("footer_note_cell_matches", [])
-        )
-        fields["footer_note_cell_debug"] = list(result.get("footer_note_cell_debug", []))
-    return fields
 
 
 def _normalize_table_log_text(text: str, limit: int = 100) -> str:
@@ -197,6 +186,7 @@ def build_table_log_record(
     double_border_enabled: bool = False,
     double_border_applied: bool = False,
     table_footer_note_source_format_enabled: bool = False,
+    table_footer_note_source_format_should_apply: bool = False,
     table_footer_note_source_format_applied: bool = False,
     outer_double_border_applied_by_footer_source_format: bool = False,
     first_row_single_cell_border_adjusted: bool = False,
@@ -264,6 +254,7 @@ def build_table_log_record(
         "double_border_enabled": double_border_enabled,
         "double_border_applied": double_border_applied,
         "table_footer_note_source_format_enabled": table_footer_note_source_format_enabled,
+        "table_footer_note_source_format_should_apply": table_footer_note_source_format_should_apply,
         "table_footer_note_source_format_applied": table_footer_note_source_format_applied,
         "outer_double_border_applied_by_footer_source_format": (
             outer_double_border_applied_by_footer_source_format
@@ -509,14 +500,14 @@ def process_tables_in_part(
 
     def footer_fields(
         *,
+        should_apply: bool = False,
         applied: bool = False,
-        result: dict[str, object] | None = None,
         skipped_reason: str = "none",
     ) -> dict[str, object]:
         return _footer_source_log_fields(
             enabled=footer_source_enabled,
+            should_apply=should_apply,
             applied=applied,
-            result=result,
             skipped_reason=skipped_reason,
         )
 
@@ -799,22 +790,20 @@ def process_tables_in_part(
             apply_double_black_table_borders(tbl)
             double_border_applied = True
             summary.double_border_tables += 1
-        # 「表格基期/資料來源格式化」 is an independent, opt-in layout post-step.
+        # 「表格最後一列說明格式化」 is an independent, opt-in layout post-step.
         # It is classified as a table *layout* format, so it runs only when this
         # table's layout is being adjusted (effective_fix_table_layout). Tables
         # protected from layout changes (參、 layout skip / full section three
-        # protection) therefore keep their original fonts and borders, while a
-        # color-only skip does not block it. It runs after process_table so the
-        # last-row left/right alignment overrides the centered table content,
-        # and it never depends on the note-move or double-border options.
-        footer_source_applied = False
-        footer_source_result = None
+        # protection) keep their original fonts and borders, while a color-only
+        # skip does not block it. The actual formatting is deferred to a final
+        # post-process (see table_footer_postprocess) that runs AFTER Word COM
+        # AutoFit and the XML fallback, so neither can clobber the footer cells.
+        # Here we only record which tables should be formatted.
+        footer_source_should_apply = bool(
+            footer_source_enabled and effective_fix_table_layout
+        )
         footer_source_skip_reason = "none"
-        if footer_source_enabled and effective_fix_table_layout:
-            footer_source_result = apply_table_footer_source_format(tbl, stop=stop)
-            footer_source_applied = True
-            summary.table_footer_source_format_tables += 1
-        elif footer_source_enabled:
+        if footer_source_enabled and not footer_source_should_apply:
             footer_source_skip_reason = "layout not adjusted for this table"
         layout_fixed = bool(effective_options.fix_table_layout)
         color_fixed = bool(effective_options.fix_color)
@@ -862,6 +851,18 @@ def process_tables_in_part(
                     "column_count": column_count,
                 }
             )
+        # Defer the footer formatting to the final post-process. Record the
+        # table so only these tables are re-located later (no blind rescan).
+        if footer_source_should_apply:
+            summary.table_footer_source_format_records.append(
+                {
+                    "part_name": part_name,
+                    "table_index": table_index,
+                    "global_table_index": global_table_index,
+                    "table_type": table_type,
+                    "effective_fix_table_layout": effective_fix_table_layout,
+                }
+            )
         summary.changed_to_gray += changed_to_gray
         summary.cleared_colors += cleared_colors
         if special_layout:
@@ -902,8 +903,7 @@ def process_tables_in_part(
                     skipped_by_protection=False,
                 ),
                 **footer_fields(
-                    applied=footer_source_applied,
-                    result=footer_source_result,
+                    should_apply=footer_source_should_apply,
                     skipped_reason=footer_source_skip_reason,
                 ),
                 **common_log_fields,

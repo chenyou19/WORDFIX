@@ -28,6 +28,7 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - numbering XML debug。
 - Body indent debug。
 - Word COM table AutoFit log。
+- 表格最後一列說明格式化 final post-process log（`FOOTER_SOURCE_FORMAT_REAPPLY_*`：在 Word COM／fallback 之後重新套用 footer 格式的紀錄）。
 - Word COM body indent fix log。
 - 段落變更紀錄。
 
@@ -55,7 +56,8 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `double_border_enabled`：隱藏選項 `enable_double_black_table_borders` 是否啟用（預設 `false`）。
 - `double_border_applied`：該表是否實際套用黑色雙線外框（隱藏選項預設關閉時恆為 `false`）。
 - `table_footer_note_source_format_enabled`：選項 `enable_table_footer_source_format` 是否啟用（預設 `false`）。
-- `table_footer_note_source_format_applied`：該表是否實際套用「表格最後一列說明格式化」。
+- `table_footer_note_source_format_should_apply`：XML pipeline 判定該表需要 footer 格式化（已記錄、待最後 post-process 套用）。
+- `table_footer_note_source_format_applied`：最後 post-process 是否實際套用「表格最後一列說明格式化」（在 Word COM AutoFit／fallback 之後執行）。
 - `outer_double_border_applied_by_footer_source_format`：本功能是否套用外圍黑色雙線。
 - `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整。
 - `footer_note_cells_adjusted`：最後一列命中「基期：」「資料來源：」或註記（`^註(?:\d+)?[：:]`）的 cell 數。

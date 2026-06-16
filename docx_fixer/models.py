@@ -96,6 +96,8 @@ class ProcessSummary:
     body_indent_debug_logs: list[str] = field(default_factory=list)
     body_indent_records: list[dict[str, object]] = field(default_factory=list)
     table_log_records: list[dict[str, object]] = field(default_factory=list)
+    table_footer_source_format_records: list[dict[str, object]] = field(default_factory=list)
+    table_footer_source_format_logs: list[str] = field(default_factory=list)
     word_com_table_autofit_records: list[dict[str, object]] = field(default_factory=list)
     word_com_table_autofit_logs: list[str] = field(default_factory=list)
     heading_suffix_before_records: list[dict[str, object]] = field(default_factory=list)
