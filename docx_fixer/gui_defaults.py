@@ -8,13 +8,17 @@ from .indent_settings import get_indent_settings_path
 
 GUI_DEFAULTS_KEY = "gui_defaults"
 
-# The legacy table-note-move feature ("將表格內註記儲存格移至表格下方") and its
-# companion ("參、不要表格註記搬移") are hidden from the GUI and force-disabled.
-# Their saved values are always overridden to False, so even an old settings
-# file that stored True will load (and re-save) as False.
+# Options that are hidden from the GUI and force-disabled. Their saved values
+# are always overridden to False, so even an old settings file that stored True
+# will load (and re-save) as False:
+#   - move_table_notes_below / skip_chapter_three_table_notes: the legacy
+#     table-note-move feature.
+#   - write_note_debug_log: developer-only diagnostic that emits the temporary
+#     *_note_debug_log.txt file; must never be on for normal runs.
 FORCED_FALSE_GUI_DEFAULTS = (
     "move_table_notes_below",
     "skip_chapter_three_table_notes",
+    "write_note_debug_log",
 )
 
 
@@ -36,11 +40,12 @@ def built_in_gui_defaults() -> dict[str, bool]:
         "skip_nested_tables": True,
         "skip_chapter_three_table_layout": True,
         "skip_chapter_three_table_color": True,
-        "skip_chapter_three_indents": False,
+        "skip_chapter_three_indents": True,
         # Hidden + force-disabled (see FORCED_FALSE_GUI_DEFAULTS).
         "move_table_notes_below": False,
         "skip_chapter_three_table_notes": False,
-        "enable_table_footer_source_format": False,
+        "write_note_debug_log": False,
+        "enable_table_footer_source_format": True,
         "skip_special_color_tables": False,
         "clear_special_colors_after_skip": False,
     }

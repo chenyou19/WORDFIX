@@ -95,6 +95,7 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         force_note_paragraph_left_alignment=args.force_note_paragraph_left_alignment,
         enable_double_black_table_borders=args.enable_double_black_table_borders,
         enable_table_footer_source_format=args.enable_table_footer_source_format,
+        write_note_debug_log=args.write_note_debug_log,
         skip_nested_tables=args.skip_nested_tables,
         skip_log_output=args.skip_log_output,
         **_table_color_options_from_args(args),
@@ -348,6 +349,19 @@ def parse_args(argv: list[str]):
         "--no-enable-double-black-table-borders",
         action="store_false",
         dest="enable_double_black_table_borders",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--write-note-debug-log",
+        action="store_true",
+        default=False,
+        dest="write_note_debug_log",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-write-note-debug-log",
+        action="store_false",
+        dest="write_note_debug_log",
         help=argparse.SUPPRESS,
     )
     parser.add_argument(

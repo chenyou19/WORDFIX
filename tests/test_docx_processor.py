@@ -3396,6 +3396,9 @@ class DocxProcessorTests(unittest.TestCase):
                         fix_paragraph=True,
                         normalize_with_word_com=True,
                         force_note_paragraph_left_alignment=True,
+                        # Developer-only flag: opt in so this test can assert the
+                        # note debug log content. It is False by default.
+                        write_note_debug_log=True,
                     ),
                 )
 
@@ -3468,6 +3471,128 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIn("decision=SKIPPED_TABLE", note_debug_log)
             self.assertIn("final_paragraph_jc=center", note_debug_log)
             self.assertIn("WARNING: final paragraph alignment is center", note_debug_log)
+
+    def test_note_debug_log_is_not_written_by_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_note_alignment_document_xml(),
+                styles_xml=make_note_alignment_styles_xml(),
+                numbering_xml=make_note_alignment_numbering_xml(),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            # The default is False, so no *_note_debug_log.txt is produced.
+            self.assertFalse(ProcessOptions(True, True, True).write_note_debug_log)
+            note_debug_log_path = output_docx.with_name("output_note_debug_log.txt")
+            self.assertFalse(note_debug_log_path.exists())
+            self.assertEqual(
+                list(Path(temp_dir).glob("*_note_debug_log.txt")),
+                [],
+            )
+            joined = "\n".join(summary.paragraph_logs)
+            self.assertIn("NOTE_DEBUG_LOG_SKIPPED reason=disabled", joined)
+            self.assertNotIn("NOTE_DEBUG_LOG_WRITTEN", joined)
+
+    def test_simulated_gui_temp_output_does_not_create_tmp_note_debug_log(self):
+        # Reproduces the GUI path: fix_docx_fast runs on the *.__tmp__.docx temp
+        # output, which is what produced the __tmp___note_debug_log.txt file.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            final_output = Path(temp_dir) / "output.docx"
+            temp_output = final_output.with_name(
+                f"{final_output.stem}.__tmp__{final_output.suffix}"
+            )
+            make_docx(input_docx, make_document_xml())
+
+            fix_docx_fast(
+                input_docx,
+                temp_output,
+                ProcessOptions(
+                    fix_table_layout=True,
+                    fix_color=True,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            self.assertEqual(
+                list(Path(temp_dir).glob("*__tmp___note_debug_log.txt")),
+                [],
+            )
+            self.assertEqual(list(Path(temp_dir).glob("*_note_debug_log.txt")), [])
+
+    def test_note_debug_log_written_only_when_flag_enabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(input_docx, make_document_xml())
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                    write_note_debug_log=True,
+                ),
+            )
+
+            note_debug_log_path = output_docx.with_name("output_note_debug_log.txt")
+            self.assertTrue(note_debug_log_path.exists())
+            joined = "\n".join(summary.paragraph_logs)
+            self.assertIn("NOTE_DEBUG_LOG_WRITTEN", joined)
+            self.assertNotIn("NOTE_DEBUG_LOG_SKIPPED", joined)
+
+    def test_official_logs_still_written_with_note_debug_disabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(input_docx, make_document_xml())
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=True,
+                    fix_color=True,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                    skip_log_output=False,
+                ),
+            )
+
+            from docx_fixer.process_log import (
+                write_heading_suffix_log_file,
+                write_process_log,
+                write_table_log_file,
+            )
+
+            process_log_path = write_process_log(output_docx, summary)
+            table_log_path = write_table_log_file(output_docx, summary)
+            heading_log_path = write_heading_suffix_log_file(output_docx, summary)
+
+            # Official logs are unaffected by the disabled note debug log.
+            self.assertTrue(process_log_path.exists())
+            self.assertTrue(table_log_path.exists())
+            self.assertTrue(heading_log_path.exists())
+            self.assertFalse(
+                output_docx.with_name("output_note_debug_log.txt").exists()
+            )
 
 
 if __name__ == "__main__":

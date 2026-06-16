@@ -27,6 +27,10 @@ class ProcessOptions:
     force_note_paragraph_left_alignment: bool = False
     enable_double_black_table_borders: bool = False
     enable_table_footer_source_format: bool = False
+    # Developer-only diagnostic: when True, fix_docx_fast writes a
+    # *_note_debug_log.txt next to the output. Default False so normal GUI/CLI
+    # runs never produce the (temp-named) __tmp___note_debug_log.txt file.
+    write_note_debug_log: bool = False
     table_keep_colors: tuple[str, ...] = ("D9D9D9", "F2F2F2")
     table_gray_colors: tuple[str, ...] = ("BFBFBF", "C0C0C0", "A6A6A6", "808080")
     table_gray_target: str = "D9D9D9"

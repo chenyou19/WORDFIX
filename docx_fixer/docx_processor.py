@@ -766,12 +766,13 @@ def fix_docx_fast(
 
             zout.writestr(item, data)
 
-    _write_note_debug_log_safely(
-        output_docx,
-        summary,
-        "after_xml_pipeline_before_word_com",
-        append=False,
-    )
+    if options.write_note_debug_log:
+        _write_note_debug_log_safely(
+            output_docx,
+            summary,
+            "after_xml_pipeline_before_word_com",
+            append=False,
+        )
 
     if options.normalize_with_word_com:
         table_autofit_records = list(summary.word_com_table_autofit_records)
@@ -893,12 +894,15 @@ def fix_docx_fast(
         summary.paragraph_logs.append(
             "FINAL_NOTE_ALIGNMENT_FIX_SKIPPED reason=disabled"
         )
-    _write_note_debug_log_safely(
-        output_docx,
-        summary,
-        "after_final_output",
-        append=True,
-    )
+    if options.write_note_debug_log:
+        _write_note_debug_log_safely(
+            output_docx,
+            summary,
+            "after_final_output",
+            append=True,
+        )
+    else:
+        summary.paragraph_logs.append("NOTE_DEBUG_LOG_SKIPPED reason=disabled")
 
     try:
         summary.heading_suffix_after_records = collect_heading_suffix_records_from_docx(output_docx)

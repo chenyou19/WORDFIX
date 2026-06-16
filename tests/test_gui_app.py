@@ -130,6 +130,16 @@ class GuiAppTests(unittest.TestCase):
         self.assertIn("enable_table_footer_source_format", built_in_gui_defaults())
         self.assertFalse(built_in_gui_defaults()["enable_table_footer_source_format"])
 
+    def test_note_debug_log_is_not_exposed_or_enabled_by_gui(self):
+        gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
+        # The developer note-debug log flag has no GUI variable/checkbox, and the
+        # GUI never passes it to ProcessOptions, so it stays at its False default.
+        self.assertNotIn("write_note_debug_log", gui_source)
+
+        # It is a force-disabled GUI default that defaults to off.
+        self.assertIn("write_note_debug_log", built_in_gui_defaults())
+        self.assertFalse(built_in_gui_defaults()["write_note_debug_log"])
+
     def test_double_black_border_option_is_hidden_from_gui(self):
         gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
         # The black double-line border is a hidden option: no GUI checkbox,

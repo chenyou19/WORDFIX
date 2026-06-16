@@ -173,6 +173,28 @@ class GuiDefaultsTests(unittest.TestCase):
         self.assertIn("enable_table_footer_source_format", normalized)
         self.assertFalse(normalized["enable_table_footer_source_format"])
 
+    def test_write_note_debug_log_default_is_false(self):
+        self.assertFalse(built_in_gui_defaults()["write_note_debug_log"])
+
+    def test_old_settings_with_write_note_debug_log_true_are_forced_false(self):
+        normalized = normalize_gui_defaults({"write_note_debug_log": True})
+        self.assertFalse(normalized["write_note_debug_log"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "indent_defaults.json"
+            path.write_text(
+                json.dumps(
+                    {GUI_DEFAULTS_KEY: {**built_in_gui_defaults(), "write_note_debug_log": True}}
+                ),
+                encoding="utf-8",
+            )
+            loaded = load_saved_gui_defaults(path)
+            save_gui_defaults({"write_note_debug_log": True}, path)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertFalse(loaded["write_note_debug_log"])
+        self.assertFalse(raw[GUI_DEFAULTS_KEY]["write_note_debug_log"])
+
     def test_built_in_defaults_skip_log_output(self):
         self.assertTrue(built_in_gui_defaults()["skip_log_output"])
 

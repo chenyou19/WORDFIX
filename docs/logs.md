@@ -17,6 +17,17 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `table_log`：`output_table_log.txt`
 - `heading_suffix_log`：`output_heading_suffix_log.txt`
 
+這三個是正式 log，由 `skip_log_output` 控制（GUI 預設不輸出、CLI 預設輸出）。
+
+## 註記 debug log（開發用，預設關閉）
+
+`*_note_debug_log.txt`（GUI 在暫存檔上處理時會變成 `*.__tmp___note_debug_log.txt`）是 `docx_processor._write_note_debug_log_safely()` 產生的**開發診斷 log**，由 `ProcessOptions.write_note_debug_log` 控制，**預設 `False`**：
+
+- 一般 GUI／CLI 處理 docx **不會**再產生此檔；段落紀錄會出現 `NOTE_DEBUG_LOG_SKIPPED reason=disabled`。
+- GUI 沒有此勾選項；`built_in_gui_defaults()` 為 `False`，且列入 `FORCED_FALSE_GUI_DEFAULTS`，舊設定檔即使存成 `True` 也會在載入／重存時被強制覆蓋為 `False`。
+- CLI 提供隱藏開發旗標 `--write-note-debug-log`（help 以 `argparse.SUPPRESS` 隱藏），預設 `False`；只有明確指定時才輸出，輸出時段落紀錄會出現 `NOTE_DEBUG_LOG_WRITTEN`。
+- 此開關與正式 log（process／table／heading suffix）完全獨立，關閉它不影響任何表格、註記、基期/資料來源或段落縮排處理。
+
 ## process_log
 
 `process_log` 記錄整體摘要與段落處理細節，包含：

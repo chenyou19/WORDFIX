@@ -147,6 +147,32 @@ class CliOptionTests(unittest.TestCase):
                 parse_args(["--help"])
         self.assertIn("enable-table-footer-source-format", stdout.getvalue())
 
+    def test_write_note_debug_log_defaults_false_and_is_hidden(self):
+        defaults = _build_process_options(parse_args(["input.docx", "output.docx"]))
+        self.assertFalse(defaults.write_note_debug_log)
+
+        enabled = _build_process_options(
+            parse_args(["input.docx", "output.docx", "--write-note-debug-log"])
+        )
+        self.assertTrue(enabled.write_note_debug_log)
+
+        disabled = _build_process_options(
+            parse_args([
+                "input.docx",
+                "output.docx",
+                "--write-note-debug-log",
+                "--no-write-note-debug-log",
+            ])
+        )
+        self.assertFalse(disabled.write_note_debug_log)
+
+        # The developer flag is suppressed from help output.
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaises(SystemExit):
+                parse_args(["--help"])
+        self.assertNotIn("write-note-debug-log", stdout.getvalue())
+
     def test_new_body_indent_arguments_are_supported(self):
         args = parse_args([
             "input.docx",
