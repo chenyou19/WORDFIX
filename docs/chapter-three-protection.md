@@ -38,6 +38,7 @@
 - `skip_chapter_three_table_layout`
 - `skip_chapter_three_table_color`
 - `skip_chapter_three_indents`
+- `skip_chapter_three_numbering_suffix_cleanup`
 
 表格版面保護只會跳過該章內表格版面處理；若底色選項允許，底色仍可處理。
 
@@ -54,6 +55,20 @@
 - styles/numbering 中被判定為參章使用的縮排定義清理
 
 真正標題的 outline level 仍會恢復。文件不應把這個選項描述成整章完全什麼都不動。
+
+## 「參、不要清理編號後綴 tab/space」
+
+`skip_chapter_three_numbering_suffix_cleanup`（GUI：「參、不要清理編號後綴 tab/space」，**預設勾選**）只控制 `word/numbering.xml` 的後綴清理，不影響表格版面、表格顏色或段落縮排。啟用時，參章使用到的 numbering definition 會被加入 numbering 後綴清理的排除集合，於兩個階段都受保護：
+
+- `apply_numbering_outline_format()`（`docx_fixer/numbering.py`）：**先判斷 `should_skip_numbering()` 再 sanitize**。被排除的 level（TOC 或參章）完全不呼叫 `sanitize_numbering_level_suffix_tabs_and_text()`，因此其 `w:suff`、`w:pPr/w:tabs`、`w:lvlText` 結尾空白（含半形/全形空白、tab）都保留。
+- final `force_clean_numbering_suffix_tabs_in_docx()`：排除集合包含參章定義；同時把參章定義從 body-heading「重新納入」集合移除，避免被當成一般本文標題又清乾淨。
+
+`docx_processor.py` 以新選項決定排除集合：
+
+- 啟用：`numbering_suffix_excluded_*` = TOC ∪ 參章；`final_included_*` = body-heading − 參章。並寫 `CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true collected_numIds=... collected_abstractIds=...`。
+- 停用：`numbering_suffix_excluded_*` 只含 TOC；`final_included_*` = 完整 body-heading（原本行為）。寫 `CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=false`。
+
+此選項只加入 numbering 後綴排除，不會單獨觸發表格版面/顏色或段落縮排保護（那些仍由各自的 `skip_chapter_three_*` 選項決定）；numbering.xml 的字元縮排清理（char-indent）仍使用 TOC-only 排除，不受此選項影響。注意：章節自動編號常與其他章共用同一個 numbering definition，啟用此選項會連同共用該定義的其他章節編號一併保留原樣（這是「保留整個編號定義格式」的預期結果）。
 
 ## 「參、不要表格註記搬移」
 

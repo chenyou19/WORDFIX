@@ -130,6 +130,24 @@ class GuiAppTests(unittest.TestCase):
         self.assertIn("enable_table_footer_source_format", built_in_gui_defaults())
         self.assertFalse(built_in_gui_defaults()["enable_table_footer_source_format"])
 
+    def test_chapter_three_numbering_suffix_cleanup_option_is_wired_in_gui(self):
+        gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
+
+        # The checkbox is shown next to the other 參 protections and wired to a
+        # variable that is passed straight into ProcessOptions.
+        self.assertIn("參、不要清理編號後綴 tab/space", gui_source)
+        self.assertIn("skip_chapter_three_numbering_suffix_cleanup_var", gui_source)
+        self.assertIn(
+            "skip_chapter_three_numbering_suffix_cleanup=self.skip_chapter_three_numbering_suffix_cleanup_var.get()",
+            gui_source,
+        )
+
+        # It is a saved GUI default and defaults to checked (protect).
+        self.assertIn("skip_chapter_three_numbering_suffix_cleanup", built_in_gui_defaults())
+        self.assertTrue(
+            built_in_gui_defaults()["skip_chapter_three_numbering_suffix_cleanup"]
+        )
+
     def test_note_debug_log_is_not_exposed_or_enabled_by_gui(self):
         gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
         # The developer note-debug log flag has no GUI variable/checkbox, and the

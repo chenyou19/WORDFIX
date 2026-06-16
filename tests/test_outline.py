@@ -2359,16 +2359,21 @@ class OutlineFixTests(unittest.TestCase):
             for log in logs
         ))
 
-    def test_numbering_xml_cleans_suffix_tabs_for_excluded_level_without_changing_indent(self):
+    def test_numbering_xml_does_not_sanitize_excluded_level(self):
+        # An excluded numbering level (TOC or chapter 參 protection) must be
+        # decided as skipped BEFORE sanitizing, so its suffix / tab stops /
+        # lvlText trailing whitespace are all left untouched.
         root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
         abstract = etree.SubElement(root, qn("abstractNum"))
         abstract.set(qn("abstractNumId"), "99")
         lvl = etree.SubElement(abstract, qn("lvl"))
         lvl.set(qn("ilvl"), "0")
+        suff = etree.SubElement(lvl, qn("suff"))
+        suff.set(qn("val"), "tab")
         num_fmt = etree.SubElement(lvl, qn("numFmt"))
         num_fmt.set(qn("val"), "decimal")
         lvl_text = etree.SubElement(lvl, qn("lvlText"))
-        lvl_text.set(qn("val"), "%1.")
+        lvl_text.set(qn("val"), "%1.　")  # trailing ideographic space
         pPr = etree.SubElement(lvl, qn("pPr"))
         tabs = etree.SubElement(pPr, qn("tabs"))
         tab = etree.SubElement(tabs, qn("tab"))
@@ -2383,16 +2388,20 @@ class OutlineFixTests(unittest.TestCase):
         abstract_ref = etree.SubElement(num, qn("abstractNumId"))
         abstract_ref.set(qn("val"), "99")
 
+        original_xml = etree.tostring(root)
         updated = apply_numbering_outline_format(
-            etree.tostring(root),
+            original_xml,
             excluded_abstract_ids={"99"},
         )
         updated_root = etree.fromstring(updated)
         updated_lvl = updated_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]
         updated_ind = updated_lvl.find("./w:pPr/w:ind", NS)
 
-        self.assertEqual(updated_lvl.find("./w:suff", NS).get(qn("val")), "nothing")
-        self.assertIsNone(updated_lvl.find("./w:pPr/w:tabs", NS))
+        # Suffix / tabs / lvlText trailing whitespace are preserved (not sanitized).
+        self.assertEqual(updated_lvl.find("./w:suff", NS).get(qn("val")), "tab")
+        self.assertIsNotNone(updated_lvl.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(updated_lvl.find("./w:lvlText", NS).get(qn("val")), "%1.　")
+        # Indent is also untouched.
         self.assertEqual(updated_ind.get(qn("left")), "2279")
         self.assertEqual(updated_ind.get(qn("hanging")), "420")
 

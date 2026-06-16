@@ -142,6 +142,9 @@ class DocxFixerApp:
             value=gui_defaults["skip_chapter_three_table_color"]
         )
         self.skip_chapter_three_indents_var = tk.BooleanVar(value=gui_defaults["skip_chapter_three_indents"])
+        self.skip_chapter_three_numbering_suffix_cleanup_var = tk.BooleanVar(
+            value=gui_defaults["skip_chapter_three_numbering_suffix_cleanup"]
+        )
         # The legacy table-note-move options (move_table_notes_below and
         # skip_chapter_three_table_notes) are hidden and force-disabled: no GUI
         # variable, no checkbox, always passed to the core flow as False.
@@ -302,12 +305,18 @@ class DocxFixerApp:
             variable=self.skip_chapter_three_indents_var,
         ).grid(row=4, column=0, pady=4, sticky="w")
 
+        ttk.Checkbutton(
+            advanced_option_frame,
+            text="參、不要清理編號後綴 tab/space",
+            variable=self.skip_chapter_three_numbering_suffix_cleanup_var,
+        ).grid(row=5, column=0, pady=4, sticky="w")
+
         # Independent table feature (formats 基期：/資料來源：/註記 last-row cells).
         ttk.Checkbutton(
             advanced_option_frame,
             text="表格最後一列說明格式化",
             variable=self.enable_table_footer_source_format_var,
-        ).grid(row=5, column=0, pady=4, sticky="w")
+        ).grid(row=6, column=0, pady=4, sticky="w")
 
         defaults_button_frame = ttk.Frame(option_frame)
         defaults_button_frame.grid(row=3, column=0, columnspan=2, padx=(12, 16), pady=(0, 10), sticky="w")
@@ -654,6 +663,7 @@ class DocxFixerApp:
             "skip_chapter_three_table_layout": self.skip_chapter_three_table_layout_var.get(),
             "skip_chapter_three_table_color": self.skip_chapter_three_table_color_var.get(),
             "skip_chapter_three_indents": self.skip_chapter_three_indents_var.get(),
+            "skip_chapter_three_numbering_suffix_cleanup": self.skip_chapter_three_numbering_suffix_cleanup_var.get(),
             # Hidden + force-disabled; never saved as True.
             "move_table_notes_below": False,
             "skip_chapter_three_table_notes": False,
@@ -689,6 +699,9 @@ class DocxFixerApp:
         self.skip_chapter_three_table_layout_var.set(defaults["skip_chapter_three_table_layout"])
         self.skip_chapter_three_table_color_var.set(defaults["skip_chapter_three_table_color"])
         self.skip_chapter_three_indents_var.set(defaults["skip_chapter_three_indents"])
+        self.skip_chapter_three_numbering_suffix_cleanup_var.set(
+            defaults["skip_chapter_three_numbering_suffix_cleanup"]
+        )
         self.enable_table_footer_source_format_var.set(defaults["enable_table_footer_source_format"])
         self.skip_special_color_tables_var.set(defaults["skip_special_color_tables"])
         self.clear_special_colors_after_skip_var.set(defaults["clear_special_colors_after_skip"])
@@ -813,6 +826,7 @@ class DocxFixerApp:
             skip_chapter_three_table_layout=self.skip_chapter_three_table_layout_var.get(),
             skip_chapter_three_table_color=self.skip_chapter_three_table_color_var.get(),
             skip_chapter_three_indents=self.skip_chapter_three_indents_var.get(),
+            skip_chapter_three_numbering_suffix_cleanup=self.skip_chapter_three_numbering_suffix_cleanup_var.get(),
             # Hidden + force-disabled: the core flow always receives False.
             move_table_notes_below=False,
             skip_chapter_three_table_notes=False,

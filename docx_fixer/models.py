@@ -18,6 +18,7 @@ class ProcessOptions:
     skip_chapter_three_table_color: bool = False
     skip_chapter_three_tables: bool = False
     skip_chapter_three_indents: bool = False
+    skip_chapter_three_numbering_suffix_cleanup: bool = True
     skip_all_under_chapter_three: bool = False
     skip_chapter_three_adjustments: bool = False
     skip_log_output: bool = True

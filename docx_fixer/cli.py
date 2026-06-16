@@ -89,6 +89,7 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         skip_chapter_three_table_layout=skip_chapter_three_table_layout,
         skip_chapter_three_table_color=skip_chapter_three_table_color,
         skip_chapter_three_indents=skip_chapter_three_indents,
+        skip_chapter_three_numbering_suffix_cleanup=args.skip_chapter_three_numbering_suffix_cleanup,
         skip_chapter_three_adjustments=args.skip_chapter_three_adjustments,
         move_table_notes_below=args.move_table_notes_below,
         skip_chapter_three_table_notes=args.skip_chapter_three_table_notes,
@@ -283,6 +284,19 @@ def parse_args(argv: list[str]):
         action="store_false",
         dest="skip_chapter_three_indents",
         help="Allow paragraph indent changes under chapter 參、價格形成之主要因素分析",
+    )
+    parser.add_argument(
+        "--skip-chapter-three-numbering-suffix-cleanup",
+        action="store_true",
+        default=True,
+        dest="skip_chapter_three_numbering_suffix_cleanup",
+        help="參、不要清理編號後綴 tab/space: do not clean numbering.xml suffix/tab/lvlText trailing whitespace for chapter 參 numbering definitions",
+    )
+    parser.add_argument(
+        "--no-skip-chapter-three-numbering-suffix-cleanup",
+        action="store_false",
+        dest="skip_chapter_three_numbering_suffix_cleanup",
+        help="Allow numbering suffix/tab cleanup for chapter 參 numbering definitions",
     )
     parser.add_argument(
         "--skip-chapter-three-adjustments",

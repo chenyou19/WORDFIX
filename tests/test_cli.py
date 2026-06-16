@@ -147,6 +147,19 @@ class CliOptionTests(unittest.TestCase):
                 parse_args(["--help"])
         self.assertIn("enable-table-footer-source-format", stdout.getvalue())
 
+    def test_skip_chapter_three_numbering_suffix_cleanup_defaults_true_and_can_disable(self):
+        defaults = _build_process_options(parse_args(["input.docx", "output.docx"]))
+        self.assertTrue(defaults.skip_chapter_three_numbering_suffix_cleanup)
+
+        disabled = _build_process_options(
+            parse_args([
+                "input.docx",
+                "output.docx",
+                "--no-skip-chapter-three-numbering-suffix-cleanup",
+            ])
+        )
+        self.assertFalse(disabled.skip_chapter_three_numbering_suffix_cleanup)
+
     def test_write_note_debug_log_defaults_false_and_is_hidden(self):
         defaults = _build_process_options(parse_args(["input.docx", "output.docx"]))
         self.assertFalse(defaults.write_note_debug_log)

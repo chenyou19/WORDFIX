@@ -173,6 +173,28 @@ class GuiDefaultsTests(unittest.TestCase):
         self.assertIn("enable_table_footer_source_format", normalized)
         self.assertFalse(normalized["enable_table_footer_source_format"])
 
+    def test_skip_chapter_three_numbering_suffix_cleanup_default_is_true(self):
+        self.assertTrue(
+            built_in_gui_defaults()["skip_chapter_three_numbering_suffix_cleanup"]
+        )
+
+    def test_skip_chapter_three_numbering_suffix_cleanup_round_trip(self):
+        settings = built_in_gui_defaults()
+        settings["skip_chapter_three_numbering_suffix_cleanup"] = False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "indent_defaults.json"
+            save_gui_defaults(settings, path)
+            loaded = load_saved_gui_defaults(path)
+
+        # It is a real saved option (not forced), so False round-trips.
+        self.assertFalse(loaded["skip_chapter_three_numbering_suffix_cleanup"])
+
+    def test_old_settings_without_numbering_suffix_field_get_default_true(self):
+        normalized = normalize_gui_defaults({"fix_table": True})
+        self.assertIn("skip_chapter_three_numbering_suffix_cleanup", normalized)
+        self.assertTrue(normalized["skip_chapter_three_numbering_suffix_cleanup"])
+
     def test_write_note_debug_log_default_is_false(self):
         self.assertFalse(built_in_gui_defaults()["write_note_debug_log"])
 

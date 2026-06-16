@@ -501,6 +501,7 @@ def fix_docx_fast(
                     options.skip_chapter_three_table_layout
                     or options.skip_chapter_three_table_color
                     or options.skip_chapter_three_indents
+                    or options.skip_chapter_three_numbering_suffix_cleanup
                 )
                 collect_section_three_note_region = bool(
                     options.move_table_notes_below and options.skip_chapter_three_table_notes
@@ -524,16 +525,68 @@ def fix_docx_fast(
         indent_excluded_abstract_ids = set(protected_context.toc_abstract_ids)
         indent_excluded_style_ids: set[str] = set()
 
-        final_suffix_excluded_numbering_pairs = protected_context.excluded_numbering_pairs
-        final_suffix_excluded_num_ids = protected_context.excluded_num_ids
-        final_suffix_excluded_abstract_ids = protected_context.excluded_abstract_ids
+        # 「參、不要清理編號後綴 tab/space」(skip_chapter_three_numbering_suffix_cleanup):
+        # when enabled, the numbering suffix/tab/lvlText cleanup passes
+        # (apply_numbering_outline_format + the final force_clean) must also
+        # exclude the chapter 參 numbering definitions, on top of the TOC
+        # exclusions. This only governs numbering.xml suffix cleanup; it does
+        # not touch table layout/color, paragraph indents, or the numbering
+        # char-indent sanitizer (which keeps using the TOC-only set above).
+        skip_chapter_three_numbering_suffix_cleanup = bool(
+            getattr(options, "skip_chapter_three_numbering_suffix_cleanup", True)
+        )
+        chapter_three_numbering_pairs = set(protected_context.chapter_three_numbering_pairs)
+        chapter_three_num_ids = set(protected_context.chapter_three_num_ids)
+        chapter_three_abstract_ids = set(protected_context.chapter_three_abstract_ids)
+        if skip_chapter_three_numbering_suffix_cleanup:
+            numbering_suffix_excluded_numbering_pairs = (
+                set(protected_context.toc_numbering_pairs) | chapter_three_numbering_pairs
+            )
+            numbering_suffix_excluded_num_ids = (
+                set(protected_context.toc_num_ids) | chapter_three_num_ids
+            )
+            numbering_suffix_excluded_abstract_ids = (
+                set(protected_context.toc_abstract_ids) | chapter_three_abstract_ids
+            )
+            # Body-heading numbering is normally re-included so it still gets a
+            # clean suffix even when it shares a definition with the TOC. When
+            # chapter 參 numbering is protected, drop the 參 definitions from the
+            # re-include set so the final cleanup truly leaves them alone.
+            final_included_numbering_pairs = (
+                set(protected_context.body_heading_numbering_pairs) - chapter_three_numbering_pairs
+            )
+            final_included_num_ids = (
+                set(protected_context.body_heading_num_ids) - chapter_three_num_ids
+            )
+            final_included_abstract_ids = (
+                set(protected_context.body_heading_abstract_ids) - chapter_three_abstract_ids
+            )
+            summary.numbering_xml_logs.append(
+                "CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true "
+                f"collected_numIds={','.join(sorted(chapter_three_num_ids)) or 'none'} "
+                f"collected_abstractIds={','.join(sorted(chapter_three_abstract_ids)) or 'none'}"
+            )
+        else:
+            numbering_suffix_excluded_numbering_pairs = set(protected_context.toc_numbering_pairs)
+            numbering_suffix_excluded_num_ids = set(protected_context.toc_num_ids)
+            numbering_suffix_excluded_abstract_ids = set(protected_context.toc_abstract_ids)
+            final_included_numbering_pairs = set(protected_context.body_heading_numbering_pairs)
+            final_included_num_ids = set(protected_context.body_heading_num_ids)
+            final_included_abstract_ids = set(protected_context.body_heading_abstract_ids)
+            summary.numbering_xml_logs.append(
+                "CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=false"
+            )
+
+        final_suffix_excluded_numbering_pairs = numbering_suffix_excluded_numbering_pairs
+        final_suffix_excluded_num_ids = numbering_suffix_excluded_num_ids
+        final_suffix_excluded_abstract_ids = numbering_suffix_excluded_abstract_ids
         formatted_numbering_xml = (
             apply_numbering_outline_format(
                 numbering_xml,
                 change_logs=summary.numbering_xml_logs,
-                excluded_numbering_pairs=indent_excluded_numbering_pairs,
-                excluded_num_ids=indent_excluded_num_ids,
-                excluded_abstract_ids=indent_excluded_abstract_ids,
+                excluded_numbering_pairs=numbering_suffix_excluded_numbering_pairs,
+                excluded_num_ids=numbering_suffix_excluded_num_ids,
+                excluded_abstract_ids=numbering_suffix_excluded_abstract_ids,
             )
             if options.fix_paragraph
             else numbering_xml
@@ -881,9 +934,9 @@ def fix_docx_fast(
         excluded_numbering_pairs=final_suffix_excluded_numbering_pairs,
         excluded_num_ids=final_suffix_excluded_num_ids,
         excluded_abstract_ids=final_suffix_excluded_abstract_ids,
-        included_numbering_pairs=protected_context.body_heading_numbering_pairs,
-        included_num_ids=protected_context.body_heading_num_ids,
-        included_abstract_ids=protected_context.body_heading_abstract_ids,
+        included_numbering_pairs=final_included_numbering_pairs,
+        included_num_ids=final_included_num_ids,
+        included_abstract_ids=final_included_abstract_ids,
     )
     if options.force_note_paragraph_left_alignment:
         force_note_paragraph_left_alignment_in_docx(

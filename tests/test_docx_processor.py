@@ -2945,8 +2945,14 @@ class DocxProcessorTests(unittest.TestCase):
             output_toc_numbering_ind = output_toc_numbering_lvl.find("./w:pPr/w:ind", NS)
             self.assertEqual(output_toc_numbering_ind.get(qn("left")), input_toc_numbering_ind.get(qn("left")))
             self.assertEqual(output_toc_numbering_ind.get(qn("hanging")), input_toc_numbering_ind.get(qn("hanging")))
-            self.assertEqual(output_toc_numbering_lvl.find("./w:suff", NS).get(qn("val")), "nothing")
-            self.assertIsNone(output_toc_numbering_lvl.find("./w:pPr/w:tabs", NS))
+            # The excluded TOC numbering level is now left fully intact: its
+            # original suffix and tab stops are preserved (skip is decided before
+            # sanitizing), so the TOC numbering definition is truly immutable.
+            self.assertEqual(
+                output_toc_numbering_lvl.find("./w:suff", NS).get(qn("val")),
+                input_toc_numbering_lvl.find("./w:suff", NS).get(qn("val")),
+            )
+            self.assertIsNotNone(output_toc_numbering_lvl.find("./w:pPr/w:tabs", NS))
 
             body_marker = output_paragraphs[3]
             body_paragraph = output_paragraphs[4]
@@ -3593,6 +3599,142 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertFalse(
                 output_docx.with_name("output_note_debug_log.txt").exists()
             )
+
+
+CHAPTER_THREE_NUMBERING_TITLE = "參、價格形成之主要因素分析"
+
+
+def make_chapter_three_numbering_xml() -> bytes:
+    """Two dedicated numbering definitions:
+
+    - numId 40 (BODY): used by a level-0 body heading outside 參, must be cleaned.
+    - numId 50 (CH3): used by a paragraph inside 參, protected when the option is on.
+    """
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    for abstract_id, fmt, lvl_text_val in [
+        ("40", "ideographLegalTraditional", "%1、"),  # -> level 0 (body heading)
+        ("50", "decimal", "%1.　"),  # -> level 3, trailing ideographic space
+    ]:
+        abstract = etree.SubElement(numbering, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), abstract_id)
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        suff = etree.SubElement(lvl, qn("suff"))
+        suff.set(qn("val"), "tab")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), fmt)
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), lvl_text_val)
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "left")
+        tab.set(qn("pos"), "999")
+        ind = etree.SubElement(pPr, qn("ind"))
+        ind.set(qn("left"), "700")
+        ind.set(qn("hanging"), "400")
+
+        num = etree.SubElement(numbering, qn("num"))
+        num.set(qn("numId"), abstract_id)
+        ref = etree.SubElement(num, qn("abstractNumId"))
+        ref.set(qn("val"), abstract_id)
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_chapter_three_numbering_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+
+    def numbered_p(text: str, num_id: str) -> None:
+        p = etree.SubElement(body, qn("p"))
+        pPr = etree.SubElement(p, qn("pPr"))
+        num_pr = etree.SubElement(pPr, qn("numPr"))
+        ilvl = etree.SubElement(num_pr, qn("ilvl"))
+        ilvl.set(qn("val"), "0")
+        nid = etree.SubElement(num_pr, qn("numId"))
+        nid.set(qn("val"), num_id)
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    def plain_p(text: str) -> None:
+        p = etree.SubElement(body, qn("p"))
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    plain_p("封面")
+    numbered_p("序言", "40")  # 壹 body heading, auto-numbered (level 0)
+    plain_p(CHAPTER_THREE_NUMBERING_TITLE)  # starts the 參 region
+    numbered_p("估價方法說明", "50")  # inside 參, auto-numbered (level 3)
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+class ChapterThreeNumberingSuffixCleanupTests(unittest.TestCase):
+    def _run(self, *, skip_cleanup: bool):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_chapter_three_numbering_document_xml(),
+                numbering_xml=make_chapter_three_numbering_xml(),
+            )
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                    skip_chapter_three_numbering_suffix_cleanup=skip_cleanup,
+                ),
+            )
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+        return summary, numbering_root
+
+    def _lvl(self, numbering_root, abstract_id: str):
+        return numbering_root.xpath(
+            f"./w:abstractNum[@w:abstractNumId='{abstract_id}']/w:lvl",
+            namespaces=NS,
+        )[0]
+
+    def test_option_default_is_true(self):
+        self.assertTrue(ProcessOptions(True, True, True).skip_chapter_three_numbering_suffix_cleanup)
+
+    def test_enabled_protects_chapter_three_numbering(self):
+        summary, numbering_root = self._run(skip_cleanup=True)
+        ch3 = self._lvl(numbering_root, "50")
+
+        # 參 numbering keeps its original suffix / tab / lvlText trailing space.
+        self.assertEqual(ch3.find("./w:suff", NS).get(qn("val")), "tab")
+        self.assertIsNotNone(ch3.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(ch3.find("./w:lvlText", NS).get(qn("val")), "%1.　")
+
+        logs = "\n".join(summary.numbering_xml_logs)
+        self.assertIn("CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true", logs)
+        self.assertIn("50", logs.split("collected_abstractIds=", 1)[1].splitlines()[0])
+
+    def test_enabled_still_cleans_other_body_heading_numbering(self):
+        _summary, numbering_root = self._run(skip_cleanup=True)
+        body = self._lvl(numbering_root, "40")
+
+        # A body heading outside 參 is still cleaned.
+        self.assertEqual(body.find("./w:suff", NS).get(qn("val")), "nothing")
+        self.assertIsNone(body.find("./w:pPr/w:tabs", NS))
+
+    def test_disabled_cleans_chapter_three_numbering(self):
+        summary, numbering_root = self._run(skip_cleanup=False)
+        ch3 = self._lvl(numbering_root, "50")
+
+        # With the protection off, 參 numbering is cleaned like any other.
+        self.assertEqual(ch3.find("./w:suff", NS).get(qn("val")), "nothing")
+        self.assertIsNone(ch3.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(ch3.find("./w:lvlText", NS).get(qn("val")), "%1.")
+
+        logs = "\n".join(summary.numbering_xml_logs)
+        self.assertIn("CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=false", logs)
 
 
 if __name__ == "__main__":

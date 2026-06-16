@@ -46,6 +46,8 @@ python main.py input.docx output.docx --table --color --paragraph
 | `--no-skip-chapter-three-table-color` | 新版參數 |  | 允許該章內表格底色處理。 |
 | `--skip-chapter-three-indents` | 新版參數 | 開啟 | 跳過該章內段落縮排與 Word COM 內文縮排補救。 |
 | `--no-skip-chapter-three-indents` | 新版參數 |  | 允許該章內段落縮排處理。 |
+| `--skip-chapter-three-numbering-suffix-cleanup` | 新版參數 | 開啟 | 「參、不要清理編號後綴 tab/space」：不清理參章 numbering definition 的 `w:suff`／`w:pPr/w:tabs`／`w:lvlText` 結尾空白。只控制 numbering 後綴清理，不影響版面、顏色、縮排。 |
+| `--no-skip-chapter-three-numbering-suffix-cleanup` | 新版參數 |  | 允許清理參章 numbering definition 的後綴 tab/space。 |
 
 相容舊名稱仍可使用，但不建議新文件或新腳本主推：
 
