@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from lxml import etree
 
 from .constants import DEFAULT_GRAY, NS
@@ -12,7 +14,7 @@ from .shading import (
     normalize_fill_hex,
 )
 from .stop_controller import StopController
-from .xml_utils import get_or_add, qn
+from .xml_utils import get_or_add, paragraph_text, qn
 
 
 def table_cell_count(tbl) -> int:
@@ -93,6 +95,68 @@ def _apply_table_content_format(tbl, stop: StopController | None = None) -> None
 
 TABLE_BORDER_TAGS = ("top", "left", "bottom", "right", "insideH", "insideV")
 TABLE_DOUBLE_BORDER_SIZE = "4"
+TABLE_BORDER_COLOR = "000000"
+
+# Schema order shared by CT_TblBorders and CT_TcBorders. Border children must be
+# kept in this order so Word does not have to recover the part.
+_BORDER_SIDE_ORDER = ("top", "left", "bottom", "right", "insideH", "insideV", "tl2br", "tr2bl")
+
+
+def _get_or_add_border(borders, side: str):
+    """Find (or create in schema order) a single border child of a w:tblBorders
+    / w:tcBorders container. Creating one side never disturbs the others."""
+    existing = borders.find(f"w:{side}", NS)
+    if existing is not None:
+        return existing
+
+    border = etree.Element(qn(side))
+    side_rank = _BORDER_SIDE_ORDER.index(side)
+    insert_at = len(borders)
+    for index, child in enumerate(borders):
+        child_tag = etree.QName(child).localname
+        if child_tag in _BORDER_SIDE_ORDER and _BORDER_SIDE_ORDER.index(child_tag) > side_rank:
+            insert_at = index
+            break
+    borders.insert(insert_at, border)
+    return border
+
+
+def _configure_double_black_border(border) -> None:
+    border.set(qn("val"), "double")
+    border.set(qn("sz"), TABLE_DOUBLE_BORDER_SIZE)
+    border.set(qn("space"), "0")
+    border.set(qn("color"), TABLE_BORDER_COLOR)
+
+
+def set_border_double_black(borders, side: str) -> None:
+    """Set a single side of a borders container to a black double line.
+
+    Only the named side is updated; any other existing borders are preserved.
+    """
+    _configure_double_black_border(_get_or_add_border(borders, side))
+
+
+def set_border_nil(borders, side: str) -> None:
+    """Set a single side of a borders container to no border (w:val="nil").
+
+    Only the named side is updated; any other existing borders are preserved.
+    """
+    border = _get_or_add_border(borders, side)
+    for attr in ("sz", "space", "color"):
+        attr_name = qn(attr)
+        if attr_name in border.attrib:
+            del border.attrib[attr_name]
+    border.set(qn("val"), "nil")
+
+
+def _get_or_add_tbl_borders(tbl):
+    tblPr = get_or_add(tbl, "tblPr", first=True)
+    return get_or_add(tblPr, "tblBorders")
+
+
+def _get_or_add_tc_borders(tc):
+    tcPr = get_or_add(tc, "tcPr", first=True)
+    return get_or_add(tcPr, "tcBorders")
 
 
 def apply_double_black_table_borders(tbl) -> None:
@@ -110,11 +174,7 @@ def apply_double_black_table_borders(tbl) -> None:
     tbl_borders = etree.SubElement(tblPr, qn("tblBorders"))
 
     for tag in TABLE_BORDER_TAGS:
-        border = etree.SubElement(tbl_borders, qn(tag))
-        border.set(qn("val"), "double")
-        border.set(qn("sz"), TABLE_DOUBLE_BORDER_SIZE)
-        border.set(qn("space"), "0")
-        border.set(qn("color"), "000000")
+        _configure_double_black_border(etree.SubElement(tbl_borders, qn(tag)))
 
 
 def apply_table_format(tbl, stop: StopController | None = None) -> None:
@@ -335,3 +395,159 @@ def process_table(
         )
 
     return changed_to_gray, cleared_colors, shading_debug_logs
+
+
+# 「表格最後一列說明格式化」 (enable_table_footer_source_format)
+#
+# An independent, opt-in table layout post-step. When enabled for a table it
+# applies, in this fixed order:
+#   1. whole-table font size -> 11 pt
+#   2. table outer frame (top/bottom/left/right) -> black double border
+#   3. first-row single cell -> top/left/right no border, bottom black double
+#   4. last-row 基期：/資料來源：/註記 cells -> 10 pt, aligned, top black double,
+#      left/right/bottom no border
+# Steps 3 and 4 only do local cell-border updates, so other cells keep any
+# borders they already had. Later steps deliberately override earlier ones
+# (10 pt over 11 pt, cell borders over the table frame). This never moves,
+# deletes or adds cells/rows/paragraphs; it only formats matching last-row cells.
+FOOTER_SOURCE_BODY_FONT_SIZE_HALF_POINTS = "22"  # 11 pt
+FOOTER_SOURCE_NOTE_FONT_SIZE_HALF_POINTS = "20"  # 10 pt
+FOOTER_SOURCE_BASE_PERIOD_PREFIX = "基期："
+FOOTER_SOURCE_DATA_SOURCE_PREFIX = "資料來源："
+
+# A last-row note cell starts directly with 「註 + 可選阿拉伯數字 + 全形或半形冒號」.
+# Matches 註：/註:/註1：/註1:/註10：/註10:; rejects 備註：/註記：/本註：/說明註：
+# (註 must be at the very start, immediately followed by an optional number and
+# a colon).
+FOOTER_NOTE_PREFIX_PATTERN = re.compile(r"^註(?:\d+)?[：:]")
+
+# Zero-width / control characters plus the Word cell-end mark that can trail the
+# visible text of a cell. Stripped before the 基期/資料來源 prefix test so a
+# stray newline or invisible character cannot defeat the match.
+_FOOTER_CELL_CONTROL_CHARS = "\ufeff\u200b\u200c\u200d\u2060\u0007"
+
+
+def normalize_footer_source_cell_text(tc) -> str:
+    """Merge a cell's paragraph text into one normalized string for prefix tests.
+
+    Joins every paragraph, drops zero-width/control characters and the Word
+    cell mark, then collapses runs of whitespace (including newlines) so leading
+    or trailing spaces never break the 基期：/資料來源： startswith check.
+    """
+    text = " ".join(paragraph_text(p) for p in tc.findall("w:p", NS))
+    for char in _FOOTER_CELL_CONTROL_CHARS:
+        text = text.replace(char, "")
+    return " ".join(text.split())
+
+
+def _set_runs_font_size(scope, half_points: str) -> None:
+    for run in scope.xpath(".//w:r", namespaces=NS):
+        rPr = get_or_add(run, "rPr", first=True)
+        get_or_add(rPr, "sz").set(qn("val"), half_points)
+        get_or_add(rPr, "szCs").set(qn("val"), half_points)
+
+
+def _set_paragraph_alignment(scope, alignment: str) -> None:
+    for p in scope.findall("w:p", NS):
+        pPr = get_or_add(p, "pPr", first=True)
+        get_or_add(pPr, "jc").set(qn("val"), alignment)
+
+
+def _apply_table_outer_double_black_borders(tbl) -> None:
+    borders = _get_or_add_tbl_borders(tbl)
+    for side in ("top", "bottom", "left", "right"):
+        set_border_double_black(borders, side)
+
+
+def _apply_first_row_single_cell_borders(tc) -> None:
+    borders = _get_or_add_tc_borders(tc)
+    set_border_nil(borders, "top")
+    set_border_nil(borders, "left")
+    set_border_nil(borders, "right")
+    set_border_double_black(borders, "bottom")
+
+
+def _apply_last_row_footer_cell_borders(tc) -> None:
+    borders = _get_or_add_tc_borders(tc)
+    set_border_double_black(borders, "top")
+    set_border_nil(borders, "left")
+    set_border_nil(borders, "right")
+    set_border_nil(borders, "bottom")
+
+
+def _classify_footer_cell(text: str) -> tuple[str, str] | None:
+    """Return (cell_type, alignment) for a normalized last-row cell, or None.
+
+    註記 / 基期 / 資料來源 share the same last-row footer treatment; only the
+    alignment differs (資料來源 is right-aligned, the rest are left-aligned).
+    """
+    if text.startswith(FOOTER_SOURCE_BASE_PERIOD_PREFIX):
+        return "base_period", "left"
+    if text.startswith(FOOTER_SOURCE_DATA_SOURCE_PREFIX):
+        return "source", "right"
+    if FOOTER_NOTE_PREFIX_PATTERN.match(text):
+        return "note", "left"
+    return None
+
+
+def apply_table_footer_source_format(tbl, stop: StopController | None = None) -> dict[str, object]:
+    """Apply the 「表格最後一列說明格式化」 format to one table.
+
+    Formats matching last-row cells (基期：/資料來源：/註記) plus the table
+    frame and a single-cell first row. Never moves, deletes or inserts any
+    cell, row or paragraph. Returns a dict describing what was changed.
+    """
+    result: dict[str, object] = {
+        "outer_double_border_applied": False,
+        "first_row_single_cell_border_adjusted": False,
+        "footer_note_cells_adjusted": 0,
+        "footer_note_cell_matches": [],
+        "footer_note_cell_debug": [],
+    }
+
+    if stop:
+        stop.check()
+
+    # 1. whole-table font size -> 11 pt
+    _set_runs_font_size(tbl, FOOTER_SOURCE_BODY_FONT_SIZE_HALF_POINTS)
+
+    # 2. table outer frame -> black double border
+    _apply_table_outer_double_black_borders(tbl)
+    result["outer_double_border_applied"] = True
+
+    rows = tbl.findall("w:tr", NS)
+    if not rows:
+        return result
+
+    # 3. first-row single cell overrides the outer frame on three edges.
+    first_row_cells = rows[0].findall("w:tc", NS)
+    if len(first_row_cells) == 1:
+        _apply_first_row_single_cell_borders(first_row_cells[0])
+        result["first_row_single_cell_border_adjusted"] = True
+
+    # 4. last-row 基期：/資料來源：/註記 cells. Only matched cells are touched.
+    # De-duplicate by the underlying XML element so a merged / spanned cell is
+    # never formatted or logged twice.
+    seen_cells: set[int] = set()
+    for tc in rows[-1].findall("w:tc", NS):
+        if id(tc) in seen_cells:
+            continue
+        seen_cells.add(id(tc))
+        if stop:
+            stop.check()
+
+        text = normalize_footer_source_cell_text(tc)
+        classified = _classify_footer_cell(text)
+        if classified is None:
+            continue
+        cell_type, alignment = classified
+
+        _set_runs_font_size(tc, FOOTER_SOURCE_NOTE_FONT_SIZE_HALF_POINTS)
+        _set_paragraph_alignment(tc, alignment)
+        _apply_last_row_footer_cell_borders(tc)
+
+        result["footer_note_cells_adjusted"] += 1
+        result["footer_note_cell_matches"].append(cell_type)
+        result["footer_note_cell_debug"].append(f"{cell_type}: {text[:50]}")
+
+    return result

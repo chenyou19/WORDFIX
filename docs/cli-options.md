@@ -59,21 +59,37 @@ python main.py input.docx output.docx --table --color --paragraph
 
 CLI 與 GUI 的參章縮排預設不同：CLI 的 `--skip-chapter-three-indents` 預設是開啟；GUI 內建的 `skip_chapter_three_indents` 預設是不勾選。
 
-## 參、不要調整（整章保護）
+## 表格內註記搬移參數（GUI 已隱藏並強制關閉）
+
+> 表格註記搬移已從 GUI 隱藏並強制關閉（GUI／設定檔載入一律 `move_table_notes_below=False`、`skip_chapter_three_table_notes=False`）。下列 CLI 參數仍保留未刪除，預設皆為「不搬移」；GUI 不受 CLI 影響。
 
 | 參數 | 狀態 | 預設 | 說明 |
 | --- | --- | --- | --- |
-| `--skip-chapter-three-adjustments` | 目前參數 | 關閉 | 「參、不要調整」：以章節編號（第 3 章 參）判斷正文中的「參、」章節，整段不調整版面、顏色、字體、黑色雙線外框、註記搬移、縮排、標題大綱與 Word COM 補救；目錄中的「參、」不會觸發。會連帶把三個 `--skip-chapter-three-*` 都設為跳過。 |
-| `--protect-section-three` | 相容別名 | | 與 `--skip-chapter-three-adjustments` 相同。 |
-| `--no-skip-chapter-three-adjustments` | 目前參數 | | 不啟用整章保護。 |
-| `--no-protect-section-three` | 相容別名 | | 與 `--no-skip-chapter-three-adjustments` 相同。 |
+| `--move-table-notes-below` | 相容保留 | 關閉 | 把每張表格中以 `註：`、`註1：`、`註一、` 等開頭的儲存格搬到表格正下方，成為標楷體 10pt 段落。預設關閉。 |
+| `--no-move-table-notes-below` | 相容保留 | | 保留表格內的註記儲存格。 |
+| `--skip-chapter-three-table-notes` | 相容保留 | 開啟 | 「參、不要表格註記搬移」：啟用註記搬移時，正文中「參、」章節（以章節編號第 3 章判斷，目錄不會觸發）內的表格不搬移註記。只控制註記搬移。 |
+| `--no-skip-chapter-three-table-notes` | 相容保留 | | 連「參、」章節內的表格也搬移註記。 |
 
-## 表格內註記搬移參數
+## 表格最後一列說明格式化參數
 
 | 參數 | 狀態 | 預設 | 說明 |
 | --- | --- | --- | --- |
-| `--move-table-notes-below` | 目前參數 | 關閉 | 把每張表格中以 `註：`、`註1：`、`註一、` 等開頭的儲存格搬到表格正下方，成為標楷體 10pt 段落。 |
-| `--no-move-table-notes-below` | 目前參數 | | 保留表格內的註記儲存格。 |
+| `--enable-table-footer-source-format` | 目前參數 | 關閉 | 「表格最後一列說明格式化」：對版面有被調整的表格，依序套用全表 11pt、外圍黑色雙線、第一列單 cell 標題線，以及最後一列符合條件的 cell 格式（「基期：」「資料來源：」以及符合 `^註(?:\d+)?[：:]` 的註記）（`enable_table_footer_source_format`）。獨立功能，不依賴註記搬移或黑色雙線外框，也不混入顏色處理，且不搬移／刪除／新增任何 cell。 |
+| `--table-footer-source-format` | 別名 | | 與 `--enable-table-footer-source-format` 相同。 |
+| `--no-enable-table-footer-source-format` | 目前參數 | | 不套用此格式（別名 `--no-table-footer-source-format`）。 |
+
+CLI 與 GUI 都把同一個布林值 `enable_table_footer_source_format` 傳入核心流程，預設皆為關閉。詳細處理順序與跳過規則見 [表格處理規則](table-rules.md)。
+
+## 隱藏參數
+
+| 參數 | 狀態 | 預設 | 說明 |
+| --- | --- | --- | --- |
+| `--force-note-paragraph-left-alignment` | 隱藏參數 | 關閉 | 開啟後才會把「註…」開頭段落強制靠左（`force_note_paragraph_left_alignment_in_docx`）。預設關閉，help 不顯示，GUI 也不提供。 |
+| `--no-force-note-paragraph-left-alignment` | 隱藏參數 | | 維持預設關閉。 |
+| `--enable-double-black-table-borders` | 隱藏參數 | 關閉 | 開啟後才會對一般表格與特殊表格套用黑色雙線外框（`enable_double_black_table_borders`）。預設關閉，不改 `w:tblBorders`；help 不顯示，GUI 也不提供。 |
+| `--no-enable-double-black-table-borders` | 隱藏參數 | | 維持預設關閉。 |
+
+舊版的「參、不要調整」整章保護參數 `--skip-chapter-three-adjustments`（別名 `--protect-section-three`）仍保留為相容舊腳本用途，但不再是主推功能，且不再控制表格註記搬移；新腳本請改用上方的 `--skip-chapter-three-table-notes`。
 
 ## 巢狀表格參數
 

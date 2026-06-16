@@ -12,6 +12,7 @@ from .protected_region import (
 )
 from .table_format import (
     apply_double_black_table_borders,
+    apply_table_footer_source_format,
     clear_matching_special_colors,
     process_table,
     table_cell_count,
@@ -22,10 +23,21 @@ from .table_notes import move_table_note_cells_below
 from .xml_utils import paragraph_text, qn
 
 
-def _note_log_fields(enabled: bool, result) -> dict[str, object]:
+def _note_log_fields(
+    enabled: bool,
+    result,
+    *,
+    skip_chapter_three_table_notes_enabled: bool = False,
+    table_notes_skipped_by_chapter_three: bool = False,
+) -> dict[str, object]:
+    common = {
+        "move_table_notes_below_enabled": enabled,
+        "skip_chapter_three_table_notes_enabled": skip_chapter_three_table_notes_enabled,
+        "table_notes_skipped_by_chapter_three": table_notes_skipped_by_chapter_three,
+    }
     if result is None:
         return {
-            "move_table_notes_below_enabled": enabled,
+            **common,
             "note_cells_moved": False,
             "moved_note_count": 0,
             "deleted_note_cells": 0,
@@ -35,7 +47,7 @@ def _note_log_fields(enabled: bool, result) -> dict[str, object]:
             "note_move_warnings": [],
         }
     return {
-        "move_table_notes_below_enabled": enabled,
+        **common,
         "note_cells_moved": result.note_cells_moved,
         "moved_note_count": result.moved_note_count,
         "deleted_note_cells": result.deleted_note_cells,
@@ -67,6 +79,47 @@ def _section_three_fields(
         "in_section_three_protected": in_protected,
         "skipped_by_section_three_protection": skipped_by_protection,
     }
+
+def _footer_source_log_fields(
+    *,
+    enabled: bool,
+    applied: bool,
+    result: dict[str, object] | None,
+    skipped_reason: str,
+) -> dict[str, object]:
+    if applied:
+        reason = "none"
+    elif not enabled:
+        reason = "feature_disabled"
+    else:
+        reason = skipped_reason or "not_applied"
+
+    fields = {
+        "table_footer_note_source_format_enabled": enabled,
+        "table_footer_note_source_format_applied": applied,
+        "outer_double_border_applied_by_footer_source_format": False,
+        "first_row_single_cell_border_adjusted": False,
+        "footer_note_cells_adjusted": 0,
+        "footer_note_cell_matches": [],
+        "footer_note_cell_debug": [],
+        "table_footer_note_source_format_skipped_reason": reason,
+    }
+    if result is not None:
+        fields["outer_double_border_applied_by_footer_source_format"] = bool(
+            result.get("outer_double_border_applied", False)
+        )
+        fields["first_row_single_cell_border_adjusted"] = bool(
+            result.get("first_row_single_cell_border_adjusted", False)
+        )
+        fields["footer_note_cells_adjusted"] = int(
+            result.get("footer_note_cells_adjusted", 0)
+        )
+        fields["footer_note_cell_matches"] = list(
+            result.get("footer_note_cell_matches", [])
+        )
+        fields["footer_note_cell_debug"] = list(result.get("footer_note_cell_debug", []))
+    return fields
+
 
 def _normalize_table_log_text(text: str, limit: int = 100) -> str:
     normalized = " ".join((text or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").split())
@@ -132,6 +185,8 @@ def build_table_log_record(
     table_gray_colors: list[str] | None = None,
     table_gray_target: str = "D9D9D9",
     move_table_notes_below_enabled: bool = False,
+    skip_chapter_three_table_notes_enabled: bool = False,
+    table_notes_skipped_by_chapter_three: bool = False,
     note_cells_moved: bool = False,
     moved_note_count: int = 0,
     deleted_note_cells: int = 0,
@@ -139,7 +194,19 @@ def build_table_log_record(
     inserted_note_paragraphs: int = 0,
     moved_notes: list[dict[str, object]] | None = None,
     note_move_warnings: list[str] | None = None,
+    double_border_enabled: bool = False,
     double_border_applied: bool = False,
+    table_footer_note_source_format_enabled: bool = False,
+    table_footer_note_source_format_applied: bool = False,
+    outer_double_border_applied_by_footer_source_format: bool = False,
+    first_row_single_cell_border_adjusted: bool = False,
+    footer_note_cells_adjusted: int = 0,
+    footer_note_cell_matches: list[str] | None = None,
+    footer_note_cell_debug: list[str] | None = None,
+    table_footer_note_source_format_skipped_reason: str = "none",
+    table_note_move_gui_hidden: bool = False,
+    table_note_move_forced_false: bool = False,
+    skip_chapter_three_table_note_move_forced_false: bool = False,
     skip_section_three_adjustments_enabled: bool = False,
     in_section_three_protected: bool = False,
     section_three_detection_source: str = "none",
@@ -185,6 +252,8 @@ def build_table_log_record(
         "table_gray_colors": list(table_gray_colors or []),
         "table_gray_target": table_gray_target,
         "move_table_notes_below_enabled": move_table_notes_below_enabled,
+        "skip_chapter_three_table_notes_enabled": skip_chapter_three_table_notes_enabled,
+        "table_notes_skipped_by_chapter_three": table_notes_skipped_by_chapter_three,
         "note_cells_moved": note_cells_moved,
         "moved_note_count": moved_note_count,
         "deleted_note_cells": deleted_note_cells,
@@ -192,7 +261,21 @@ def build_table_log_record(
         "inserted_note_paragraphs": inserted_note_paragraphs,
         "moved_notes": list(moved_notes or []),
         "note_move_warnings": list(note_move_warnings or []),
+        "double_border_enabled": double_border_enabled,
         "double_border_applied": double_border_applied,
+        "table_footer_note_source_format_enabled": table_footer_note_source_format_enabled,
+        "table_footer_note_source_format_applied": table_footer_note_source_format_applied,
+        "outer_double_border_applied_by_footer_source_format": (
+            outer_double_border_applied_by_footer_source_format
+        ),
+        "first_row_single_cell_border_adjusted": first_row_single_cell_border_adjusted,
+        "footer_note_cells_adjusted": footer_note_cells_adjusted,
+        "footer_note_cell_matches": list(footer_note_cell_matches or []),
+        "footer_note_cell_debug": list(footer_note_cell_debug or []),
+        "table_footer_note_source_format_skipped_reason": table_footer_note_source_format_skipped_reason,
+        "table_note_move_gui_hidden": table_note_move_gui_hidden,
+        "table_note_move_forced_false": table_note_move_forced_false,
+        "skip_chapter_three_table_note_move_forced_false": skip_chapter_three_table_note_move_forced_false,
         "skip_section_three_adjustments_enabled": skip_section_three_adjustments_enabled,
         "in_section_three_protected": in_section_three_protected,
         "section_three_detection_source": section_three_detection_source,
@@ -384,10 +467,14 @@ def process_tables_in_part(
     tables = root.xpath(".//w:tbl", namespaces=NS)
     table_count = len(tables)
 
-    color_settings_fields = {
+    double_border_enabled = bool(
+        getattr(options, "enable_double_black_table_borders", False)
+    )
+    common_log_fields = {
         "table_keep_colors": list(getattr(options, "table_keep_colors", ()) or ()),
         "table_gray_colors": list(getattr(options, "table_gray_colors", ()) or ()),
         "table_gray_target": str(getattr(options, "table_gray_target", "D9D9D9") or "D9D9D9"),
+        "double_border_enabled": double_border_enabled,
     }
     special_color_skip_colors = tuple(getattr(options, "special_color_skip_colors", ()) or ())
     skip_special_color_tables = bool(getattr(options, "skip_special_color_tables", False))
@@ -395,8 +482,22 @@ def process_tables_in_part(
         getattr(options, "clear_special_colors_after_skip", False)
     )
     move_notes_enabled = bool(getattr(options, "move_table_notes_below", False))
+    skip_chapter_three_table_notes = bool(
+        getattr(options, "skip_chapter_three_table_notes", True)
+    )
+    # The legacy table-note-move feature (and its 參、 skip companion) is hidden
+    # from the GUI and force-disabled there. These flags let the table log
+    # confirm the feature was off for a given run.
+    common_log_fields["table_note_move_gui_hidden"] = True
+    common_log_fields["table_note_move_forced_false"] = not move_notes_enabled
+    common_log_fields["skip_chapter_three_table_note_move_forced_false"] = (
+        not skip_chapter_three_table_notes
+    )
     section_three_enabled = bool(getattr(options, "skip_chapter_three_adjustments", False))
     section_three_source = getattr(protected_context, "section_three_detection_source", "none")
+    footer_source_enabled = bool(
+        getattr(options, "enable_table_footer_source_format", False)
+    )
 
     def section_fields(*, in_protected: bool, skipped_by_protection: bool) -> dict[str, object]:
         return _section_three_fields(
@@ -404,6 +505,19 @@ def process_tables_in_part(
             source=section_three_source,
             in_protected=in_protected,
             skipped_by_protection=skipped_by_protection,
+        )
+
+    def footer_fields(
+        *,
+        applied: bool = False,
+        result: dict[str, object] | None = None,
+        skipped_reason: str = "none",
+    ) -> dict[str, object]:
+        return _footer_source_log_fields(
+            enabled=footer_source_enabled,
+            applied=applied,
+            result=result,
+            skipped_reason=skipped_reason,
         )
 
     for table_index, tbl in enumerate(tables, start=1):
@@ -444,9 +558,14 @@ def process_tables_in_part(
                     color_fixed=False,
                     changed_to_gray=0,
                     cleared_colors=0,
-                    **_note_log_fields(move_notes_enabled, None),
+                    **_note_log_fields(
+                        move_notes_enabled,
+                        None,
+                        skip_chapter_three_table_notes_enabled=skip_chapter_three_table_notes,
+                    ),
                     **section_fields(in_protected=False, skipped_by_protection=False),
-                    **color_settings_fields,
+                    **footer_fields(skipped_reason="skipped first table in word/document.xml"),
+                    **common_log_fields,
                 )
             )
             summary.skipped_first_page_tables += 1
@@ -474,14 +593,54 @@ def process_tables_in_part(
                     changed_to_gray=0,
                     cleared_colors=0,
                     shading_debug=[],
-                    **_note_log_fields(move_notes_enabled, None),
+                    **_note_log_fields(
+                        move_notes_enabled,
+                        None,
+                        skip_chapter_three_table_notes_enabled=skip_chapter_three_table_notes,
+                    ),
                     **section_fields(in_protected=False, skipped_by_protection=False),
-                    **color_settings_fields,
+                    **footer_fields(skipped_reason="nested table skipped"),
+                    **common_log_fields,
                 )
             )
             continue
 
         is_chapter_three_table = protected_context.is_table_protected(tbl, part_name)
+
+        # Move in-table note cells below the table BEFORE any chapter-three
+        # layout/color skip decision. This is an independent feature: the old
+        # 「參、表格版面/顏色不調整」 must not block note moving. Only the new
+        # 「參、不要表格註記搬移」 (skip_chapter_three_table_notes) can block it,
+        # and only for tables inside the generic body 參、 section.
+        table_in_section_three_for_notes = (
+            protected_context.is_table_in_section_three_for_notes(tbl, part_name)
+        )
+        skip_note_move_for_this_table = (
+            move_notes_enabled
+            and skip_chapter_three_table_notes
+            and table_in_section_three_for_notes
+        )
+        note_result = None
+        if move_notes_enabled and not skip_note_move_for_this_table:
+            note_result = move_table_note_cells_below(tbl)
+            if note_result.note_cells_moved:
+                summary.note_cells_moved_tables += 1
+                summary.moved_note_count += note_result.moved_note_count
+                summary.deleted_note_cells += note_result.deleted_note_cells
+                summary.deleted_note_rows += note_result.deleted_note_rows
+                summary.inserted_note_paragraphs += note_result.inserted_note_paragraphs
+            # Recompute counts/type after deleting cells or rows.
+            cell_count = table_cell_count(tbl)
+            column_count = table_column_count(tbl)
+        elif skip_note_move_for_this_table:
+            summary.note_move_skipped_by_chapter_three_tables += 1
+
+        note_fields = _note_log_fields(
+            move_notes_enabled,
+            note_result,
+            skip_chapter_three_table_notes_enabled=skip_chapter_three_table_notes,
+            table_notes_skipped_by_chapter_three=skip_note_move_for_this_table,
+        )
         chapter_three_table_layout_skipped = bool(
             is_chapter_three_table and getattr(options, "skip_chapter_three_table_layout", False)
         )
@@ -526,33 +685,16 @@ def process_tables_in_part(
                     chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
                     chapter_three_table_color_skipped=chapter_three_table_color_skipped,
                     shading_debug=[],
-                    **_note_log_fields(move_notes_enabled, None),
+                    **note_fields,
                     **section_fields(
                         in_protected=True,
                         skipped_by_protection=section_three_enabled,
                     ),
-                    **color_settings_fields,
+                    **footer_fields(skipped_reason="chapter three protected table"),
+                    **common_log_fields,
                 )
             )
             continue
-
-        # Step 1: move in-table note cells below the table before any layout,
-        # font, color, or border work. Protected 參、 tables never reach here
-        # because they were fully skipped above.
-        note_result = None
-        if move_notes_enabled and not is_chapter_three_table:
-            note_result = move_table_note_cells_below(tbl)
-            if note_result.note_cells_moved:
-                summary.note_cells_moved_tables += 1
-                summary.moved_note_count += note_result.moved_note_count
-                summary.deleted_note_cells += note_result.deleted_note_cells
-                summary.deleted_note_rows += note_result.deleted_note_rows
-                summary.inserted_note_paragraphs += note_result.inserted_note_paragraphs
-            # Step 2: recompute counts/type after deleting cells or rows.
-            cell_count = table_cell_count(tbl)
-            column_count = table_column_count(tbl)
-
-        note_fields = _note_log_fields(move_notes_enabled, note_result)
 
         if skip_special_color_tables and special_color_skip_colors:
             special_color_matched, matched_skip_colors = table_has_special_skip_color(
@@ -590,7 +732,8 @@ def process_tables_in_part(
                         shading_debug=[],
                         **note_fields,
                         **section_fields(in_protected=False, skipped_by_protection=False),
-                        **color_settings_fields,
+                        **footer_fields(skipped_reason="special color table skipped"),
+                        **common_log_fields,
                     )
                 )
                 continue
@@ -616,7 +759,8 @@ def process_tables_in_part(
                     cleared_colors=0,
                     **note_fields,
                     **section_fields(in_protected=False, skipped_by_protection=False),
-                    **color_settings_fields,
+                    **footer_fields(skipped_reason="cell_count <= 4"),
+                    **common_log_fields,
                 )
             )
             continue
@@ -640,14 +784,38 @@ def process_tables_in_part(
             special_layout=special_layout,
             special_table_geometry=special_table_geometry,
         )
-        # Step 6: re-apply the black double-line border to normal and special
-        # tables, after note cells/rows were removed. 參、 protected tables are
-        # excluded so they keep their original frame.
+        # Step 6: black double-line border is a hidden, opt-in feature
+        # (enable_double_black_table_borders, default False). It only runs for
+        # tables that went through layout/color formatting, after note
+        # cells/rows were removed. 參、 protected tables keep their original
+        # frame, and note-move-only runs (no fix_table_layout / fix_color) do
+        # not change borders.
         double_border_applied = False
-        if not is_chapter_three_table:
+        if (
+            double_border_enabled
+            and not is_chapter_three_table
+            and (effective_fix_table_layout or effective_fix_color)
+        ):
             apply_double_black_table_borders(tbl)
             double_border_applied = True
             summary.double_border_tables += 1
+        # 「表格基期/資料來源格式化」 is an independent, opt-in layout post-step.
+        # It is classified as a table *layout* format, so it runs only when this
+        # table's layout is being adjusted (effective_fix_table_layout). Tables
+        # protected from layout changes (參、 layout skip / full section three
+        # protection) therefore keep their original fonts and borders, while a
+        # color-only skip does not block it. It runs after process_table so the
+        # last-row left/right alignment overrides the centered table content,
+        # and it never depends on the note-move or double-border options.
+        footer_source_applied = False
+        footer_source_result = None
+        footer_source_skip_reason = "none"
+        if footer_source_enabled and effective_fix_table_layout:
+            footer_source_result = apply_table_footer_source_format(tbl, stop=stop)
+            footer_source_applied = True
+            summary.table_footer_source_format_tables += 1
+        elif footer_source_enabled:
+            footer_source_skip_reason = "layout not adjusted for this table"
         layout_fixed = bool(effective_options.fix_table_layout)
         color_fixed = bool(effective_options.fix_color)
         if effective_options.fix_table_layout:
@@ -733,7 +901,12 @@ def process_tables_in_part(
                     in_protected=is_chapter_three_table,
                     skipped_by_protection=False,
                 ),
-                **color_settings_fields,
+                **footer_fields(
+                    applied=footer_source_applied,
+                    result=footer_source_result,
+                    skipped_reason=footer_source_skip_reason,
+                ),
+                **common_log_fields,
             )
         )
 

@@ -91,6 +91,10 @@ def _build_process_options(args, *, enable_default_actions: bool = False) -> Pro
         skip_chapter_three_indents=skip_chapter_three_indents,
         skip_chapter_three_adjustments=args.skip_chapter_three_adjustments,
         move_table_notes_below=args.move_table_notes_below,
+        skip_chapter_three_table_notes=args.skip_chapter_three_table_notes,
+        force_note_paragraph_left_alignment=args.force_note_paragraph_left_alignment,
+        enable_double_black_table_borders=args.enable_double_black_table_borders,
+        enable_table_footer_source_format=args.enable_table_footer_source_format,
         skip_nested_tables=args.skip_nested_tables,
         skip_log_output=args.skip_log_output,
         **_table_color_options_from_args(args),
@@ -120,6 +124,7 @@ def run_cli(args) -> int:
         or options.remove_all_outline_levels
         or options.indent_preface_paragraphs
         or options.outline_preface_paragraphs
+        or options.move_table_notes_below
     ):
         options = _build_process_options(args, enable_default_actions=True)
 
@@ -305,6 +310,60 @@ def parse_args(argv: list[str]):
         action="store_false",
         dest="move_table_notes_below",
         help="Keep note cells inside tables",
+    )
+    parser.add_argument(
+        "--skip-chapter-three-table-notes",
+        action="store_true",
+        default=True,
+        dest="skip_chapter_three_table_notes",
+        help="參、不要表格註記搬移: do not move note cells for tables inside the body chapter 參、 (only affects note moving)",
+    )
+    parser.add_argument(
+        "--no-skip-chapter-three-table-notes",
+        action="store_false",
+        dest="skip_chapter_three_table_notes",
+        help="Allow moving note cells even for tables inside the body chapter 參、",
+    )
+    parser.add_argument(
+        "--force-note-paragraph-left-alignment",
+        action="store_true",
+        default=False,
+        dest="force_note_paragraph_left_alignment",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-force-note-paragraph-left-alignment",
+        action="store_false",
+        dest="force_note_paragraph_left_alignment",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--enable-double-black-table-borders",
+        action="store_true",
+        default=False,
+        dest="enable_double_black_table_borders",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-enable-double-black-table-borders",
+        action="store_false",
+        dest="enable_double_black_table_borders",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--enable-table-footer-source-format",
+        "--table-footer-source-format",
+        action="store_true",
+        default=False,
+        dest="enable_table_footer_source_format",
+        help="表格最後一列說明格式化: format the table outer frame, the single-cell title row, and the last-row 基期：/資料來源：/註記 cells",
+    )
+    parser.add_argument(
+        "--no-enable-table-footer-source-format",
+        "--no-table-footer-source-format",
+        action="store_false",
+        dest="enable_table_footer_source_format",
+        help="Do not apply the last-row 基期/資料來源/註記 footer table format",
     )
     parser.add_argument(
         "--skip-nested-tables",

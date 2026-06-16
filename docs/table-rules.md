@@ -12,14 +12,14 @@
 
 1. `word/document.xml` 的第一張表格會跳過，`table_type = skipped_first_table`，原因是 `first table in word/document.xml`。
 2. 若 `skip_nested_tables=True`，表格本身在另一張表格內，或表格內含另一張表格，會跳過。
-3. 若表格位在參章保護範圍，且版面與底色兩者都因選項被停用，會跳過（「參、不要調整」會讓整個參、章節走這條路完全跳過）。
+3. 若表格位在參章保護範圍，且版面與底色兩者都因選項被停用，會跳過。
 4. 若啟用「將表格內註記儲存格移至表格下方」，先搬移註記並刪除 cell / row（受保護的參、表格不會到這步）。
 5. 搬移後重新計算 `cell_count`、`column_count` 與一般 / 特殊表格類型。
 6. 命中「指定顏色跳過整張表」清單的表格會跳過。
 7. 儲存格數 `cell_count <= 4` 的表格會跳過，`table_type = skipped_small_table`。
-8. 其餘表格依欄數走特殊表格、一般表格或只處理顏色，套用版面、字體、顏色後，最後對一般表格與特殊表格重新套用黑色雙線外框。
+8. 其餘表格依欄數走特殊表格、一般表格或只處理顏色，套用版面、字體、顏色後，**若隱藏選項 `enable_double_black_table_borders` 為 True**，會對一般表格與特殊表格套用黑色雙線外框（預設關閉，不套用）；接著**若選項 `enable_table_footer_source_format` 為 True 且該表格版面有被調整**，套用「表格基期/資料來源格式化」。
 
-註記搬移與黑色雙線外框的詳細規則見下方專節。
+註記搬移、黑色雙線外框與表格基期/資料來源格式化的詳細規則見下方專節。
 
 ## 巢狀表格
 
@@ -150,19 +150,72 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 顏色設定保存在與縮排設定共用的 `indent_defaults.json`（key 為 `table_color_settings`），EXE 版會放在執行檔同資料夾，可攜帶到其他電腦。
 
-## 將表格內註記儲存格移至表格下方
+## 將表格內註記儲存格移至表格下方（已從 GUI 隱藏並強制關閉）
 
-由 GUI／CLI 的 `move_table_notes_below` 控制（預設關閉），實作在 `docx_fixer/table_notes.py` 的 `move_table_note_cells_below()`。這是獨立開關，與表格顏色、版面、特殊顏色跳過不耦合；只有受參、保護的表格（以及第一張表格、巢狀表格）不會搬移。
+> 此功能目前已從 GUI 隱藏，且 GUI／設定檔載入一律強制 `move_table_notes_below=False`、`skip_chapter_three_table_notes=False`（見 [GUI 選項](gui-options.md) 的「已隱藏並強制關閉的選項」）。底層函式 `move_table_note_cells_below()` 與 CLI 參數 `--move-table-notes-below` 仍保留未刪除，預設亦為關閉；以下說明保留作為該函式的行為參考。若需在最後一列就地格式化「註：」cell（不搬移），請改用「表格最後一列說明格式化」。
 
+由 GUI／CLI 的 `move_table_notes_below` 控制（預設關閉），實作在 `docx_fixer/table_notes.py` 的 `move_table_note_cells_below()`。這是**完全獨立的功能**，與表格版面、表格顏色、特殊顏色跳過不耦合：
+
+- **可單獨執行**：`docx_processor.py` 在 `fix_table_layout or fix_color or move_table_notes_below` 時就會跑表格流程；只勾「將表格內註記儲存格移至表格下方」（不勾版面、顏色）也會搬移註記。GUI 的「尚未選擇處理項目」判斷與 CLI 的預設動作判斷都已納入 `move_table_notes_below`。
 - 註記判斷使用嚴格規則 `note_detection.is_note_cell_text()`，正規式 `^註(?:\d+|[一二三四五六七八九十]+)?\s*[：:、.．]`。會處理 `註：`、`註1：`、`註2.`、`註一：`；不會處理 `註冊資料`、`註銷登記`、`註明事項`、`本表註1如下`。
 - 掃描順序為由上到下、由左到右。命中的儲存格：若該列其他 cell 都空白則刪整列（`delete_row`），否則只刪該 cell（`delete_cell`）。
 - 搬出的註記依掃描順序，各自成為一個段落插入在表格正下方。段落格式：標楷體（eastAsia `標楷體`、ascii/hAnsi `DFKai-SB`）、10pt（`w:sz`/`w:szCs` 值 `20`）、`outlineLvl` 9（本文）、不帶編號、不設首行縮排。
 - 搬移在版面／字體／顏色／外框之前執行，之後才重算欄數、格數與表格類型，確保刪 cell / row 後新邊界仍能正確套用外框。
+- **「參、不要表格註記搬移」**（`skip_chapter_three_table_notes`，預設開啟）：正文中「參、」章節內的表格不搬移註記（以泛用章節編號偵測，目錄不會觸發），章節外仍會搬移。這個選項只影響註記搬移，不會擋掉該表格的版面、顏色或外框。舊的「參、表格版面／顏色不調整」不會擋住註記搬移。`table_log` 以 `skip_chapter_three_table_notes_enabled`、`table_notes_skipped_by_chapter_three` 記錄。
 
-## 表格外框線黑色雙線
+## 表格外框線黑色雙線（隱藏功能，預設關閉）
+
+黑色雙線外框是**隱藏功能**，由 `ProcessOptions.enable_double_black_table_borders` 控制，**預設 `False`**。GUI 不顯示此選項、也不保存它；一般 GUI 使用者預設不會更動表格外框線。開發者可用隱藏的 CLI 參數 `--enable-double-black-table-borders` 啟用。
 
 `table_format.apply_double_black_table_borders()` 會重建 `w:tblBorders`，把 `top`、`left`、`bottom`、`right`、`insideH`、`insideV` 都設成 `w:val="double"`、`w:color="000000"`、`w:sz="4"`、`w:space="0"`，等於黑色雙線外框與內框。
 
-- 一般表格與特殊表格在套完版面／字體／顏色後都會重新套用，發生在註記搬移與 cell / row 刪除「之後」，避免刪除後新邊界沒有雙線。
+- **預設關閉時**：不新增或改寫 `w:tblBorders`；`table_log` 的 `double_border_applied` 為 `false`、`double_border_tables` 為 `0`。不會因為表格註記搬移、表格版面或表格顏色而自動套外框。
+- **隱藏選項為 True 時**：一般表格與特殊表格在套完版面／字體／顏色後才套用，發生在註記搬移與 cell / row 刪除「之後」，避免刪除後新邊界沒有雙線。只對實際走過版面／顏色處理的表格套用。
 - 受參、保護的表格不套外框（保留原框線）。第一張表格、巢狀表格、小表格、特殊顏色跳過表格不在此處理。
-- `table_log` 以 `double_border_applied` 記錄是否套用，摘要以 `套用黑色雙線外框的表格數` 統計。
+- 黑色雙線外框只由 `enable_double_black_table_borders` 控制，與「將表格內註記儲存格移至表格下方」「參、不要表格註記搬移」完全獨立，互不耦合。
+- `table_log` 以 `double_border_enabled`（隱藏選項是否啟用）與 `double_border_applied`（該表是否實際套用）記錄，摘要以 `套用黑色雙線外框的表格數` 統計。
+
+## 表格最後一列說明格式化（獨立功能，預設關閉）
+
+由 `ProcessOptions.enable_table_footer_source_format` 控制（**預設 `False`**），GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆可啟用，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**，只格式化最後一列中符合條件的 cell。實作在 `table_format.apply_table_footer_source_format()`。
+
+啟用且**該表格版面有被調整**時（見「與既有跳過邏輯的關係」），依固定順序處理：
+
+1. 整張表格內所有 run 字級設為 11pt（`w:sz`/`w:szCs` 值 `22`）。
+2. 表格外圍框線（`top`/`bottom`/`left`/`right`）設為黑色雙線（`w:val="double"`、`w:color="000000"`、`w:sz="4"`、`w:space="0"`），內框 `insideH`/`insideV` 不動。
+3. 若第一列只有一個儲存格，覆蓋該 cell 邊框：`top`/`left`/`right` 設為無邊框（`w:val="nil"`），`bottom` 設為黑色雙線。
+4. 對最後一列每個儲存格取可見文字（合併段落、去除前後空白與零寬／cell 結尾控制字元、收斂換行與全/半形空白後）判斷。以 cell 的 XML element 去重，合併儲存格只處理一次：
+   - 以「基期：」開頭：cell 內所有文字 10pt（值 `20`）、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
+   - 以「資料來源：」開頭：cell 內所有文字 10pt、段落靠右、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
+   - 符合 `^註(?:\d+)?[：:]`（如「註：」「註:」「註1：」「註10:」；不含「備註：」「註記：」「本註：」「說明註：」）：cell 內所有文字 10pt、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
+   - 不符合的儲存格不更動字級、對齊與邊框。
+
+註記規則整合在同一個最後一列 footer 流程（`_classify_footer_cell()`），與基期/資料來源共用同一套字級、邊框處理，避免多個重疊的最後一列處理函式。註記判斷 regex `FOOTER_NOTE_PREFIX_PATTERN` 定義於 `docx_fixer/table_format.py`。
+
+優先權（後者覆蓋前者）：最後一列 footer 規則（基期/資料來源/註記）＞ 第一列單 cell 規則 ＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此最後一列的 10pt 不會被全表 11pt 蓋掉，最後一列的左右下無邊框、第一列單 cell 的上左右無邊框也不會被外圍雙線蓋掉。
+
+邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（第一列單 cell 的 `top`/`left`/`right`；命中的最後一列 cell 的 `left`/`right`/`bottom`）。
+
+### 與既有跳過邏輯的關係
+
+本功能被歸類為「表格版面格式」，只在該表格的版面實際被調整（`effective_fix_table_layout` 為 True）時執行：
+
+- 第一張表格、巢狀表格、小表格（cell_count ≤ 4）、特殊顏色跳過表格：在到達本步驟前就已跳過，本功能不執行。
+- 「參、不要調整」整章保護的表格：整張跳過，本功能不執行。
+- 參、表格**版面**不調整：版面未被調整，本功能不執行（`table_footer_note_source_format_skipped_reason = layout not adjusted for this table`）。
+- 參、表格**顏色**不調整、但版面仍調整：本功能照常執行（顏色跳過不會擋住本功能）。
+
+### table_log 欄位
+
+- `table_footer_note_source_format_enabled`：選項是否啟用。
+- `table_footer_note_source_format_applied`：該表是否實際套用。
+- `outer_double_border_applied_by_footer_source_format`：是否套用外圍黑色雙線。
+- `first_row_single_cell_border_adjusted`：第一列單 cell 是否被調整。
+- `footer_note_cells_adjusted`：最後一列命中的 cell 數。
+- `footer_note_cell_matches`：命中類型（`note`／`base_period`／`source`）。
+- `footer_note_cell_debug`：命中 cell 文字前 50 字與套用動作。
+- `table_footer_note_source_format_skipped_reason`：未套用時的原因（`feature_disabled`／`layout not adjusted for this table`／各跳過原因）。
+
+另外，每張表格 log 都會記錄已隱藏的表格註記搬移狀態：`table_note_move_gui_hidden`（恆 `true`）、`table_note_move_forced_false`（`move_table_notes_below` 是否為關）、`skip_chapter_three_table_note_move_forced_false`（`skip_chapter_three_table_notes` 是否為關）。
+
+摘要以「套用最後一列說明格式化的表格數」統計（`summary.table_footer_source_format_tables`）。

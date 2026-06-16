@@ -129,6 +129,7 @@ class DoubleBlackBorderTests(unittest.TestCase):
             fix_color=False,
             fix_paragraph=False,
             normalize_with_word_com=False,
+            enable_double_black_table_borders=True,
         )
         summary, root = run_fix(document, options)
         tables = root.xpath(".//w:tbl", namespaces=NS)
@@ -141,6 +142,113 @@ class DoubleBlackBorderTests(unittest.TestCase):
         self.assertEqual(summary.table_log_records[2]["table_type"], "special_table")
         self.assertTrue(summary.table_log_records[2]["double_border_applied"])
         self.assertEqual(summary.double_border_tables, 2)
+
+
+class DoubleBlackBorderHiddenOptionTests(unittest.TestCase):
+    """The black double-line border is a hidden, opt-in option that defaults
+    to off and is not surfaced in the GUI."""
+
+    def _border_document(self):
+        return build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("一、一般表格"),
+            uniform_table(2, 5),  # normal (col 5)
+            make_paragraph("二、特殊表格"),
+            uniform_table(3, 4),  # special (col 4)
+        )
+
+    def test_option_defaults_to_false(self):
+        self.assertFalse(ProcessOptions(True, True, False).enable_double_black_table_borders)
+
+    def test_default_does_not_apply_borders(self):
+        options = ProcessOptions(
+            fix_table_layout=True,
+            fix_color=True,
+            fix_paragraph=False,
+            normalize_with_word_com=False,
+        )
+        summary, root = run_fix(self._border_document(), options)
+        tables = root.xpath(".//w:tbl", namespaces=NS)
+
+        # Neither normal nor special tables get a tblBorders rewrite.
+        self.assertIsNone(tables[1].find("./w:tblPr/w:tblBorders", NS))
+        self.assertIsNone(tables[2].find("./w:tblPr/w:tblBorders", NS))
+        self.assertEqual(summary.double_border_tables, 0)
+        for record in summary.table_log_records:
+            self.assertFalse(record["double_border_enabled"])
+            self.assertFalse(record["double_border_applied"])
+
+    def test_default_note_move_only_does_not_apply_borders(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("一、含註記的表格"),
+            make_note_table_5col(),
+        )
+        options = ProcessOptions(
+            fix_table_layout=False,
+            fix_color=False,
+            fix_paragraph=False,
+            normalize_with_word_com=False,
+            move_table_notes_below=True,
+        )
+        summary, root = run_fix(document, options)
+        processed = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+        # Note moved, but the table border is untouched.
+        self.assertEqual(paragraph_text_of(processed.getnext()), "註：本表單位為新臺幣元")
+        self.assertIsNone(processed.find("./w:tblPr/w:tblBorders", NS))
+        self.assertEqual(summary.double_border_tables, 0)
+        record = summary.table_log_records[1]
+        self.assertTrue(record["note_cells_moved"])
+        self.assertFalse(record["double_border_enabled"])
+        self.assertFalse(record["double_border_applied"])
+
+    def test_enabled_applies_borders_to_normal_and_special(self):
+        options = ProcessOptions(
+            fix_table_layout=True,
+            fix_color=True,
+            fix_paragraph=False,
+            normalize_with_word_com=False,
+            enable_double_black_table_borders=True,
+        )
+        summary, root = run_fix(self._border_document(), options)
+        tables = root.xpath(".//w:tbl", namespaces=NS)
+
+        self.assertTrue(has_double_black_borders(tables[1]))  # normal
+        self.assertTrue(has_double_black_borders(tables[2]))  # special
+        self.assertEqual(summary.double_border_tables, 2)
+        for record in (summary.table_log_records[1], summary.table_log_records[2]):
+            self.assertTrue(record["double_border_enabled"])
+            self.assertTrue(record["double_border_applied"])
+
+    def test_enabled_applies_borders_after_note_rows_removed(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("一、含註記的表格"),
+            make_note_table_5col(),
+        )
+        options = ProcessOptions(
+            fix_table_layout=True,
+            fix_color=False,
+            fix_paragraph=False,
+            normalize_with_word_com=False,
+            move_table_notes_below=True,
+            enable_double_black_table_borders=True,
+        )
+        summary, root = run_fix(document, options)
+        processed = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+        # Note row removed first, then the double border applied to the
+        # remaining table.
+        self.assertEqual(len(processed.findall("w:tr", NS)), 2)
+        self.assertTrue(has_double_black_borders(processed))
+        record = summary.table_log_records[1]
+        self.assertTrue(record["note_cells_moved"])
+        self.assertTrue(record["double_border_enabled"])
+        self.assertTrue(record["double_border_applied"])
 
 
 class MoveNotesIntegrationTests(unittest.TestCase):
@@ -164,6 +272,7 @@ class MoveNotesIntegrationTests(unittest.TestCase):
             fix_paragraph=False,
             normalize_with_word_com=False,
             move_table_notes_below=True,
+            enable_double_black_table_borders=True,
         )
         summary, root = run_fix(document, options)
         tables = root.xpath(".//w:tbl", namespaces=NS)
@@ -189,6 +298,175 @@ class MoveNotesIntegrationTests(unittest.TestCase):
         self.assertEqual(summary.inserted_note_paragraphs, 1)
 
 
+CHAPTER_THREE_TITLE = "參、價格形成之主要因素分析"
+
+
+def make_note_table_5col():
+    return make_table(
+        [
+            ["項目", "金額", "備註", "x", "y"],
+            ["土地", "100", "", "", ""],
+            ["註：本表單位為新臺幣元", "", "", "", ""],
+        ]
+    )
+
+
+class MoveNotesIndependenceTests(unittest.TestCase):
+    """move_table_notes_below works without fix_table_layout / fix_color, and
+    chapter-three layout/color skips do not block note moving."""
+
+    def test_only_move_notes_runs_without_layout_or_color(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("一、含註記的表格"),
+            make_note_table_5col(),
+        )
+        options = ProcessOptions(
+            fix_table_layout=False,
+            fix_color=False,
+            fix_paragraph=False,
+            normalize_with_word_com=False,
+            move_table_notes_below=True,
+        )
+        summary, root = run_fix(document, options)
+        tables = root.xpath(".//w:tbl", namespaces=NS)
+        processed = tables[1]
+
+        # Note moved out even though no layout/color processing ran.
+        self.assertEqual(len(processed.findall("w:tr", NS)), 2)
+        self.assertEqual(paragraph_text_of(processed.getnext()), "註：本表單位為新臺幣元")
+        record = summary.table_log_records[1]
+        self.assertTrue(record["note_cells_moved"])
+        # No layout/color -> no double border change for a notes-only run.
+        self.assertFalse(record["double_border_applied"])
+        self.assertFalse(has_double_black_borders(processed))
+        self.assertEqual(summary.inserted_note_paragraphs, 1)
+
+    def test_chapter_three_layout_skip_does_not_block_note_move(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph(CHAPTER_THREE_TITLE),
+            make_note_table_5col(),
+        )
+        options = ProcessOptions(
+            fix_table_layout=True,
+            fix_color=True,
+            fix_paragraph=False,
+            normalize_with_word_com=False,
+            move_table_notes_below=True,
+            skip_chapter_three_table_layout=True,
+            skip_chapter_three_table_color=False,
+            skip_chapter_three_table_notes=False,
+        )
+        summary, root = run_fix(document, options)
+        processed = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+        # Layout protected, but note still moved.
+        self.assertEqual(paragraph_text_of(processed.getnext()), "註：本表單位為新臺幣元")
+        record = summary.table_log_records[1]
+        self.assertTrue(record["note_cells_moved"])
+        self.assertFalse(record["table_notes_skipped_by_chapter_three"])
+
+    def test_chapter_three_color_skip_does_not_block_note_move(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph(CHAPTER_THREE_TITLE),
+            make_note_table_5col(),
+        )
+        options = ProcessOptions(
+            fix_table_layout=True,
+            fix_color=True,
+            fix_paragraph=False,
+            normalize_with_word_com=False,
+            move_table_notes_below=True,
+            skip_chapter_three_table_layout=False,
+            skip_chapter_three_table_color=True,
+            skip_chapter_three_table_notes=False,
+        )
+        summary, root = run_fix(document, options)
+        processed = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+        self.assertEqual(paragraph_text_of(processed.getnext()), "註：本表單位為新臺幣元")
+        record = summary.table_log_records[1]
+        self.assertTrue(record["note_cells_moved"])
+        self.assertFalse(record["table_notes_skipped_by_chapter_three"])
+
+
+class SkipChapterThreeTableNotesTests(unittest.TestCase):
+    def _options(self, **overrides):
+        base = dict(
+            fix_table_layout=True,
+            fix_color=False,
+            fix_paragraph=False,
+            normalize_with_word_com=False,
+            move_table_notes_below=True,
+            skip_chapter_three_table_notes=True,
+            enable_double_black_table_borders=True,
+        )
+        base.update(overrides)
+        return ProcessOptions(**base)
+
+    def test_notes_in_section_three_are_not_moved(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("參、受保護章節"),
+            make_note_table_5col(),
+        )
+        summary, root = run_fix(document, self._options())
+        processed = root.xpath(".//w:tbl", namespaces=NS)[1]
+
+        # Note kept inside the 參 section table.
+        self.assertEqual(len(processed.findall("w:tr", NS)), 3)
+        self.assertNotEqual(
+            getattr(processed.getnext(), "tag", None), qn("p")
+        )
+        record = summary.table_log_records[1]
+        self.assertFalse(record["note_cells_moved"])
+        self.assertTrue(record["skip_chapter_three_table_notes_enabled"])
+        self.assertTrue(record["table_notes_skipped_by_chapter_three"])
+        # Note-skip does not stop layout/borders for that table.
+        self.assertTrue(record["double_border_applied"])
+        self.assertTrue(has_double_black_borders(processed))
+        self.assertEqual(summary.note_move_skipped_by_chapter_three_tables, 1)
+
+    def test_notes_outside_section_three_still_move(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("一、一般章節"),
+            make_note_table_5col(),
+            make_paragraph("參、受保護章節"),
+            make_note_table_5col(),
+        )
+        summary, root = run_fix(document, self._options())
+        tables = root.xpath(".//w:tbl", namespaces=NS)
+        outside = tables[1]
+        inside = tables[2]
+
+        # Outside 參: note moved. Inside 參: note kept.
+        self.assertEqual(paragraph_text_of(outside.getnext()), "註：本表單位為新臺幣元")
+        self.assertEqual(len(inside.findall("w:tr", NS)), 3)
+        self.assertTrue(summary.table_log_records[1]["note_cells_moved"])
+        self.assertFalse(summary.table_log_records[2]["note_cells_moved"])
+        self.assertTrue(summary.table_log_records[2]["table_notes_skipped_by_chapter_three"])
+
+    def test_table_log_has_note_skip_fields(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),
+            make_paragraph("一、一般章節"),
+            make_note_table_5col(),
+        )
+        summary, root = run_fix(document, self._options())
+        record = summary.table_log_records[1]
+        self.assertIn("skip_chapter_three_table_notes_enabled", record)
+        self.assertIn("table_notes_skipped_by_chapter_three", record)
+
+
 class SectionThreeProtectionTests(unittest.TestCase):
     def _options(self, **overrides):
         base = dict(
@@ -198,6 +476,7 @@ class SectionThreeProtectionTests(unittest.TestCase):
             normalize_with_word_com=False,
             move_table_notes_below=True,
             skip_chapter_three_adjustments=True,
+            enable_double_black_table_borders=True,
         )
         base.update(overrides)
         return ProcessOptions(**base)

@@ -467,6 +467,9 @@ def fix_docx_fast(
                     or options.skip_chapter_three_table_color
                     or options.skip_chapter_three_indents
                 )
+                collect_section_three_note_region = bool(
+                    options.move_table_notes_below and options.skip_chapter_three_table_notes
+                )
                 protected_context = ProtectedRegionContext.from_document(
                     document_root_for_toc,
                     protect_chapter_three=protect_chapter_three,
@@ -476,6 +479,7 @@ def fix_docx_fast(
                     numbering_xml=numbering_xml,
                     summary=summary,
                     use_generic_section_three=options.skip_chapter_three_adjustments,
+                    collect_section_three_note_region=collect_section_three_note_region,
                 )
             except Exception:
                 document_root_for_toc = None
@@ -669,7 +673,7 @@ def fix_docx_fast(
                     )
                     summary.paragraphs += changed_paragraphs
 
-                if options.fix_table_layout or options.fix_color:
+                if options.fix_table_layout or options.fix_color or options.move_table_notes_below:
                     global_table_index = process_tables_in_part(
                         root=root,
                         part_name=item.filename,
@@ -821,10 +825,15 @@ def fix_docx_fast(
         included_num_ids=protected_context.body_heading_num_ids,
         included_abstract_ids=protected_context.body_heading_abstract_ids,
     )
-    force_note_paragraph_left_alignment_in_docx(
-        output_docx,
-        logs=summary.paragraph_logs,
-    )
+    if options.force_note_paragraph_left_alignment:
+        force_note_paragraph_left_alignment_in_docx(
+            output_docx,
+            logs=summary.paragraph_logs,
+        )
+    else:
+        summary.paragraph_logs.append(
+            "FINAL_NOTE_ALIGNMENT_FIX_SKIPPED reason=disabled"
+        )
     _write_note_debug_log_safely(
         output_docx,
         summary,

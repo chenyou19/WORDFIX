@@ -21,12 +21,23 @@ GUI 由 `main.py` 在沒有輸入、輸出檔參數時啟動，主要介面在 `
 | 參、價格形成之主要因素分析：表格版面不調整 | `skip_chapter_three_table_layout` | 勾選 |
 | 參、價格形成之主要因素分析：表格顏色不調整 | `skip_chapter_three_table_color` | 勾選 |
 | 參、價格形成之主要因素分析：縮排不調整 | `skip_chapter_three_indents` | 不勾選 |
-| 參、不要調整（整個參、章節都不調整） | `skip_chapter_three_adjustments` | 不勾選 |
-| 將表格內註記儲存格移至表格下方 | `move_table_notes_below` | 不勾選 |
+| 表格最後一列說明格式化 | `enable_table_footer_source_format` | 不勾選 |
 | 跳過特殊顏色表格（第三頁） | `skip_special_color_tables` | 不勾選 |
 | 跳過後將指定顏色改回無色彩（第三頁） | `clear_special_colors_after_skip` | 不勾選 |
 
 注意：GUI 內建預設不是「參章縮排不調整」。參章保護已拆成表格版面、表格顏色、縮排三個選項，其中只有表格版面與表格顏色預設勾選。
+
+### 已隱藏並強制關閉的選項
+
+「將表格內註記儲存格移至表格下方」（`move_table_notes_below`）與「參、不要表格註記搬移」（`skip_chapter_three_table_notes`）已從 GUI 隱藏，並**強制設為 False**：
+
+- GUI 不再顯示這兩個勾選項，也不再保留對應的 `tk` 變數。
+- `built_in_gui_defaults()` 兩者皆為 `False`。
+- 保存設定時一律寫入 `False`（`collect_gui_defaults` 直接給 `False`）。
+- 載入舊設定檔時，即使舊值是 `True`，`normalize_gui_defaults()` 也會以 `FORCED_FALSE_GUI_DEFAULTS` 強制覆蓋成 `False`。
+- 建立 `ProcessOptions` 時兩者皆傳入 `False`，核心流程不會搬移表格註記。
+
+底層函式 `move_table_note_cells_below()` 與 CLI 參數仍保留（未刪除），但 GUI 路徑一律關閉。
 
 ## 處理選項
 
@@ -46,8 +57,15 @@ GUI 由 `main.py` 在沒有輸入、輸出檔參數時啟動，主要介面在 `
 - **參、價格形成之主要因素分析：表格版面不調整**：只停用該章內表格版面處理，不影響底色。
 - **參、價格形成之主要因素分析：表格顏色不調整**：只停用該章內表格底色處理，不影響版面。
 - **參、價格形成之主要因素分析：縮排不調整**：只停用該章內段落縮排、firstLine、hanging、tabs、字元縮排清理與 Word COM 內文縮排補救；真正標題的 outline level 仍會恢復。
-- **參、不要調整（整個參、章節都不調整）**：對應 `skip_chapter_three_adjustments`。從正文中的「參、」章節（以章節編號為 3 判斷，不限標題文字）開始到下一個第一階層標題前，整段都不調整：段落縮排、標題大綱、標題後方分隔符、表格版面／顏色／字體／黑色雙線外框、表格內註記搬移、Word COM 補救與最終硬清理都跳過。目錄中的「參、」不會觸發。預設不勾選以維持既有行為。
-- **將表格內註記儲存格移至表格下方**：對應 `move_table_notes_below`。獨立開關，與表格顏色／版面不耦合；把每張表格中以 `註：`、`註1：`、`註一、` 等開頭的儲存格搬到表格正下方，詳見 [表格處理規則](table-rules.md)。受「參、不要調整」保護的表格不搬移。預設不勾選。
+- **表格最後一列說明格式化**：對應 `enable_table_footer_source_format`。獨立開關（**不**是表格註記搬移的子選項），不依賴註記搬移、不依賴黑色雙線外框、不混入顏色處理，也**不會搬移、刪除或新增任何 cell／段落**。啟用且該表格版面有被調整時，依序套用全表 11pt、外圍黑色雙線、第一列單 cell 標題線，以及最後一列符合條件的 cell 格式（「基期：」「資料來源：」以及符合 `^註(?:\d+)?[：:]` 的註記）。GUI 勾選狀態屬於 `gui_defaults`，會傳入與 CLI 相同的布林參數。預設不勾選，詳見 [表格處理規則](table-rules.md)。
+
+「將表格內註記儲存格移至表格下方」與「參、不要表格註記搬移」已從 GUI 隱藏並強制關閉，見上方「已隱藏並強制關閉的選項」。
+
+舊版的「參、不要調整（整個參、章節都不調整）」GUI 選項已移除；`skip_chapter_three_adjustments` 僅保留為相容舊參數，GUI 不再顯示，也不再控制表格註記搬移。
+
+「註…」開頭段落強制靠左（`force_note_paragraph_left_alignment`）已改為隱藏功能，預設關閉，GUI 不顯示；詳見 [CLI 參數](cli-options.md) 與 [Log 輸出說明](logs.md)。
+
+黑色雙線外框（`enable_double_black_table_borders`）也是隱藏功能，預設關閉，GUI 不顯示、也不保存。一般 GUI 使用者預設不會更動表格外框線；只有開發者用隱藏 CLI 參數 `--enable-double-black-table-borders` 才會套用，詳見 [表格處理規則](table-rules.md) 與 [CLI 參數](cli-options.md)。
 
 ## 表格顏色設定（第三頁）
 

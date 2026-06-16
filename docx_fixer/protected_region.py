@@ -443,6 +443,8 @@ class ProtectedRegionContext:
     body_heading_abstract_ids: set[str] = field(default_factory=set)
     section_three_protection_enabled: bool = False
     section_three_detection_source: str = "none"
+    document_section_three_note_paragraph_ids: set[int] = field(default_factory=set)
+    section_three_note_region_enabled: bool = False
     _document_paragraph_refs: list = field(default_factory=list, repr=False)
 
     @classmethod
@@ -457,6 +459,7 @@ class ProtectedRegionContext:
         numbering_xml: bytes | None,
         summary: Any | None = None,
         use_generic_section_three: bool = False,
+        collect_section_three_note_region: bool = False,
     ) -> "ProtectedRegionContext":
         paragraphs = document_root.xpath(".//w:p", namespaces=NS)
         toc_paragraph_ids = collect_all_toc_paragraph_ids(
@@ -499,6 +502,28 @@ class ProtectedRegionContext:
             numbering_xml,
             paragraphs=paragraphs,
         )
+
+        # The note-skip region ("參、不要表格註記搬移") is decoupled from the
+        # layout/color/indent protection: it always uses the generic 參、
+        # chapter detector and is collected independently, so enabling note
+        # protection never changes which tables get layout/color protected.
+        if collect_section_three_note_region:
+            context.section_three_note_region_enabled = True
+            context.document_section_three_note_paragraph_ids = collect_chapter_three_paragraph_ids(
+                document_root,
+                numbering_level_lookup=numbering_level_lookup,
+                numbering_format_lookup=numbering_format_lookup,
+                style_numbering_lookup=style_numbering_lookup,
+                toc_paragraph_ids=toc_paragraph_ids,
+                paragraphs=paragraphs,
+                start_marker=is_section_three_chapter_marker,
+            )
+            if summary is not None:
+                summary.numbering_xml_logs.append(
+                    "SECTION_THREE_TABLE_NOTE_SKIP_IDS collected="
+                    f"{len(context.document_section_three_note_paragraph_ids)} "
+                    "detection_source=generic_section_three_chapter_參"
+                )
 
         if not protect_chapter_three:
             return context
@@ -589,6 +614,18 @@ class ProtectedRegionContext:
             return False
         return any(
             self.is_paragraph_protected(p, part_name)
+            for p in tbl.xpath(".//w:p", namespaces=NS)
+        )
+
+    def is_table_in_section_three_for_notes(
+        self, tbl, part_name: str = "word/document.xml"
+    ) -> bool:
+        """Whether the table sits in the generic body 參、 chapter, used only to
+        decide whether table note cells should be left in place."""
+        if part_name != "word/document.xml" or not self.document_section_three_note_paragraph_ids:
+            return False
+        return any(
+            id(p) in self.document_section_three_note_paragraph_ids
             for p in tbl.xpath(".//w:p", namespaces=NS)
         )
 

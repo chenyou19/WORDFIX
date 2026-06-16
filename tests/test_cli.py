@@ -74,6 +74,79 @@ class CliOptionTests(unittest.TestCase):
         args = parse_args(["input.docx", "output.docx", "--protect-section-three"])
         self.assertTrue(args.skip_chapter_three_adjustments)
 
+    def test_skip_chapter_three_table_notes_defaults_true_and_can_disable(self):
+        defaults = _build_process_options(parse_args(["input.docx", "output.docx"]))
+        self.assertTrue(defaults.skip_chapter_three_table_notes)
+
+        disabled = _build_process_options(
+            parse_args(["input.docx", "output.docx", "--no-skip-chapter-three-table-notes"])
+        )
+        self.assertFalse(disabled.skip_chapter_three_table_notes)
+
+    def test_move_table_notes_below_can_run_without_layout_or_color(self):
+        # Only --move-table-notes-below: must NOT fall back to enabling the
+        # default fix actions, so note moving can run on its own.
+        args = parse_args(["input.docx", "output.docx", "--move-table-notes-below"])
+        options = _build_process_options(args)
+        self.assertTrue(options.move_table_notes_below)
+        self.assertFalse(options.fix_table_layout)
+        self.assertFalse(options.fix_color)
+        self.assertFalse(options.fix_paragraph)
+
+    def test_force_note_paragraph_left_alignment_defaults_false_and_is_hidden(self):
+        defaults = _build_process_options(parse_args(["input.docx", "output.docx"]))
+        self.assertFalse(defaults.force_note_paragraph_left_alignment)
+
+        enabled = _build_process_options(
+            parse_args(["input.docx", "output.docx", "--force-note-paragraph-left-alignment"])
+        )
+        self.assertTrue(enabled.force_note_paragraph_left_alignment)
+
+        # The flag is suppressed from help output.
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaises(SystemExit):
+                parse_args(["--help"])
+        self.assertNotIn("force-note-paragraph-left-alignment", stdout.getvalue())
+
+    def test_enable_double_black_table_borders_defaults_false_and_is_hidden(self):
+        defaults = _build_process_options(parse_args(["input.docx", "output.docx"]))
+        self.assertFalse(defaults.enable_double_black_table_borders)
+
+        enabled = _build_process_options(
+            parse_args(["input.docx", "output.docx", "--enable-double-black-table-borders"])
+        )
+        self.assertTrue(enabled.enable_double_black_table_borders)
+
+        # The flag is suppressed from help output.
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaises(SystemExit):
+                parse_args(["--help"])
+        self.assertNotIn("enable-double-black-table-borders", stdout.getvalue())
+
+    def test_enable_table_footer_source_format_defaults_false_and_can_enable(self):
+        defaults = _build_process_options(parse_args(["input.docx", "output.docx"]))
+        self.assertFalse(defaults.enable_table_footer_source_format)
+
+        enabled = _build_process_options(
+            parse_args(["input.docx", "output.docx", "--enable-table-footer-source-format"])
+        )
+        self.assertTrue(enabled.enable_table_footer_source_format)
+
+        alias = _build_process_options(
+            parse_args(["input.docx", "output.docx", "--table-footer-source-format"])
+        )
+        self.assertTrue(alias.enable_table_footer_source_format)
+
+    def test_enable_table_footer_source_format_is_visible_in_help(self):
+        # Unlike the hidden double-border flag, this is a user-facing feature.
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaises(SystemExit):
+                parse_args(["--help"])
+        self.assertIn("enable-table-footer-source-format", stdout.getvalue())
+
     def test_new_body_indent_arguments_are_supported(self):
         args = parse_args([
             "input.docx",

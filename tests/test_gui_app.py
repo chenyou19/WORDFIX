@@ -14,6 +14,7 @@ from docx_fixer.gui_app import (
     DocxFixerApp,
     write_logs_if_enabled,
 )
+from docx_fixer.gui_defaults import built_in_gui_defaults
 from docx_fixer.models import ProcessSummary
 
 
@@ -94,6 +95,52 @@ class GuiAppTests(unittest.TestCase):
         self.assertIn("不要輸出 log 檔", gui_source)
         self.assertIn("skip_nested_tables_var", gui_source)
         self.assertIn("表格中有表格不調整", gui_source)
+
+    def test_table_note_move_options_are_hidden_and_forced_false_in_gui(self):
+        gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
+
+        # The old "參、不要調整" option stays gone.
+        self.assertNotIn("參、不要調整", gui_source)
+        self.assertNotIn("skip_chapter_three_adjustments_var", gui_source)
+
+        # The two table-note-move options must no longer be shown or wired to a
+        # variable, and the labels must be gone from the GUI.
+        self.assertNotIn("參、不要表格註記搬移", gui_source)
+        self.assertNotIn("將表格內註記儲存格移至表格下方", gui_source)
+        self.assertNotIn("move_table_notes_below_var", gui_source)
+        self.assertNotIn("skip_chapter_three_table_notes_var", gui_source)
+
+        # The core flow must always receive False for both options.
+        self.assertIn("move_table_notes_below=False", gui_source)
+        self.assertIn("skip_chapter_three_table_notes=False", gui_source)
+
+    def test_table_footer_note_source_format_option_is_wired_in_gui(self):
+        gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
+
+        # The independent last-row footer checkbox is present, wired to its own
+        # variable, and passed straight into ProcessOptions.
+        self.assertIn("表格最後一列說明格式化", gui_source)
+        self.assertIn("enable_table_footer_source_format_var", gui_source)
+        self.assertIn(
+            "enable_table_footer_source_format=self.enable_table_footer_source_format_var.get()",
+            gui_source,
+        )
+
+        # It is a saved GUI default and defaults to off.
+        self.assertIn("enable_table_footer_source_format", built_in_gui_defaults())
+        self.assertFalse(built_in_gui_defaults()["enable_table_footer_source_format"])
+
+    def test_double_black_border_option_is_hidden_from_gui(self):
+        gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
+        # The black double-line border is a hidden option: no GUI checkbox,
+        # variable, or label, and it is not part of the saved GUI defaults.
+        self.assertNotIn("enable_double_black_table_borders", gui_source)
+        self.assertNotIn("黑色雙線", gui_source)
+
+        gui_defaults_source = Path("docx_fixer/gui_defaults.py").read_text(encoding="utf-8")
+        self.assertNotIn("enable_double_black_table_borders", gui_defaults_source)
+        self.assertNotIn("double_border", gui_defaults_source)
+        self.assertNotIn("enable_double_black_table_borders", built_in_gui_defaults())
 
     def test_write_logs_if_enabled_skips_all_external_log_writers(self):
         summary = ProcessSummary()

@@ -52,9 +52,21 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `chapter_three_table_color_skipped`
 - `word_com_autofit_applied`
 - `word_com_autofit_sequence`
-- `double_border_applied`：是否套用黑色雙線外框。
-- `skip_section_three_adjustments_enabled`、`in_section_three_protected`、`section_three_detection_source`、`skipped_by_section_three_protection`：「參、不要調整」整章保護狀態。
-- `move_table_notes_below_enabled`、`note_cells_moved`、`moved_note_count`、`deleted_note_cells`、`deleted_note_rows`、`inserted_note_paragraphs`、`moved_notes`、`note_move_warnings`：表格內註記搬移結果。
+- `double_border_enabled`：隱藏選項 `enable_double_black_table_borders` 是否啟用（預設 `false`）。
+- `double_border_applied`：該表是否實際套用黑色雙線外框（隱藏選項預設關閉時恆為 `false`）。
+- `table_footer_note_source_format_enabled`：選項 `enable_table_footer_source_format` 是否啟用（預設 `false`）。
+- `table_footer_note_source_format_applied`：該表是否實際套用「表格最後一列說明格式化」。
+- `outer_double_border_applied_by_footer_source_format`：本功能是否套用外圍黑色雙線。
+- `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整。
+- `footer_note_cells_adjusted`：最後一列命中「基期：」「資料來源：」或註記（`^註(?:\d+)?[：:]`）的 cell 數。
+- `footer_note_cell_matches`：命中類型清單（`note`／`base_period`／`source`）。
+- `footer_note_cell_debug`：命中 cell 文字前 50 字與套用動作。
+- `table_footer_note_source_format_skipped_reason`：未套用時的原因（`feature_disabled`、`layout not adjusted for this table` 或各跳過原因）。
+- `table_note_move_gui_hidden`：表格註記搬移功能已從 GUI 隱藏（恆 `true`）。
+- `table_note_move_forced_false`：`move_table_notes_below` 是否為關（GUI 一律強制 `true`）。
+- `skip_chapter_three_table_note_move_forced_false`：`skip_chapter_three_table_notes` 是否為關（GUI 一律強制 `true`）。
+- `move_table_notes_below_enabled`、`skip_chapter_three_table_notes_enabled`、`table_notes_skipped_by_chapter_three`、`note_cells_moved`、`moved_note_count`、`deleted_note_cells`、`deleted_note_rows`、`inserted_note_paragraphs`、`moved_notes`、`note_move_warnings`：表格內註記搬移結果（GUI 已隱藏並強制關閉，預設皆為未搬移）。
+- `skip_section_three_adjustments_enabled`、`in_section_three_protected`、`section_three_detection_source`、`skipped_by_section_three_protection`：相容用的舊「參、不要調整」整章保護狀態（GUI 已移除）。
 - `changed_to_gray`
 - `cleared_colors`
 - `shading_debug`
@@ -70,7 +82,11 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `normal_table`
 - `color_only_table`
 
-`process_log` 的表格摘要另含：因「參、不要調整」保護跳過的表格數、套用黑色雙線外框的表格數、搬移註記的表格數與筆數、刪除註記儲存格/整列數、表格下方新增註記段落數。
+`process_log` 的表格摘要另含：套用黑色雙線外框的表格數、套用最後一列說明格式化的表格數、搬移註記的表格數（GUI 強制關閉後為 0）、因「參、不要表格註記搬移」而未搬移的表格數、搬移註記筆數、刪除註記儲存格/整列數、表格下方新增註記段落數。
+
+## 註記段落強制靠左（隱藏功能）
+
+「註…」開頭段落強制靠左（`force_note_paragraph_left_alignment_in_docx`）預設**關閉**。預設情況下 `process_log` 的段落紀錄會看到 `FINAL_NOTE_ALIGNMENT_FIX_SKIPPED reason=disabled`，且不會出現 `FINAL_NOTE_ALIGNMENT_FIX` / `FINAL_NOTE_ALIGNMENT_SUMMARY`。只有以隱藏旗標 `--force-note-paragraph-left-alignment` 或 `ProcessOptions(force_note_paragraph_left_alignment=True)` 啟用時，才會執行並輸出 `FINAL_NOTE_ALIGNMENT_FIX` 紀錄。GUI 不提供此選項。
 
 ## heading_suffix_log
 

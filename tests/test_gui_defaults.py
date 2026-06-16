@@ -103,31 +103,75 @@ class GuiDefaultsTests(unittest.TestCase):
         self.assertTrue(loaded["skip_special_color_tables"])
         self.assertTrue(loaded["clear_special_colors_after_skip"])
 
-    def test_section_three_and_note_defaults_are_off(self):
+    def test_table_note_move_defaults_are_forced_false(self):
         defaults = built_in_gui_defaults()
-        self.assertFalse(defaults["skip_chapter_three_adjustments"])
+        # The removed "參、不要調整" option is no longer a GUI default.
+        self.assertNotIn("skip_chapter_three_adjustments", defaults)
+        # The hidden table-note-move options default to False.
         self.assertFalse(defaults["move_table_notes_below"])
+        self.assertFalse(defaults["skip_chapter_three_table_notes"])
 
-    def test_old_settings_without_section_three_and_note_fields_get_built_in_defaults(self):
-        normalized = normalize_gui_defaults({"fix_table": True})
+    def test_old_settings_with_removed_section_three_field_do_not_error(self):
+        # A saved file that still has the removed key must load without error
+        # and the key is simply ignored.
+        normalized = normalize_gui_defaults(
+            {"fix_table": True, "skip_chapter_three_adjustments": True}
+        )
 
-        self.assertIn("skip_chapter_three_adjustments", normalized)
+        self.assertNotIn("skip_chapter_three_adjustments", normalized)
         self.assertIn("move_table_notes_below", normalized)
-        self.assertFalse(normalized["skip_chapter_three_adjustments"])
+        self.assertIn("skip_chapter_three_table_notes", normalized)
         self.assertFalse(normalized["move_table_notes_below"])
+        self.assertFalse(normalized["skip_chapter_three_table_notes"])
 
-    def test_section_three_and_note_checkboxes_round_trip(self):
+    def test_old_settings_with_note_move_true_are_forced_false_on_load_and_save(self):
+        # Even when an old settings file stored True, loading and re-saving must
+        # force the hidden table-note-move options back to False.
+        old_settings = {
+            "move_table_notes_below": True,
+            "skip_chapter_three_table_notes": True,
+        }
+
+        normalized = normalize_gui_defaults(old_settings)
+        self.assertFalse(normalized["move_table_notes_below"])
+        self.assertFalse(normalized["skip_chapter_three_table_notes"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "indent_defaults.json"
+            # Write a raw file that still carries the True values.
+            path.write_text(
+                json.dumps({GUI_DEFAULTS_KEY: {**built_in_gui_defaults(), **old_settings}}),
+                encoding="utf-8",
+            )
+            loaded = load_saved_gui_defaults(path)
+            # Re-saving must persist False, never True.
+            save_gui_defaults(old_settings, path)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertFalse(loaded["move_table_notes_below"])
+        self.assertFalse(loaded["skip_chapter_three_table_notes"])
+        self.assertFalse(raw[GUI_DEFAULTS_KEY]["move_table_notes_below"])
+        self.assertFalse(raw[GUI_DEFAULTS_KEY]["skip_chapter_three_table_notes"])
+
+    def test_table_footer_source_format_default_is_false(self):
+        self.assertFalse(built_in_gui_defaults()["enable_table_footer_source_format"])
+
+    def test_table_footer_source_format_round_trip(self):
         settings = built_in_gui_defaults()
-        settings["skip_chapter_three_adjustments"] = True
-        settings["move_table_notes_below"] = True
+        settings["enable_table_footer_source_format"] = True
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "indent_defaults.json"
             save_gui_defaults(settings, path)
             loaded = load_saved_gui_defaults(path)
 
-        self.assertTrue(loaded["skip_chapter_three_adjustments"])
-        self.assertTrue(loaded["move_table_notes_below"])
+        self.assertTrue(loaded["enable_table_footer_source_format"])
+
+    def test_old_settings_without_footer_source_field_get_default(self):
+        normalized = normalize_gui_defaults({"fix_table": True})
+
+        self.assertIn("enable_table_footer_source_format", normalized)
+        self.assertFalse(normalized["enable_table_footer_source_format"])
 
     def test_built_in_defaults_skip_log_output(self):
         self.assertTrue(built_in_gui_defaults()["skip_log_output"])

@@ -3334,6 +3334,36 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIn("final_paragraph_jc=center", note_debug_log)
             self.assertIn("WARNING: final paragraph alignment is center", note_debug_log)
 
+    def test_final_note_alignment_is_disabled_by_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_note_alignment_document_xml(),
+                styles_xml=make_note_alignment_styles_xml(),
+                numbering_xml=make_note_alignment_numbering_xml(),
+            )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                ),
+            )
+
+            joined_paragraph_logs = "\n".join(summary.paragraph_logs)
+            # The dedicated note left-alignment pass must not run by default.
+            self.assertIn(
+                "FINAL_NOTE_ALIGNMENT_FIX_SKIPPED reason=disabled", joined_paragraph_logs
+            )
+            self.assertNotIn("FINAL_NOTE_ALIGNMENT_FIX part=", joined_paragraph_logs)
+            self.assertNotIn("FINAL_NOTE_ALIGNMENT_SUMMARY", joined_paragraph_logs)
+
     def test_final_note_alignment_runs_after_word_com_and_keeps_notes_out_of_indent_processing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             input_docx = Path(temp_dir) / "input.docx"
@@ -3365,6 +3395,7 @@ class DocxProcessorTests(unittest.TestCase):
                         fix_color=False,
                         fix_paragraph=True,
                         normalize_with_word_com=True,
+                        force_note_paragraph_left_alignment=True,
                     ),
                 )
 

@@ -142,11 +142,11 @@ class DocxFixerApp:
             value=gui_defaults["skip_chapter_three_table_color"]
         )
         self.skip_chapter_three_indents_var = tk.BooleanVar(value=gui_defaults["skip_chapter_three_indents"])
-        self.skip_chapter_three_adjustments_var = tk.BooleanVar(
-            value=gui_defaults["skip_chapter_three_adjustments"]
-        )
-        self.move_table_notes_below_var = tk.BooleanVar(
-            value=gui_defaults["move_table_notes_below"]
+        # The legacy table-note-move options (move_table_notes_below and
+        # skip_chapter_three_table_notes) are hidden and force-disabled: no GUI
+        # variable, no checkbox, always passed to the core flow as False.
+        self.enable_table_footer_source_format_var = tk.BooleanVar(
+            value=gui_defaults["enable_table_footer_source_format"]
         )
         self.skip_special_color_tables_var = tk.BooleanVar(
             value=gui_defaults["skip_special_color_tables"]
@@ -302,17 +302,12 @@ class DocxFixerApp:
             variable=self.skip_chapter_three_indents_var,
         ).grid(row=4, column=0, pady=4, sticky="w")
 
+        # Independent table feature (formats 基期：/資料來源：/註記 last-row cells).
         ttk.Checkbutton(
             advanced_option_frame,
-            text="參、不要調整（整個參、章節都不調整）",
-            variable=self.skip_chapter_three_adjustments_var,
+            text="表格最後一列說明格式化",
+            variable=self.enable_table_footer_source_format_var,
         ).grid(row=5, column=0, pady=4, sticky="w")
-
-        ttk.Checkbutton(
-            advanced_option_frame,
-            text="將表格內註記儲存格移至表格下方",
-            variable=self.move_table_notes_below_var,
-        ).grid(row=6, column=0, pady=4, sticky="w")
 
         defaults_button_frame = ttk.Frame(option_frame)
         defaults_button_frame.grid(row=3, column=0, columnspan=2, padx=(12, 16), pady=(0, 10), sticky="w")
@@ -659,8 +654,10 @@ class DocxFixerApp:
             "skip_chapter_three_table_layout": self.skip_chapter_three_table_layout_var.get(),
             "skip_chapter_three_table_color": self.skip_chapter_three_table_color_var.get(),
             "skip_chapter_three_indents": self.skip_chapter_three_indents_var.get(),
-            "skip_chapter_three_adjustments": self.skip_chapter_three_adjustments_var.get(),
-            "move_table_notes_below": self.move_table_notes_below_var.get(),
+            # Hidden + force-disabled; never saved as True.
+            "move_table_notes_below": False,
+            "skip_chapter_three_table_notes": False,
+            "enable_table_footer_source_format": self.enable_table_footer_source_format_var.get(),
             "skip_special_color_tables": self.skip_special_color_tables_var.get(),
             "clear_special_colors_after_skip": self.clear_special_colors_after_skip_var.get(),
         }
@@ -692,8 +689,7 @@ class DocxFixerApp:
         self.skip_chapter_three_table_layout_var.set(defaults["skip_chapter_three_table_layout"])
         self.skip_chapter_three_table_color_var.set(defaults["skip_chapter_three_table_color"])
         self.skip_chapter_three_indents_var.set(defaults["skip_chapter_three_indents"])
-        self.skip_chapter_three_adjustments_var.set(defaults["skip_chapter_three_adjustments"])
-        self.move_table_notes_below_var.set(defaults["move_table_notes_below"])
+        self.enable_table_footer_source_format_var.set(defaults["enable_table_footer_source_format"])
         self.skip_special_color_tables_var.set(defaults["skip_special_color_tables"])
         self.clear_special_colors_after_skip_var.set(defaults["clear_special_colors_after_skip"])
         self.status_var.set("已還原內建 GUI 預設勾選方案")
@@ -817,8 +813,10 @@ class DocxFixerApp:
             skip_chapter_three_table_layout=self.skip_chapter_three_table_layout_var.get(),
             skip_chapter_three_table_color=self.skip_chapter_three_table_color_var.get(),
             skip_chapter_three_indents=self.skip_chapter_three_indents_var.get(),
-            skip_chapter_three_adjustments=self.skip_chapter_three_adjustments_var.get(),
-            move_table_notes_below=self.move_table_notes_below_var.get(),
+            # Hidden + force-disabled: the core flow always receives False.
+            move_table_notes_below=False,
+            skip_chapter_three_table_notes=False,
+            enable_table_footer_source_format=self.enable_table_footer_source_format_var.get(),
             skip_nested_tables=self.skip_nested_tables_var.get(),
             skip_log_output=self.skip_log_output_var.get(),
             table_keep_colors=tuple(self.applied_table_color_settings["keep_colors"]),
@@ -838,6 +836,7 @@ class DocxFixerApp:
             or options.remove_all_outline_levels
             or options.indent_preface_paragraphs
             or options.outline_preface_paragraphs
+            or options.move_table_notes_below
         ):
             messagebox.showwarning("尚未選擇處理項目", "請至少勾選一個處理選項")
             return None

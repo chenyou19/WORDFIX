@@ -8,6 +8,15 @@ from .indent_settings import get_indent_settings_path
 
 GUI_DEFAULTS_KEY = "gui_defaults"
 
+# The legacy table-note-move feature ("將表格內註記儲存格移至表格下方") and its
+# companion ("參、不要表格註記搬移") are hidden from the GUI and force-disabled.
+# Their saved values are always overridden to False, so even an old settings
+# file that stored True will load (and re-save) as False.
+FORCED_FALSE_GUI_DEFAULTS = (
+    "move_table_notes_below",
+    "skip_chapter_three_table_notes",
+)
+
 
 def get_gui_defaults_path() -> Path:
     return get_indent_settings_path()
@@ -28,8 +37,10 @@ def built_in_gui_defaults() -> dict[str, bool]:
         "skip_chapter_three_table_layout": True,
         "skip_chapter_three_table_color": True,
         "skip_chapter_three_indents": False,
-        "skip_chapter_three_adjustments": False,
+        # Hidden + force-disabled (see FORCED_FALSE_GUI_DEFAULTS).
         "move_table_notes_below": False,
+        "skip_chapter_three_table_notes": False,
+        "enable_table_footer_source_format": False,
         "skip_special_color_tables": False,
         "clear_special_colors_after_skip": False,
     }
@@ -59,6 +70,9 @@ def normalize_gui_defaults(data: dict[str, Any] | None) -> dict[str, bool]:
     for key in normalized:
         if key in data:
             normalized[key] = _coerce_bool(key, data[key])
+    # The hidden table-note-move options must never load (or save) as True.
+    for key in FORCED_FALSE_GUI_DEFAULTS:
+        normalized[key] = False
     return normalized
 
 

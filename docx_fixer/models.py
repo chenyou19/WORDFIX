@@ -23,6 +23,10 @@ class ProcessOptions:
     skip_log_output: bool = True
     skip_nested_tables: bool = True
     move_table_notes_below: bool = False
+    skip_chapter_three_table_notes: bool = True
+    force_note_paragraph_left_alignment: bool = False
+    enable_double_black_table_borders: bool = False
+    enable_table_footer_source_format: bool = False
     table_keep_colors: tuple[str, ...] = ("D9D9D9", "F2F2F2")
     table_gray_colors: tuple[str, ...] = ("BFBFBF", "C0C0C0", "A6A6A6", "808080")
     table_gray_target: str = "D9D9D9"
@@ -56,7 +60,9 @@ class ProcessSummary:
     special_color_skipped_tables: int = 0
     section_three_protected_tables: int = 0
     double_border_tables: int = 0
+    table_footer_source_format_tables: int = 0
     note_cells_moved_tables: int = 0
+    note_move_skipped_by_chapter_three_tables: int = 0
     moved_note_count: int = 0
     deleted_note_cells: int = 0
     deleted_note_rows: int = 0
