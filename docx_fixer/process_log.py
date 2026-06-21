@@ -455,6 +455,8 @@ def format_table_log_lines(summary: ProcessSummary) -> list[str]:
                 f"table_footer_note_source_format_applied: {_bool_text(record.get('table_footer_note_source_format_applied', False))}",
                 f"outer_double_border_applied_by_footer_source_format: {_bool_text(record.get('outer_double_border_applied_by_footer_source_format', False))}",
                 f"first_row_single_cell_border_adjusted: {_bool_text(record.get('first_row_single_cell_border_adjusted', False))}",
+                f"footer_rows_processed: {record.get('footer_rows_processed', 0)}",
+                f"footer_row_matches: {' | '.join(record.get('footer_row_matches', [])) if record.get('footer_row_matches') else 'none'}",
                 f"footer_note_cells_adjusted: {record.get('footer_note_cells_adjusted', 0)}",
                 f"footer_note_cell_matches: {_color_list_text(record.get('footer_note_cell_matches'))}",
                 f"footer_note_cell_debug: {' | '.join(record.get('footer_note_cell_debug', [])) if record.get('footer_note_cell_debug') else 'none'}",

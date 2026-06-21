@@ -177,7 +177,7 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 ## 表格最後一列說明格式化（獨立功能，預設關閉）
 
-由 `ProcessOptions.enable_table_footer_source_format` 控制（**預設 `False`**），GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆可啟用，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**，只格式化最後一列中符合條件的 cell。元素層級實作在 `table_format.apply_table_footer_source_format()`。
+由 `ProcessOptions.enable_table_footer_source_format` 控制（**預設 `False`**），GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆可啟用，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**，只格式化表格底部連續的說明列中符合條件的 cell。元素層級實作在 `table_format.apply_table_footer_source_format()`。
 
 **執行時機（重要）**：本功能是**最後一個表格格式化步驟**。XML pipeline（`table_pipeline.py`）只在處理該表格時把它「記錄」到 `summary.table_footer_source_format_records`，實際格式化延後到 `docx_processor.py` 於 **Word COM AutoFit 與 XML fallback 之後、final note alignment 之前**呼叫 `table_footer_postprocess.apply_table_footer_source_format_in_docx()` 才套用。
 
@@ -188,17 +188,20 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 1. 整張表格內所有 run 字級設為 11pt（`w:sz`/`w:szCs` 值 `22`）。
 2. 表格外圍框線（`top`/`bottom`/`left`/`right`）設為黑色雙線（`w:val="double"`、`w:color="000000"`、`w:sz="4"`、`w:space="0"`），內框 `insideH`/`insideV` 不動。
 3. 若第一列只有一個儲存格，覆蓋該 cell 邊框：`top`/`left`/`right` 設為無邊框（`w:val="nil"`），`bottom` 設為黑色雙線。
-4. 對最後一列每個儲存格取可見文字（合併段落、去除前後空白與零寬／cell 結尾控制字元、收斂換行與全/半形空白後）判斷。以 cell 的 XML element 去重，合併儲存格只處理一次：
-   - 以「基期：」開頭：cell 內所有文字 10pt（值 `20`）、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
-   - 以「資料來源：」開頭：cell 內所有文字 10pt、段落靠右、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
-   - 符合 `^註(?:\d+)?[：:]`（如「註：」「註:」「註1：」「註10:」；不含「備註：」「註記：」「本註：」「說明註：」）：cell 內所有文字 10pt、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
-   - 不符合的儲存格不更動字級、對齊與邊框。
+4. **從表格底部連續往上掃描 footer 列**。對每一列逐 cell 取可見文字（合併段落、去除前後空白與零寬／cell 結尾控制字元、收斂換行與全/半形空白後）判斷，以 cell 的 XML element 去重，合併儲存格每列只處理一次：
+   - 該列只要**任一** cell 命中以下任一規則，即視為 footer 列，格式化該列**所有命中**的 cell，並繼續往上一列檢查。
+   - 命中規則與套用格式：
+     - 以「基期：」開頭：cell 內所有文字 10pt（值 `20`）、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
+     - 以「資料來源：」開頭：cell 內所有文字 10pt、段落靠右、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
+     - 符合 `^註(?:\d+)?[：:]`（如「註：」「註:」「註1：」「註10:」；不含「備註：」「註記：」「本註：」「說明註：」）：cell 內所有文字 10pt、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
+     - 該列其餘不命中的儲存格不更動字級、對齊與邊框。
+   - **停止條件**：某一列若沒有任何 cell 命中 footer 規則（含空白列），立即停止往上掃描。因此只處理表格底部**連續**的說明列；中間夾著資料列或空白列就會中斷，非連續的註記列不會被處理。不會掃整張表。
 
-註記規則整合在同一個最後一列 footer 流程（`_classify_footer_cell()`），與基期/資料來源共用同一套字級、邊框處理，避免多個重疊的最後一列處理函式。註記判斷 regex `FOOTER_NOTE_PREFIX_PATTERN` 定義於 `docx_fixer/table_format.py`。
+註記規則整合在同一個 footer 流程（`_classify_footer_cell()`），與基期/資料來源共用同一套字級、邊框處理。註記判斷 regex `FOOTER_NOTE_PREFIX_PATTERN` 定義於 `docx_fixer/table_format.py`。
 
-優先權（後者覆蓋前者）：最後一列 footer 規則（基期/資料來源/註記）＞ 第一列單 cell 規則 ＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此最後一列的 10pt 不會被全表 11pt 蓋掉，最後一列的左右下無邊框、第一列單 cell 的上左右無邊框也不會被外圍雙線蓋掉。
+優先權（後者覆蓋前者）：footer 列規則（基期/資料來源/註記）＞ 第一列單 cell 規則 ＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此 footer cell 的 10pt 不會被全表 11pt 蓋掉，footer cell 的左右下無邊框、第一列單 cell 的上左右無邊框也不會被外圍雙線蓋掉。
 
-邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（第一列單 cell 的 `top`/`left`/`right`；命中的最後一列 cell 的 `left`/`right`/`bottom`）。
+邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（第一列單 cell 的 `top`/`left`/`right`；命中的 footer cell 的 `left`/`right`/`bottom`）。
 
 ### 與既有跳過邏輯的關係
 
@@ -216,9 +219,11 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 - `table_footer_note_source_format_applied`：final post-process 是否實際套用（由 post-process 回寫）。
 - `outer_double_border_applied_by_footer_source_format`：是否套用外圍黑色雙線。
 - `first_row_single_cell_border_adjusted`：第一列單 cell 是否被調整。
-- `footer_note_cells_adjusted`：最後一列命中的 cell 數。
-- `footer_note_cell_matches`：命中類型（`note`／`base_period`／`source`）。
-- `footer_note_cell_debug`：命中 cell 文字前 50 字與套用動作。
+- `footer_rows_processed`：底部連續 footer 列實際處理的列數。
+- `footer_row_matches`：每列命中的類型（由下往上，例如 `base_period,source | note`）。
+- `footer_note_cells_adjusted`：所有 footer 列命中並格式化的 cell 總數。
+- `footer_note_cell_matches`：所有命中 cell 的類型（`note`／`base_period`／`source`）。
+- `footer_note_cell_debug`：每個命中 cell 文字前 50 字與套用動作。
 - `table_footer_note_source_format_skipped_reason`：未套用時的原因（`feature_disabled`／`layout not adjusted for this table`／各跳過原因）。
 
 另外，每張表格 log 都會記錄已隱藏的表格註記搬移狀態：`table_note_move_gui_hidden`（恆 `true`）、`table_note_move_forced_false`（`move_table_notes_below` 是否為關）、`skip_chapter_three_table_note_move_forced_false`（`skip_chapter_three_table_notes` 是否為關）。

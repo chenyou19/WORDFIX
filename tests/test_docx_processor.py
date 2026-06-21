@@ -1546,7 +1546,12 @@ class DocxProcessorTests(unittest.TestCase):
                             for record in summary.body_indent_records
                         ))
 
-    def test_final_numbering_cleanup_cleans_shared_chapter_three_body_heading_definition(self):
+    def test_final_numbering_cleanup_protects_chapter_three_shared_level_precisely(self):
+        # \u53c3 (numId 42) and \u8086 (numId 99) share abstractNum 1 at the SAME ilvl 0.
+        # \u300c\u53c3\u3001\u4e0d\u8981\u6e05\u7406\u7de8\u865f\u5f8c\u7db4 tab/space\u300d defaults on, and chapter \u53c3 protection
+        # is expressed as a precise (numId/abstract, ilvl) \u2014 never as the whole
+        # abstractNumId. The single shared level \u53c3 actually uses is therefore
+        # preserved (\u8086 shares that exact lvl element, so it is collaterally kept).
         with tempfile.TemporaryDirectory() as tmp:
             input_docx = Path(tmp) / "input.docx"
             output_docx = Path(tmp) / "output.docx"
@@ -1573,17 +1578,17 @@ class DocxProcessorTests(unittest.TestCase):
                 "./w:abstractNum[@w:abstractNumId='1']/w:lvl",
                 namespaces=NS,
             )[0]
-            self.assertEqual(protected_lvl.find("w:suff", NS).get(qn("val")), "nothing")
-            self.assertIsNone(protected_lvl.find("./w:pPr/w:tabs", NS))
-            self.assertEqual(protected_lvl.find("w:lvlText", NS).get(qn("val")), "%1\u3001")
+            # The level \u53c3 uses keeps its original suffix / tab / lvlText.
+            self.assertEqual(protected_lvl.find("w:suff", NS).get(qn("val")), "tab")
+            self.assertIsNotNone(protected_lvl.find("./w:pPr/w:tabs", NS))
+            self.assertEqual(protected_lvl.find("w:lvlText", NS).get(qn("val")), "%1\u3001 ")
 
             logs = "\n".join(summary.numbering_xml_logs)
             self.assertIn("CHAPTER_THREE_SKIP_IDS collected=2", logs)
-            self.assertIn("FINAL_NUMBERING_SUFFIX_CLEAN_SKIP_PROTECTED_SHARED_DEFINITION", logs)
-            self.assertIn("FINAL_NUMBERING_SUFFIX_CLEAN_SHARED_BODY_HEADING_WINS", logs)
-            self.assertIn("protected_numIds=42", logs)
-            self.assertIn("shared_numIds=99", logs)
-            self.assertIn("levels_skipped_protected=0", logs)
+            # The whole abstractNumId is NOT used to protect chapter \u53c3.
+            self.assertIn("CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true", logs)
+            self.assertIn("protected_abstract_levels=1:0", logs)
+            self.assertIn("protected_abstractIds_not_used_for_chapter_three=true", logs)
 
     def test_special_table_uses_previous_paragraph_text_start_and_page_right_boundary(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
@@ -3670,6 +3675,67 @@ def make_chapter_three_numbering_document_xml() -> bytes:
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_shared_abstract_multi_ilvl_numbering_xml() -> bytes:
+    """One abstractNumId (70) referenced by one numId (70) with two levels.
+
+    參 uses ilvl 0; another section uses ilvl 1. Only ilvl 0 should be protected.
+    """
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    abstract = etree.SubElement(numbering, qn("abstractNum"))
+    abstract.set(qn("abstractNumId"), "70")
+    for ilvl, tab_pos in (("0", "901"), ("1", "902")):
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), ilvl)
+        suff = etree.SubElement(lvl, qn("suff"))
+        suff.set(qn("val"), "tab")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1.　")  # trailing ideographic space
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "left")
+        tab.set(qn("pos"), tab_pos)
+        ind = etree.SubElement(pPr, qn("ind"))
+        ind.set(qn("left"), "700")
+        ind.set(qn("hanging"), "400")
+    num = etree.SubElement(numbering, qn("num"))
+    num.set(qn("numId"), "70")
+    ref = etree.SubElement(num, qn("abstractNumId"))
+    ref.set(qn("val"), "70")
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_shared_abstract_multi_ilvl_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+
+    def numbered_p(text: str, num_id: str, ilvl: int) -> None:
+        p = etree.SubElement(body, qn("p"))
+        pPr = etree.SubElement(p, qn("pPr"))
+        num_pr = etree.SubElement(pPr, qn("numPr"))
+        ilvl_el = etree.SubElement(num_pr, qn("ilvl"))
+        ilvl_el.set(qn("val"), str(ilvl))
+        nid = etree.SubElement(num_pr, qn("numId"))
+        nid.set(qn("val"), num_id)
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    def plain_p(text: str) -> None:
+        p = etree.SubElement(body, qn("p"))
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    plain_p(CHAPTER_THREE_NUMBERING_TITLE)  # starts 參
+    numbered_p("參內子項", "70", 0)  # inside 參, uses (70, ilvl 0)
+    plain_p("肆、第四章")  # first-level heading -> ends 參
+    numbered_p("肆內子項", "70", 1)  # outside 參, uses (70, ilvl 1)
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 class ChapterThreeNumberingSuffixCleanupTests(unittest.TestCase):
     def _run(self, *, skip_cleanup: bool):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3714,7 +3780,11 @@ class ChapterThreeNumberingSuffixCleanupTests(unittest.TestCase):
 
         logs = "\n".join(summary.numbering_xml_logs)
         self.assertIn("CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true", logs)
-        self.assertIn("50", logs.split("collected_abstractIds=", 1)[1].splitlines()[0])
+        # Protection is expressed as precise pairs / abstract levels, never as a
+        # whole abstractNumId.
+        self.assertIn("protected_pairs=50:0", logs)
+        self.assertIn("protected_abstract_levels=50:0", logs)
+        self.assertIn("protected_abstractIds_not_used_for_chapter_three=true", logs)
 
     def test_enabled_still_cleans_other_body_heading_numbering(self):
         _summary, numbering_root = self._run(skip_cleanup=True)
@@ -3732,6 +3802,62 @@ class ChapterThreeNumberingSuffixCleanupTests(unittest.TestCase):
         self.assertEqual(ch3.find("./w:suff", NS).get(qn("val")), "nothing")
         self.assertIsNone(ch3.find("./w:pPr/w:tabs", NS))
         self.assertEqual(ch3.find("./w:lvlText", NS).get(qn("val")), "%1.")
+
+    def _run_shared_abstract(self, *, skip_cleanup: bool):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_shared_abstract_multi_ilvl_document_xml(),
+                numbering_xml=make_shared_abstract_multi_ilvl_numbering_xml(),
+            )
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=False,
+                    skip_chapter_three_numbering_suffix_cleanup=skip_cleanup,
+                ),
+            )
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+        return summary, numbering_root
+
+    def _shared_lvl(self, numbering_root, ilvl: str):
+        return numbering_root.xpath(
+            f"./w:abstractNum[@w:abstractNumId='70']/w:lvl[@w:ilvl='{ilvl}']",
+            namespaces=NS,
+        )[0]
+
+    def test_shared_abstract_protects_only_chapter_three_ilvl(self):
+        # 參 uses (70, ilvl 0); another section uses (70, ilvl 1) of the SAME
+        # abstractNumId. Only the 參 level (ilvl 0) is protected.
+        summary, numbering_root = self._run_shared_abstract(skip_cleanup=True)
+
+        protected = self._shared_lvl(numbering_root, "0")
+        self.assertEqual(protected.find("./w:suff", NS).get(qn("val")), "tab")
+        self.assertIsNotNone(protected.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(protected.find("./w:lvlText", NS).get(qn("val")), "%1.　")
+
+        # The other level in the same abstractNumId is still cleaned.
+        cleaned = self._shared_lvl(numbering_root, "1")
+        self.assertEqual(cleaned.find("./w:suff", NS).get(qn("val")), "nothing")
+        self.assertIsNone(cleaned.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(cleaned.find("./w:lvlText", NS).get(qn("val")), "%1.")
+
+        logs = "\n".join(summary.numbering_xml_logs)
+        self.assertIn("protected_abstract_levels=70:0", logs)
+        self.assertIn("protected_abstractIds_not_used_for_chapter_three=true", logs)
+
+    def test_shared_abstract_disabled_cleans_both_ilvls(self):
+        summary, numbering_root = self._run_shared_abstract(skip_cleanup=False)
+        for ilvl in ("0", "1"):
+            lvl = self._shared_lvl(numbering_root, ilvl)
+            self.assertEqual(lvl.find("./w:suff", NS).get(qn("val")), "nothing")
+            self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
 
         logs = "\n".join(summary.numbering_xml_logs)
         self.assertIn("CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=false", logs)

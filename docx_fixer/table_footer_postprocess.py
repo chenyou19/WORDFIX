@@ -90,6 +90,8 @@ def apply_table_footer_source_format_in_docx(
                     "FOOTER_SOURCE_FORMAT_REAPPLY_APPLIED "
                     f"part_name={part_name} global_table_index={global_table_index} "
                     f"table_index={table_index} "
+                    f"footer_rows_processed={result['footer_rows_processed']} "
+                    f"footer_row_matches={'|'.join(result['footer_row_matches']) or 'none'} "
                     f"footer_note_cells_adjusted={result['footer_note_cells_adjusted']}"
                 )
 

@@ -54,6 +54,7 @@ def force_clean_numbering_suffix_tabs(
     included_numbering_pairs: set[tuple[str, int]] | None = None,
     included_num_ids: set[str] | None = None,
     included_abstract_ids: set[str] | None = None,
+    protected_numbering_pairs: set[tuple[str, int]] | None = None,
 ) -> bytes | None:
     """Force every numbering level to use no suffix separator and no list tab.
 
@@ -85,6 +86,10 @@ def force_clean_numbering_suffix_tabs(
     included_numbering_pairs = included_numbering_pairs or set()
     included_num_ids = included_num_ids or set()
     included_abstract_ids = included_abstract_ids or set()
+    # Hard protection (chapter 參): precise (numId, ilvl) levels that must win
+    # over the body-heading re-include, so a 參 level sharing a numId/abstractNum
+    # with a normal body heading is still left untouched.
+    protected_numbering_pairs = protected_numbering_pairs or set()
 
     num_to_abstract_id: dict[str, str] = {}
     abstract_to_num_ids: dict[str, set[str]] = {}
@@ -119,6 +124,12 @@ def force_clean_numbering_suffix_tabs(
         if abstract_id is not None:
             included_abstract_levels.add((abstract_id, ilvl))
 
+    force_protected_abstract_levels: set[tuple[str, int]] = set()
+    for num_id, ilvl in protected_numbering_pairs:
+        abstract_id = num_to_abstract_id.get(num_id)
+        if abstract_id is not None:
+            force_protected_abstract_levels.add((abstract_id, ilvl))
+
     if logs is not None:
         for abstract_id in sorted(protected_abstract_ids):
             num_ids = abstract_to_num_ids.get(abstract_id, set())
@@ -142,6 +153,11 @@ def force_clean_numbering_suffix_tabs(
                 )
 
     def should_skip_level(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
+        # Chapter 參 hard protection wins over the body-heading re-include.
+        if num_id is not None and ilvl is not None and (num_id, ilvl) in protected_numbering_pairs:
+            return True
+        if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in force_protected_abstract_levels:
+            return True
         if abstract_id is not None and abstract_id in included_abstract_ids:
             return False
         if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in included_abstract_levels:
@@ -764,8 +780,20 @@ def apply_numbering_outline_format(
         if num_id is not None and abstract_id is not None:
             num_to_abstract_id[num_id] = abstract_id
 
+    # Derive (abstractNumId, ilvl) protection from the excluded (numId, ilvl)
+    # pairs. ./w:abstractNum/w:lvl carries no numId, so a pair alone cannot match
+    # it; this keeps the protection precise to the exact level the pair uses
+    # instead of excluding the whole abstractNumId (which 壹/貳/參/肆 often share).
+    protected_abstract_levels: set[tuple[str, int]] = set()
+    for pair_num_id, pair_ilvl in excluded_numbering_pairs:
+        mapped_abstract_id = num_to_abstract_id.get(pair_num_id)
+        if mapped_abstract_id is not None:
+            protected_abstract_levels.add((mapped_abstract_id, pair_ilvl))
+
     def should_skip_numbering(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
         if abstract_id is not None and abstract_id in excluded_abstract_ids:
+            return True
+        if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in protected_abstract_levels:
             return True
         if num_id is not None and num_id in excluded_num_ids:
             return True

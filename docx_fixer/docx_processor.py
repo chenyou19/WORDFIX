@@ -415,8 +415,33 @@ def _mark_table_footer_source_format_applied(
             result.get("footer_note_cell_matches", [])
         )
         record["footer_note_cell_debug"] = list(result.get("footer_note_cell_debug", []))
+        record["footer_rows_processed"] = int(result.get("footer_rows_processed", 0))
+        record["footer_row_matches"] = list(result.get("footer_row_matches", []))
 
     summary.table_footer_source_format_tables = len(footer_results)
+
+
+def _format_id_level_pairs(pairs: set[tuple[str, int]]) -> str:
+    if not pairs:
+        return "none"
+    return ",".join(f"{ident}:{level}" for ident, level in sorted(pairs))
+
+
+def _build_num_to_abstract_id_map(numbering_xml: bytes | None) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    if not numbering_xml:
+        return mapping
+    try:
+        root = etree.fromstring(numbering_xml)
+    except Exception:
+        return mapping
+    for num in root.xpath("./w:num", namespaces=NS):
+        num_id = num.get(qn("numId"))
+        abstract_el = num.find("w:abstractNumId", NS)
+        abstract_id = abstract_el.get(qn("val")) if abstract_el is not None else None
+        if num_id is not None and abstract_id is not None:
+            mapping[num_id] = abstract_id
+    return mapping
 
 
 def _note_debug_log_path(output_docx: Path) -> Path:
@@ -536,35 +561,37 @@ def fix_docx_fast(
             getattr(options, "skip_chapter_three_numbering_suffix_cleanup", True)
         )
         chapter_three_numbering_pairs = set(protected_context.chapter_three_numbering_pairs)
-        chapter_three_num_ids = set(protected_context.chapter_three_num_ids)
-        chapter_three_abstract_ids = set(protected_context.chapter_three_abstract_ids)
+        # Express the 參 pairs as precise (abstractNumId, ilvl) protection for the
+        # log and abstract-level matching — never as whole abstractNumIds, which
+        # 壹/貳/參/肆 commonly share.
+        num_to_abstract_id_map = _build_num_to_abstract_id_map(numbering_xml)
+        chapter_three_abstract_levels = {
+            (num_to_abstract_id_map[num_id], ilvl)
+            for (num_id, ilvl) in chapter_three_numbering_pairs
+            if num_id in num_to_abstract_id_map
+        }
         if skip_chapter_three_numbering_suffix_cleanup:
+            # Chapter 參 contributes ONLY its actual (numId, ilvl) pairs — never
+            # whole numIds or abstractNumIds, which are shared with the other
+            # chapters. TOC keeps its original abstractId / numId / pair
+            # exclusions so the TOC behaviour is unchanged.
             numbering_suffix_excluded_numbering_pairs = (
                 set(protected_context.toc_numbering_pairs) | chapter_three_numbering_pairs
             )
-            numbering_suffix_excluded_num_ids = (
-                set(protected_context.toc_num_ids) | chapter_three_num_ids
-            )
-            numbering_suffix_excluded_abstract_ids = (
-                set(protected_context.toc_abstract_ids) | chapter_three_abstract_ids
-            )
-            # Body-heading numbering is normally re-included so it still gets a
-            # clean suffix even when it shares a definition with the TOC. When
-            # chapter 參 numbering is protected, drop the 參 definitions from the
-            # re-include set so the final cleanup truly leaves them alone.
-            final_included_numbering_pairs = (
-                set(protected_context.body_heading_numbering_pairs) - chapter_three_numbering_pairs
-            )
-            final_included_num_ids = (
-                set(protected_context.body_heading_num_ids) - chapter_three_num_ids
-            )
-            final_included_abstract_ids = (
-                set(protected_context.body_heading_abstract_ids) - chapter_three_abstract_ids
-            )
+            numbering_suffix_excluded_num_ids = set(protected_context.toc_num_ids)
+            numbering_suffix_excluded_abstract_ids = set(protected_context.toc_abstract_ids)
+            # Final cleanup keeps the original full body-heading re-include set;
+            # chapter 參 pairs are passed separately as a hard protection that
+            # wins over that re-include (force_clean_numbering_suffix_tabs).
+            final_included_numbering_pairs = set(protected_context.body_heading_numbering_pairs)
+            final_included_num_ids = set(protected_context.body_heading_num_ids)
+            final_included_abstract_ids = set(protected_context.body_heading_abstract_ids)
+            final_protected_numbering_pairs = set(chapter_three_numbering_pairs)
             summary.numbering_xml_logs.append(
                 "CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true "
-                f"collected_numIds={','.join(sorted(chapter_three_num_ids)) or 'none'} "
-                f"collected_abstractIds={','.join(sorted(chapter_three_abstract_ids)) or 'none'}"
+                f"protected_pairs={_format_id_level_pairs(chapter_three_numbering_pairs)} "
+                f"protected_abstract_levels={_format_id_level_pairs(chapter_three_abstract_levels)} "
+                "protected_abstractIds_not_used_for_chapter_three=true"
             )
         else:
             numbering_suffix_excluded_numbering_pairs = set(protected_context.toc_numbering_pairs)
@@ -573,6 +600,7 @@ def fix_docx_fast(
             final_included_numbering_pairs = set(protected_context.body_heading_numbering_pairs)
             final_included_num_ids = set(protected_context.body_heading_num_ids)
             final_included_abstract_ids = set(protected_context.body_heading_abstract_ids)
+            final_protected_numbering_pairs = set()
             summary.numbering_xml_logs.append(
                 "CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=false"
             )
@@ -937,6 +965,7 @@ def fix_docx_fast(
         included_numbering_pairs=final_included_numbering_pairs,
         included_num_ids=final_included_num_ids,
         included_abstract_ids=final_included_abstract_ids,
+        protected_numbering_pairs=final_protected_numbering_pairs,
     )
     if options.force_note_paragraph_left_alignment:
         force_note_paragraph_left_alignment_in_docx(

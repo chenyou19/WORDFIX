@@ -25,6 +25,7 @@ def force_clean_numbering_suffix_tabs_in_docx(
     included_numbering_pairs: set[tuple[str, int]] | None = None,
     included_num_ids: set[str] | None = None,
     included_abstract_ids: set[str] | None = None,
+    protected_numbering_pairs: set[tuple[str, int]] | None = None,
 ) -> bool:
     docx_path = Path(docx_path)
     temp_docx = docx_path.with_suffix(docx_path.suffix + ".numbering_suffix_clean.tmp")
@@ -50,6 +51,7 @@ def force_clean_numbering_suffix_tabs_in_docx(
                             included_numbering_pairs=included_numbering_pairs,
                             included_num_ids=included_num_ids,
                             included_abstract_ids=included_abstract_ids,
+                            protected_numbering_pairs=protected_numbering_pairs,
                         )
                         if cleaned is not None and cleaned != data:
                             data = cleaned

@@ -58,17 +58,21 @@
 
 ## 「參、不要清理編號後綴 tab/space」
 
-`skip_chapter_three_numbering_suffix_cleanup`（GUI：「參、不要清理編號後綴 tab/space」，**預設勾選**）只控制 `word/numbering.xml` 的後綴清理，不影響表格版面、表格顏色或段落縮排。啟用時，參章使用到的 numbering definition 會被加入 numbering 後綴清理的排除集合，於兩個階段都受保護：
+`skip_chapter_three_numbering_suffix_cleanup`（GUI：「參、不要清理編號後綴 tab/space」，**預設勾選**）只控制 `word/numbering.xml` 的後綴清理，不影響表格版面、表格顏色或段落縮排。
 
-- `apply_numbering_outline_format()`（`docx_fixer/numbering.py`）：**先判斷 `should_skip_numbering()` 再 sanitize**。被排除的 level（TOC 或參章）完全不呼叫 `sanitize_numbering_level_suffix_tabs_and_text()`，因此其 `w:suff`、`w:pPr/w:tabs`、`w:lvlText` 結尾空白（含半形/全形空白、tab）都保留。
-- final `force_clean_numbering_suffix_tabs_in_docx()`：排除集合包含參章定義；同時把參章定義從 body-heading「重新納入」集合移除，避免被當成一般本文標題又清乾淨。
+**只用精準 (numId, ilvl) pair，不用整包 abstractNumId。** Word 的 `abstractNumId` 是一整套編號定義，「壹、貳、參、肆」常共用同一個 `abstractNumId`；若整個 `abstractNumId` 排除，會連帶讓共用該定義的其他章節 / 其他 level 都不清理。因此參章保護**只使用 `chapter_three_numbering_pairs`（參章實際用到的 `(numId, ilvl)`）**，不使用 `chapter_three_num_ids` 或 `chapter_three_abstract_ids` 整包排除。TOC 仍維持原本的 abstractId / numId / pair 排除。
 
-`docx_processor.py` 以新選項決定排除集合：
+兩個清理階段都據此精準保護：
 
-- 啟用：`numbering_suffix_excluded_*` = TOC ∪ 參章；`final_included_*` = body-heading − 參章。並寫 `CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true collected_numIds=... collected_abstractIds=...`。
-- 停用：`numbering_suffix_excluded_*` 只含 TOC；`final_included_*` = 完整 body-heading（原本行為）。寫 `CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=false`。
+- `apply_numbering_outline_format()`（`docx_fixer/numbering.py`）：**先判斷 `should_skip_numbering()` 再 sanitize**（被跳過的 level 完全不呼叫 `sanitize_numbering_level_suffix_tabs_and_text()`，`w:suff`／`w:pPr/w:tabs`／`w:lvlText` 結尾空白全保留）。`./w:abstractNum/w:lvl` 沒有 numId，函式因此把 `excluded_numbering_pairs` 透過 `numId→abstractNumId` 轉成 `protected_abstract_levels`（`(abstractNumId, ilvl)`），只跳過對應的 ilvl，不會排除整個 abstractNumId。
+- final `force_clean_numbering_suffix_tabs_in_docx()`：參章 pair 以新參數 `protected_numbering_pairs` 傳入，作為「硬保護」在 `should_skip_level()` 最前面判斷，勝過 body-heading 的「重新納入」；body-heading re-include 集合維持原本完整內容（不再整包扣除參章）。函式同樣把 pair 轉成 `(abstractNumId, ilvl)` 只保護該 level。
 
-此選項只加入 numbering 後綴排除，不會單獨觸發表格版面/顏色或段落縮排保護（那些仍由各自的 `skip_chapter_three_*` 選項決定）；numbering.xml 的字元縮排清理（char-indent）仍使用 TOC-only 排除，不受此選項影響。注意：章節自動編號常與其他章共用同一個 numbering definition，啟用此選項會連同共用該定義的其他章節編號一併保留原樣（這是「保留整個編號定義格式」的預期結果）。
+`docx_processor.py` 以新選項決定集合：
+
+- 啟用：`numbering_suffix_excluded_numbering_pairs` = TOC pairs ∪ 參章 pairs；`numbering_suffix_excluded_num_ids/abstract_ids` = **只含 TOC**；final cleanup 額外傳 `protected_numbering_pairs` = 參章 pairs。並寫 `CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true protected_pairs=... protected_abstract_levels=... protected_abstractIds_not_used_for_chapter_three=true`。
+- 停用：排除集合只含 TOC；不傳 `protected_numbering_pairs`。寫 `CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=false`。
+
+結果：同一個 `abstractNumId` 內，只有參章實際用到的 ilvl 被保留，其餘 ilvl 仍會清理；其他章節用不同 ilvl 的編號照常清理。唯一無法區分的情況是某章節與參章用到**完全相同的 `(abstractNumId, ilvl)`**（同一個 lvl element）——此時該 level 會一併保留，因為定義本身是共用的。此選項不會單獨觸發表格版面/顏色或段落縮排保護，也不影響 numbering.xml 的字元縮排清理（char-indent 仍用 TOC-only 排除）。
 
 ## 「參、不要表格註記搬移」
 

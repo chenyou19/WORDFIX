@@ -404,12 +404,16 @@ def process_table(
 #   1. whole-table font size -> 11 pt
 #   2. table outer frame (top/bottom/left/right) -> black double border
 #   3. first-row single cell -> top/left/right no border, bottom black double
-#   4. last-row 基期：/資料來源：/註記 cells -> 10 pt, aligned, top black double,
-#      left/right/bottom no border
+#   4. footer rows: scan UPWARD from the bottom row. A row is a footer row when
+#      at least one of its cells matches a footer rule (基期：/資料來源：/註記);
+#      every matching cell in that row -> 10 pt, aligned, top black double,
+#      left/right/bottom no border. Keep going up while each row matches; stop at
+#      the first row (from the bottom) with no matching cell, so only the
+#      contiguous block of description rows at the bottom is processed.
 # Steps 3 and 4 only do local cell-border updates, so other cells keep any
 # borders they already had. Later steps deliberately override earlier ones
 # (10 pt over 11 pt, cell borders over the table frame). This never moves,
-# deletes or adds cells/rows/paragraphs; it only formats matching last-row cells.
+# deletes or adds cells/rows/paragraphs; it only formats matching footer cells.
 FOOTER_SOURCE_BODY_FONT_SIZE_HALF_POINTS = "22"  # 11 pt
 FOOTER_SOURCE_NOTE_FONT_SIZE_HALF_POINTS = "20"  # 10 pt
 FOOTER_SOURCE_BASE_PERIOD_PREFIX = "基期："
@@ -503,6 +507,8 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         "footer_note_cells_adjusted": 0,
         "footer_note_cell_matches": [],
         "footer_note_cell_debug": [],
+        "footer_rows_processed": 0,
+        "footer_row_matches": [],
     }
 
     if stop:
@@ -525,29 +531,43 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         _apply_first_row_single_cell_borders(first_row_cells[0])
         result["first_row_single_cell_border_adjusted"] = True
 
-    # 4. last-row 基期：/資料來源：/註記 cells. Only matched cells are touched.
-    # De-duplicate by the underlying XML element so a merged / spanned cell is
-    # never formatted or logged twice.
-    seen_cells: set[int] = set()
-    for tc in rows[-1].findall("w:tc", NS):
-        if id(tc) in seen_cells:
-            continue
-        seen_cells.add(id(tc))
+    # 4. Footer rows: scan upward from the bottom row. Keep formatting while each
+    # row has at least one matching cell; stop at the first row (from the bottom)
+    # that has none, so only the contiguous bottom block of description rows is
+    # processed (a non-matching / blank row in between ends the scan).
+    for tr in reversed(rows):
         if stop:
             stop.check()
 
-        text = normalize_footer_source_cell_text(tc)
-        classified = _classify_footer_cell(text)
-        if classified is None:
-            continue
-        cell_type, alignment = classified
+        # Collect this row's matching cells, de-duplicating by the underlying XML
+        # element so a merged / spanned cell is never processed or logged twice.
+        seen_cells: set[int] = set()
+        row_matches: list[tuple[object, str, str, str]] = []
+        for tc in tr.findall("w:tc", NS):
+            if id(tc) in seen_cells:
+                continue
+            seen_cells.add(id(tc))
+            text = normalize_footer_source_cell_text(tc)
+            classified = _classify_footer_cell(text)
+            if classified is None:
+                continue
+            cell_type, alignment = classified
+            row_matches.append((tc, cell_type, alignment, text))
 
-        _set_runs_font_size(tc, FOOTER_SOURCE_NOTE_FONT_SIZE_HALF_POINTS)
-        _set_paragraph_alignment(tc, alignment)
-        _apply_last_row_footer_cell_borders(tc)
+        if not row_matches:
+            break  # first non-footer row from the bottom stops the upward scan
 
-        result["footer_note_cells_adjusted"] += 1
-        result["footer_note_cell_matches"].append(cell_type)
-        result["footer_note_cell_debug"].append(f"{cell_type}: {text[:50]}")
+        for tc, cell_type, alignment, text in row_matches:
+            _set_runs_font_size(tc, FOOTER_SOURCE_NOTE_FONT_SIZE_HALF_POINTS)
+            _set_paragraph_alignment(tc, alignment)
+            _apply_last_row_footer_cell_borders(tc)
+            result["footer_note_cells_adjusted"] += 1
+            result["footer_note_cell_matches"].append(cell_type)
+            result["footer_note_cell_debug"].append(f"{cell_type}: {text[:50]}")
+
+        result["footer_rows_processed"] += 1
+        result["footer_row_matches"].append(
+            ",".join(cell_type for _, cell_type, _, _ in row_matches)
+        )
 
     return result

@@ -71,9 +71,11 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `table_footer_note_source_format_applied`：最後 post-process 是否實際套用「表格最後一列說明格式化」（在 Word COM AutoFit／fallback 之後執行）。
 - `outer_double_border_applied_by_footer_source_format`：本功能是否套用外圍黑色雙線。
 - `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整。
-- `footer_note_cells_adjusted`：最後一列命中「基期：」「資料來源：」或註記（`^註(?:\d+)?[：:]`）的 cell 數。
-- `footer_note_cell_matches`：命中類型清單（`note`／`base_period`／`source`）。
-- `footer_note_cell_debug`：命中 cell 文字前 50 字與套用動作。
+- `footer_rows_processed`：從表格底部往上連續處理的 footer 列數（中斷於第一個無命中的列）。
+- `footer_row_matches`：每列命中的類型（由下往上），例如 `base_period,source | note`。
+- `footer_note_cells_adjusted`：所有 footer 列命中「基期：」「資料來源：」或註記（`^註(?:\d+)?[：:]`）並格式化的 cell 總數。
+- `footer_note_cell_matches`：所有命中 cell 的類型清單（`note`／`base_period`／`source`）。
+- `footer_note_cell_debug`：每個命中 cell 文字前 50 字與套用動作。
 - `table_footer_note_source_format_skipped_reason`：未套用時的原因（`feature_disabled`、`layout not adjusted for this table` 或各跳過原因）。
 - `table_note_move_gui_hidden`：表格註記搬移功能已從 GUI 隱藏（恆 `true`）。
 - `table_note_move_forced_false`：`move_table_notes_below` 是否為關（GUI 一律強制 `true`）。

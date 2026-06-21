@@ -957,5 +957,120 @@ class FooterNotePipelineTests(unittest.TestCase):
         self.assertGreaterEqual(tbl_count, 2)
 
 
+# ----------------------------------------------------------------------------
+# Footer rows are scanned UPWARD from the bottom, stopping at the first
+# non-footer row (only the contiguous bottom block is processed).
+# ----------------------------------------------------------------------------
+class FooterContiguousBottomScanTests(unittest.TestCase):
+    def test_multiple_contiguous_footer_rows_are_all_processed(self):
+        tbl = make_table(
+            [
+                ["項目", "金額", "比率", "排名", "備註"],  # row 0 header
+                ["土地", "100", "50%", "1", "ok"],  # row 1 data
+                ["註：本表單位元", "", "", "", ""],  # row 2 footer (note)
+                ["基期：民國100年", "", "資料來源：本所", "", ""],  # row 3 footer
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+
+        # Rows 3 and 2 are the contiguous footer block; row 1 (data) stops it.
+        self.assertEqual(result["footer_rows_processed"], 2)
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["20"])
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 2)), ["20"])
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 2, 0)), ["20"])
+        self.assertEqual(cell_paragraph_alignments(cell_at(tbl, 2, 0)), ["left"])
+        # Borders applied to the footer cells above the last row too.
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 2, 0), "top")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 2, 0), "bottom")))
+        # Row 1 (data) untouched.
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 1, 0)), ["22"])
+        self.assertIsNone(cell_at(tbl, 1, 0).find("w:tcPr/w:tcBorders", NS))
+
+        # footer_row_matches is bottom-up: row 3 first, then row 2.
+        self.assertEqual(len(result["footer_row_matches"]), 2)
+        self.assertCountEqual(
+            result["footer_row_matches"][0].split(","), ["base_period", "source"]
+        )
+        self.assertEqual(result["footer_row_matches"][1], "note")
+        self.assertEqual(result["footer_note_cells_adjusted"], 3)
+
+    def test_data_row_between_footers_stops_the_scan(self):
+        tbl = make_table(
+            [
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["註：上方非連續註記", "", "", "", ""],  # row 1: note ABOVE a data row
+                ["土地", "100", "50%", "1", "ok"],  # row 2: data
+                ["基期：民國100年", "", "", "", ""],  # row 3: footer (bottom)
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+
+        # Only the bottom row is processed; row 2 (data) ends the scan, so the
+        # non-contiguous note in row 1 is left alone.
+        self.assertEqual(result["footer_rows_processed"], 1)
+        self.assertEqual(result["footer_note_cell_matches"], ["base_period"])
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["20"])
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 1, 0)), ["22"])
+        self.assertIsNone(cell_at(tbl, 1, 0).find("w:tcPr/w:tcBorders", NS))
+
+    def test_blank_row_stops_the_scan(self):
+        tbl = make_table(
+            [
+                ["註：頂部註記", "", "", "", ""],  # row 0: note (top)
+                ["", "", "", "", ""],  # row 1: blank
+                ["基期：100年", "", "", "", ""],  # row 2: footer (bottom)
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertEqual(result["footer_rows_processed"], 1)
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 2, 0)), ["20"])
+        # Blank row stops the scan before the top note row.
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 0, 0)), ["22"])
+
+    def test_no_footer_row_at_bottom_processes_nothing(self):
+        tbl = make_table(
+            [
+                ["註：上方註記", "", "", "", ""],  # footer-like, but not at bottom
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["土地", "100", "50%", "1", "ok"],  # bottom row is data
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertEqual(result["footer_rows_processed"], 0)
+        self.assertEqual(result["footer_note_cells_adjusted"], 0)
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 0, 0)), ["22"])
+
+    def test_merged_cell_in_footer_row_processed_once_per_row(self):
+        tbl = make_gridspan_note_table("註：本表單位為新臺幣元", span=5)
+        result = apply_table_footer_source_format(tbl)
+        # The single merged bottom-row cell is one footer row, one cell.
+        self.assertEqual(result["footer_rows_processed"], 1)
+        self.assertEqual(result["footer_note_cells_adjusted"], 1)
+        self.assertEqual(result["footer_row_matches"], ["note"])
+
+    def test_pipeline_log_reports_footer_rows_processed(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),  # first table -> skipped
+            make_paragraph("一、報表"),
+            make_table(
+                [
+                    ["項目", "金額", "比率", "排名", "備註"],
+                    ["土地", "100", "50%", "1", "ok"],
+                    ["註：本表單位元", "", "", "", ""],
+                    ["基期：100年", "", "資料來源：本所", "", ""],
+                ]
+            ),
+        )
+        summary, _ = run_fix(document, footer_options())
+        record = summary.table_log_records[1]
+        self.assertTrue(record["table_footer_note_source_format_applied"])
+        self.assertEqual(record["footer_rows_processed"], 2)
+        self.assertEqual(len(record["footer_row_matches"]), 2)
+        self.assertEqual(record["footer_note_cells_adjusted"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

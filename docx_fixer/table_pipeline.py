@@ -106,6 +106,8 @@ def _footer_source_log_fields(
         "footer_note_cells_adjusted": 0,
         "footer_note_cell_matches": [],
         "footer_note_cell_debug": [],
+        "footer_rows_processed": 0,
+        "footer_row_matches": [],
         "table_footer_note_source_format_skipped_reason": reason,
     }
 
@@ -193,6 +195,8 @@ def build_table_log_record(
     footer_note_cells_adjusted: int = 0,
     footer_note_cell_matches: list[str] | None = None,
     footer_note_cell_debug: list[str] | None = None,
+    footer_rows_processed: int = 0,
+    footer_row_matches: list[str] | None = None,
     table_footer_note_source_format_skipped_reason: str = "none",
     table_note_move_gui_hidden: bool = False,
     table_note_move_forced_false: bool = False,
@@ -263,6 +267,8 @@ def build_table_log_record(
         "footer_note_cells_adjusted": footer_note_cells_adjusted,
         "footer_note_cell_matches": list(footer_note_cell_matches or []),
         "footer_note_cell_debug": list(footer_note_cell_debug or []),
+        "footer_rows_processed": footer_rows_processed,
+        "footer_row_matches": list(footer_row_matches or []),
         "table_footer_note_source_format_skipped_reason": table_footer_note_source_format_skipped_reason,
         "table_note_move_gui_hidden": table_note_move_gui_hidden,
         "table_note_move_forced_false": table_note_move_forced_false,
