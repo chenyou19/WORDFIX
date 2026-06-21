@@ -408,15 +408,29 @@ def _mark_table_footer_source_format_applied(
         record["first_row_single_cell_border_adjusted"] = bool(
             result.get("first_row_single_cell_border_adjusted", False)
         )
+        record["footer_rows_detected"] = bool(result.get("footer_rows_detected", False))
+        record["footer_row_count"] = int(result.get("footer_row_count", 0))
+        record["footer_top_row_index"] = result.get("footer_top_row_index")
+        record["footer_cell_matches"] = list(result.get("footer_cell_matches", []))
+        record["footer_block_top_border_applied"] = bool(
+            result.get("footer_block_top_border_applied", False)
+        )
+        record["footer_internal_top_borders_cleared"] = int(
+            result.get("footer_internal_top_borders_cleared", 0)
+        )
         record["footer_note_cells_adjusted"] = int(
             result.get("footer_note_cells_adjusted", 0)
+        )
+        record["footer_base_period_cells_adjusted"] = int(
+            result.get("footer_base_period_cells_adjusted", 0)
+        )
+        record["footer_source_cells_adjusted"] = int(
+            result.get("footer_source_cells_adjusted", 0)
         )
         record["footer_note_cell_matches"] = list(
             result.get("footer_note_cell_matches", [])
         )
         record["footer_note_cell_debug"] = list(result.get("footer_note_cell_debug", []))
-        record["footer_rows_processed"] = int(result.get("footer_rows_processed", 0))
-        record["footer_row_matches"] = list(result.get("footer_row_matches", []))
 
     summary.table_footer_source_format_tables = len(footer_results)
 

@@ -90,9 +90,11 @@ def apply_table_footer_source_format_in_docx(
                     "FOOTER_SOURCE_FORMAT_REAPPLY_APPLIED "
                     f"part_name={part_name} global_table_index={global_table_index} "
                     f"table_index={table_index} "
-                    f"footer_rows_processed={result['footer_rows_processed']} "
-                    f"footer_row_matches={'|'.join(result['footer_row_matches']) or 'none'} "
-                    f"footer_note_cells_adjusted={result['footer_note_cells_adjusted']}"
+                    f"footer_row_count={result['footer_row_count']} "
+                    f"footer_top_row_index={result['footer_top_row_index']} "
+                    f"footer_cell_matches={'|'.join(result['footer_cell_matches']) or 'none'} "
+                    f"footer_block_top_border_applied={result['footer_block_top_border_applied']} "
+                    f"footer_internal_top_borders_cleared={result['footer_internal_top_borders_cleared']}"
                 )
 
             if part_changed:

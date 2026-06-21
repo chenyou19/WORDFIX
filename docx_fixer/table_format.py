@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import namedtuple
 
 from lxml import etree
 
@@ -404,26 +405,35 @@ def process_table(
 #   1. whole-table font size -> 11 pt
 #   2. table outer frame (top/bottom/left/right) -> black double border
 #   3. first-row single cell -> top/left/right no border, bottom black double
-#   4. footer rows: scan UPWARD from the bottom row. A row is a footer row when
-#      at least one of its cells matches a footer rule (基期：/資料來源：/註記);
-#      every matching cell in that row -> 10 pt, aligned, top black double,
-#      left/right/bottom no border. Keep going up while each row matches; stop at
-#      the first row (from the bottom) with no matching cell, so only the
-#      contiguous block of description rows at the bottom is processed.
-# Steps 3 and 4 only do local cell-border updates, so other cells keep any
-# borders they already had. Later steps deliberately override earlier ones
-# (10 pt over 11 pt, cell borders over the table frame). This never moves,
-# deletes or adds cells/rows/paragraphs; it only formats matching footer cells.
+#   4. footer block: collect the contiguous block of footer rows at the BOTTOM
+#      of the table (scan upward; a row is a footer row when any of its cells
+#      matches 基期：/資料來源：/註記; stop at the first non-matching/blank row),
+#      then format the block as a unit:
+#        - the TOP footer row gets a black double TOP border across EVERY cell
+#          (the single data/footer separator, spanning the whole width);
+#        - every other footer row gets its TOP border cleared (so there is no
+#          line between consecutive 註1/註2/註3 rows);
+#        - matched cells in every footer row -> 10 pt, aligned, left/right/bottom
+#          no border.
+# All border updates are local (one side at a time), so other cells keep any
+# borders they already had. This never moves, deletes or adds any cell, row or
+# paragraph; it only formats the matching footer cells (plus the separator).
 FOOTER_SOURCE_BODY_FONT_SIZE_HALF_POINTS = "22"  # 11 pt
 FOOTER_SOURCE_NOTE_FONT_SIZE_HALF_POINTS = "20"  # 10 pt
-FOOTER_SOURCE_BASE_PERIOD_PREFIX = "基期："
-FOOTER_SOURCE_DATA_SOURCE_PREFIX = "資料來源："
 
-# A last-row note cell starts directly with 「註 + 可選阿拉伯數字 + 全形或半形冒號」.
-# Matches 註：/註:/註1：/註1:/註10：/註10:; rejects 備註：/註記：/本註：/說明註：
-# (註 must be at the very start, immediately followed by an optional number and
-# a colon).
-FOOTER_NOTE_PREFIX_PATTERN = re.compile(r"^註(?:\d+)?[：:]")
+# A note cell starts directly with 「註 + 可選空白 + 可選阿拉伯數字 + 可選空白 +
+# 全形或半形冒號」. Matches 註：/註:/註1：/註 1：/註　2：/註10:; rejects
+# 備註：/註記：/本註：/說明註：（註 必須在最前面，後面緊跟可選空白、可選數字、冒號）。
+FOOTER_NOTE_PREFIX_PATTERN = re.compile(r"^註[ \t　]*(?:\d+[ \t　]*)?[：:]")
+FOOTER_BASE_PERIOD_PREFIX_PATTERN = re.compile(r"^基期[：:]")
+FOOTER_SOURCE_PREFIX_PATTERN = re.compile(r"^資料來源[：:]")
+
+# Paragraph alignment per footer cell type (資料來源 right, the rest left).
+FOOTER_ALIGNMENT_BY_TYPE = {"base_period": "left", "source": "right", "note": "left"}
+
+# A collected bottom footer row: its 0-based row index, its de-duplicated cells,
+# and the matched cells as (tc, cell_type, normalized_text).
+_FooterRow = namedtuple("_FooterRow", ["row_index", "cells", "matches"])
 
 # Zero-width / control characters plus the Word cell-end mark that can trail the
 # visible text of a cell. Stripped before the 基期/資料來源 prefix test so a
@@ -442,6 +452,21 @@ def normalize_footer_source_cell_text(tc) -> str:
     for char in _FOOTER_CELL_CONTROL_CHARS:
         text = text.replace(char, "")
     return " ".join(text.split())
+
+
+def classify_footer_cell_text(text: str) -> str | None:
+    """Classify normalized cell text as a footer cell type, or None.
+
+    Returns "base_period", "source", "note", or None when it is not a footer
+    cell. Alignment per type is in FOOTER_ALIGNMENT_BY_TYPE.
+    """
+    if FOOTER_BASE_PERIOD_PREFIX_PATTERN.match(text):
+        return "base_period"
+    if FOOTER_SOURCE_PREFIX_PATTERN.match(text):
+        return "source"
+    if FOOTER_NOTE_PREFIX_PATTERN.match(text):
+        return "note"
+    return None
 
 
 def _set_runs_font_size(scope, half_points: str) -> None:
@@ -471,27 +496,98 @@ def _apply_first_row_single_cell_borders(tc) -> None:
     set_border_double_black(borders, "bottom")
 
 
-def _apply_last_row_footer_cell_borders(tc) -> None:
-    borders = _get_or_add_tc_borders(tc)
-    set_border_double_black(borders, "top")
-    set_border_nil(borders, "left")
-    set_border_nil(borders, "right")
-    set_border_nil(borders, "bottom")
+def _unique_row_cells(tr) -> list:
+    """A row's cells, de-duplicated by XML element (merged / spanned cells)."""
+    seen: set[int] = set()
+    cells = []
+    for tc in tr.findall("w:tc", NS):
+        if id(tc) in seen:
+            continue
+        seen.add(id(tc))
+        cells.append(tc)
+    return cells
 
 
-def _classify_footer_cell(text: str) -> tuple[str, str] | None:
-    """Return (cell_type, alignment) for a normalized last-row cell, or None.
+def collect_consecutive_footer_rows_from_bottom(
+    tbl, stop: StopController | None = None
+) -> list:
+    """Collect the contiguous block of footer rows at the bottom of a table.
 
-    註記 / 基期 / 資料來源 share the same last-row footer treatment; only the
-    alignment differs (資料來源 is right-aligned, the rest are left-aligned).
+    Scans rows upward from the bottom; a row is a footer row when at least one
+    of its (de-duplicated) cells matches a footer rule. Stops at the first row
+    (including a blank row) with no match. Returns the footer rows ordered
+    top-to-bottom (topmost footer row first).
     """
-    if text.startswith(FOOTER_SOURCE_BASE_PERIOD_PREFIX):
-        return "base_period", "left"
-    if text.startswith(FOOTER_SOURCE_DATA_SOURCE_PREFIX):
-        return "source", "right"
-    if FOOTER_NOTE_PREFIX_PATTERN.match(text):
-        return "note", "left"
-    return None
+    rows = tbl.findall("w:tr", NS)
+    footer_rows: list = []
+    for row_index in range(len(rows) - 1, -1, -1):
+        if stop:
+            stop.check()
+        cells = _unique_row_cells(rows[row_index])
+        matches = []
+        for tc in cells:
+            text = normalize_footer_source_cell_text(tc)
+            cell_type = classify_footer_cell_text(text)
+            if cell_type is not None:
+                matches.append((tc, cell_type, text))
+        if not matches:
+            break  # first non-footer row from the bottom stops the upward scan
+        footer_rows.append(_FooterRow(row_index=row_index, cells=cells, matches=matches))
+    footer_rows.reverse()  # top-to-bottom
+    return footer_rows
+
+
+def apply_footer_block_format(footer_rows: list) -> dict[str, object]:
+    """Format a collected, top-to-bottom block of footer rows as a unit.
+
+    The TOP footer row gets a black double top border across every cell (the one
+    data/footer separator). Every other footer row has its top border cleared so
+    no line appears between consecutive footer rows. Matched cells get 10 pt,
+    their alignment, and no left/right/bottom border.
+    """
+    stats: dict[str, object] = {
+        "footer_block_top_border_applied": False,
+        "footer_internal_top_borders_cleared": 0,
+        "footer_note_cells_adjusted": 0,
+        "footer_base_period_cells_adjusted": 0,
+        "footer_source_cells_adjusted": 0,
+        "footer_cell_matches": [],
+        "footer_note_cell_matches": [],
+        "footer_note_cell_debug": [],
+    }
+    if not footer_rows:
+        return stats
+
+    # A. Top footer row -> black double TOP border across ALL its cells, so the
+    # data/footer separator spans the whole table width (not only matched cells).
+    for tc in footer_rows[0].cells:
+        set_border_double_black(_get_or_add_tc_borders(tc), "top")
+    stats["footer_block_top_border_applied"] = True
+
+    # B. Every other footer row -> clear the TOP border across ALL its cells, so
+    # no horizontal line appears between consecutive footer rows.
+    for footer_row in footer_rows[1:]:
+        for tc in footer_row.cells:
+            set_border_nil(_get_or_add_tc_borders(tc), "top")
+        stats["footer_internal_top_borders_cleared"] += 1
+
+    # C. Matched cells in every footer row -> 10 pt, alignment, no left/right/
+    # bottom border. The TOP edge is owned by A/B and intentionally left as-is.
+    for footer_row in footer_rows:
+        row_types = []
+        for tc, cell_type, text in footer_row.matches:
+            _set_runs_font_size(tc, FOOTER_SOURCE_NOTE_FONT_SIZE_HALF_POINTS)
+            _set_paragraph_alignment(tc, FOOTER_ALIGNMENT_BY_TYPE[cell_type])
+            borders = _get_or_add_tc_borders(tc)
+            set_border_nil(borders, "left")
+            set_border_nil(borders, "right")
+            set_border_nil(borders, "bottom")
+            stats[f"footer_{cell_type}_cells_adjusted"] += 1
+            row_types.append(cell_type)
+            stats["footer_note_cell_matches"].append(cell_type)
+            stats["footer_note_cell_debug"].append(f"{cell_type}: {text[:50]}")
+        stats["footer_cell_matches"].append(",".join(row_types))
+    return stats
 
 
 def apply_table_footer_source_format(tbl, stop: StopController | None = None) -> dict[str, object]:
@@ -504,11 +600,17 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
     result: dict[str, object] = {
         "outer_double_border_applied": False,
         "first_row_single_cell_border_adjusted": False,
+        "footer_rows_detected": False,
+        "footer_row_count": 0,
+        "footer_top_row_index": None,
+        "footer_cell_matches": [],
+        "footer_block_top_border_applied": False,
+        "footer_internal_top_borders_cleared": 0,
         "footer_note_cells_adjusted": 0,
+        "footer_base_period_cells_adjusted": 0,
+        "footer_source_cells_adjusted": 0,
         "footer_note_cell_matches": [],
         "footer_note_cell_debug": [],
-        "footer_rows_processed": 0,
-        "footer_row_matches": [],
     }
 
     if stop:
@@ -531,43 +633,14 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         _apply_first_row_single_cell_borders(first_row_cells[0])
         result["first_row_single_cell_border_adjusted"] = True
 
-    # 4. Footer rows: scan upward from the bottom row. Keep formatting while each
-    # row has at least one matching cell; stop at the first row (from the bottom)
-    # that has none, so only the contiguous bottom block of description rows is
-    # processed (a non-matching / blank row in between ends the scan).
-    for tr in reversed(rows):
-        if stop:
-            stop.check()
-
-        # Collect this row's matching cells, de-duplicating by the underlying XML
-        # element so a merged / spanned cell is never processed or logged twice.
-        seen_cells: set[int] = set()
-        row_matches: list[tuple[object, str, str, str]] = []
-        for tc in tr.findall("w:tc", NS):
-            if id(tc) in seen_cells:
-                continue
-            seen_cells.add(id(tc))
-            text = normalize_footer_source_cell_text(tc)
-            classified = _classify_footer_cell(text)
-            if classified is None:
-                continue
-            cell_type, alignment = classified
-            row_matches.append((tc, cell_type, alignment, text))
-
-        if not row_matches:
-            break  # first non-footer row from the bottom stops the upward scan
-
-        for tc, cell_type, alignment, text in row_matches:
-            _set_runs_font_size(tc, FOOTER_SOURCE_NOTE_FONT_SIZE_HALF_POINTS)
-            _set_paragraph_alignment(tc, alignment)
-            _apply_last_row_footer_cell_borders(tc)
-            result["footer_note_cells_adjusted"] += 1
-            result["footer_note_cell_matches"].append(cell_type)
-            result["footer_note_cell_debug"].append(f"{cell_type}: {text[:50]}")
-
-        result["footer_rows_processed"] += 1
-        result["footer_row_matches"].append(
-            ",".join(cell_type for _, cell_type, _, _ in row_matches)
-        )
+    # 4. Footer block: collect the bottom contiguous footer rows, then format the
+    # block as a unit (separate scan from apply, so the borders are decided per
+    # block rather than per cell -- only the top row gets the separator line).
+    footer_rows = collect_consecutive_footer_rows_from_bottom(tbl, stop=stop)
+    if footer_rows:
+        result["footer_rows_detected"] = True
+        result["footer_row_count"] = len(footer_rows)
+        result["footer_top_row_index"] = footer_rows[0].row_index
+        result.update(apply_footer_block_format(footer_rows))
 
     return result

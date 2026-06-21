@@ -250,10 +250,15 @@ class FooterFormatUnitTests(unittest.TestCase):
     def test_non_matching_last_row_cell_is_left_alone(self):
         tbl = footer_table()
         apply_table_footer_source_format(tbl)
-        other = cell_at(tbl, 3, 1)  # "其他資料"
-        # Stays 11 pt and gets no cell-level border overrides.
+        other = cell_at(tbl, 3, 1)  # "其他資料" — unmatched, in the top footer row
+        # Font/alignment are NOT changed for an unmatched cell...
         self.assertEqual(cell_run_sizes(other), ["22"])
-        self.assertIsNone(other.find("w:tcPr/w:tcBorders", NS))
+        # ...but the separator top border spans the WHOLE top footer row.
+        self.assertTrue(is_double_black(tc_border(other, "top")))
+        # No left/right/bottom override on the unmatched cell.
+        self.assertIsNone(tc_border(other, "left"))
+        self.assertIsNone(tc_border(other, "right"))
+        self.assertIsNone(tc_border(other, "bottom"))
 
     def test_empty_paragraph_without_run_does_not_crash(self):
         tbl = make_table(
@@ -280,7 +285,8 @@ class FooterFormatUnitTests(unittest.TestCase):
             ]
         )
         result = apply_table_footer_source_format(tbl)
-        self.assertEqual(result["footer_note_cells_adjusted"], 2)
+        self.assertEqual(result["footer_base_period_cells_adjusted"], 1)
+        self.assertEqual(result["footer_source_cells_adjusted"], 1)
         self.assertEqual(cell_run_sizes(cell_at(tbl, 2, 0)), ["20"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 2, 1)), ["20"])
 
@@ -425,10 +431,14 @@ class FooterFormatOrderTests(unittest.TestCase):
         self.assertTrue(record["table_footer_note_source_format_applied"])
         self.assertTrue(record["outer_double_border_applied_by_footer_source_format"])
         self.assertTrue(record["first_row_single_cell_border_adjusted"])
-        self.assertEqual(record["footer_note_cells_adjusted"], 2)
+        self.assertEqual(record["footer_base_period_cells_adjusted"], 1)
+        self.assertEqual(record["footer_source_cells_adjusted"], 1)
+        self.assertEqual(record["footer_note_cells_adjusted"], 0)
         self.assertCountEqual(
             record["footer_note_cell_matches"], ["base_period", "source"]
         )
+        self.assertTrue(record["footer_block_top_border_applied"])
+        self.assertEqual(record["footer_row_count"], 1)
         self.assertTrue(any("基期" in line for line in record["footer_note_cell_debug"]))
         self.assertEqual(record["table_footer_note_source_format_skipped_reason"], "none")
         self.assertEqual(summary.table_footer_source_format_tables, 1)
@@ -612,6 +622,11 @@ class FooterNoteRegexTests(unittest.TestCase):
         for text in ("註：", "註:", "註1：", "註1:", "註2：", "註3:", "註10：", "註10:"):
             self.assertIsNotNone(FOOTER_NOTE_PREFIX_PATTERN.match(text), text)
 
+    def test_matches_note_with_spaces(self):
+        # Optional half-width / full-width / tab spaces around the number.
+        for text in ("註 1：", "註　1：", "註 2：", "註　2：", "註 10:", "註\t3："):
+            self.assertIsNotNone(FOOTER_NOTE_PREFIX_PATTERN.match(text), text)
+
     def test_rejects_lookalikes(self):
         for text in ("備註：", "註記：", "本註：", "說明註：", "註冊：", "註明事項"):
             self.assertIsNone(FOOTER_NOTE_PREFIX_PATTERN.match(text), text)
@@ -660,10 +675,13 @@ class FooterNoteCellUnitTests(unittest.TestCase):
     def test_other_last_row_cells_are_not_changed_to_10pt(self):
         tbl = note_last_row_table("註：說明")
         apply_table_footer_source_format(tbl)
-        # "其他" and "說明" cells stay at 11 pt with no cell border override.
-        self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 1)), ["22"])
-        self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 2)), ["22"])
-        self.assertIsNone(cell_at(tbl, 3, 1).find("w:tcPr/w:tcBorders", NS))
+        # "其他" / "說明" cells stay at 11 pt and keep their alignment; only the
+        # separator top border is added across the whole top footer row.
+        for col in (1, 2):
+            self.assertEqual(cell_run_sizes(cell_at(tbl, 3, col)), ["22"])
+            self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, col), "top")))
+            self.assertIsNone(tc_border(cell_at(tbl, 3, col), "left"))
+            self.assertIsNone(tc_border(cell_at(tbl, 3, col), "bottom"))
 
     def test_note_in_non_last_row_is_ignored(self):
         tbl = make_table(
@@ -974,7 +992,7 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         result = apply_table_footer_source_format(tbl)
 
         # Rows 3 and 2 are the contiguous footer block; row 1 (data) stops it.
-        self.assertEqual(result["footer_rows_processed"], 2)
+        self.assertEqual(result["footer_row_count"], 2)
         self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["20"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 2)), ["20"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 2, 0)), ["20"])
@@ -986,13 +1004,21 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         self.assertEqual(cell_run_sizes(cell_at(tbl, 1, 0)), ["22"])
         self.assertIsNone(cell_at(tbl, 1, 0).find("w:tcPr/w:tcBorders", NS))
 
-        # footer_row_matches is bottom-up: row 3 first, then row 2.
-        self.assertEqual(len(result["footer_row_matches"]), 2)
+        # footer_cell_matches is top-to-bottom: row 2 (note) first, then row 3.
+        self.assertEqual(len(result["footer_cell_matches"]), 2)
+        self.assertEqual(result["footer_cell_matches"][0], "note")
         self.assertCountEqual(
-            result["footer_row_matches"][0].split(","), ["base_period", "source"]
+            result["footer_cell_matches"][1].split(","), ["base_period", "source"]
         )
-        self.assertEqual(result["footer_row_matches"][1], "note")
-        self.assertEqual(result["footer_note_cells_adjusted"], 3)
+        # Per-type counts: 1 note (row 2) + 1 base_period + 1 source (row 3).
+        self.assertEqual(result["footer_note_cells_adjusted"], 1)
+        self.assertEqual(result["footer_base_period_cells_adjusted"], 1)
+        self.assertEqual(result["footer_source_cells_adjusted"], 1)
+        # Only the top footer row (row 2) draws the separator; row 3's top is cleared.
+        self.assertTrue(result["footer_block_top_border_applied"])
+        self.assertEqual(result["footer_internal_top_borders_cleared"], 1)
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 2, 0), "top")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "top")))
 
     def test_data_row_between_footers_stops_the_scan(self):
         tbl = make_table(
@@ -1007,7 +1033,7 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
 
         # Only the bottom row is processed; row 2 (data) ends the scan, so the
         # non-contiguous note in row 1 is left alone.
-        self.assertEqual(result["footer_rows_processed"], 1)
+        self.assertEqual(result["footer_row_count"], 1)
         self.assertEqual(result["footer_note_cell_matches"], ["base_period"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["20"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 1, 0)), ["22"])
@@ -1023,7 +1049,7 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         )
         result = apply_table_footer_source_format(tbl)
 
-        self.assertEqual(result["footer_rows_processed"], 1)
+        self.assertEqual(result["footer_row_count"], 1)
         self.assertEqual(cell_run_sizes(cell_at(tbl, 2, 0)), ["20"])
         # Blank row stops the scan before the top note row.
         self.assertEqual(cell_run_sizes(cell_at(tbl, 0, 0)), ["22"])
@@ -1038,7 +1064,7 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         )
         result = apply_table_footer_source_format(tbl)
 
-        self.assertEqual(result["footer_rows_processed"], 0)
+        self.assertEqual(result["footer_row_count"], 0)
         self.assertEqual(result["footer_note_cells_adjusted"], 0)
         self.assertEqual(cell_run_sizes(cell_at(tbl, 0, 0)), ["22"])
 
@@ -1046,9 +1072,9 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         tbl = make_gridspan_note_table("註：本表單位為新臺幣元", span=5)
         result = apply_table_footer_source_format(tbl)
         # The single merged bottom-row cell is one footer row, one cell.
-        self.assertEqual(result["footer_rows_processed"], 1)
+        self.assertEqual(result["footer_row_count"], 1)
         self.assertEqual(result["footer_note_cells_adjusted"], 1)
-        self.assertEqual(result["footer_row_matches"], ["note"])
+        self.assertEqual(result["footer_cell_matches"], ["note"])
 
     def test_pipeline_log_reports_footer_rows_processed(self):
         document = build_document(
@@ -1067,9 +1093,134 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         summary, _ = run_fix(document, footer_options())
         record = summary.table_log_records[1]
         self.assertTrue(record["table_footer_note_source_format_applied"])
-        self.assertEqual(record["footer_rows_processed"], 2)
-        self.assertEqual(len(record["footer_row_matches"]), 2)
-        self.assertEqual(record["footer_note_cells_adjusted"], 3)
+        self.assertEqual(record["footer_row_count"], 2)
+        self.assertEqual(len(record["footer_cell_matches"]), 2)
+        self.assertEqual(record["footer_note_cells_adjusted"], 1)
+        self.assertEqual(record["footer_base_period_cells_adjusted"], 1)
+        self.assertEqual(record["footer_source_cells_adjusted"], 1)
+        self.assertEqual(record["footer_internal_top_borders_cleared"], 1)
+        self.assertTrue(record["footer_block_top_border_applied"])
+
+
+# ----------------------------------------------------------------------------
+# The data/footer separator is a SINGLE double line above the top footer row;
+# there must be no horizontal line between consecutive 註1/註2/註3 rows.
+# ----------------------------------------------------------------------------
+class FooterBlockSeparatorBorderTests(unittest.TestCase):
+    def test_single_note_row_has_top_double_border(self):
+        tbl = make_table(
+            [
+                ["最後推定比較租金", "", "", "", ""],  # data row
+                ["註1：價格日期調整……", "", "", "", ""],  # only footer row
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+        self.assertEqual(result["footer_row_count"], 1)
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "top")))
+        self.assertEqual(result["footer_internal_top_borders_cleared"], 0)
+
+    def test_two_consecutive_notes_only_first_row_has_top_border(self):
+        tbl = make_table(
+            [
+                ["最後推定比較租金", "", "", "", ""],  # data
+                ["註1：價格日期調整……", "", "", "", ""],  # top footer row
+                ["註2：比較標的間試算……", "", "", "", ""],  # second footer row
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+        self.assertEqual(result["footer_row_count"], 2)
+        # 註1 row -> separator above it; 註2 row -> top cleared (no line between).
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "top")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 2, 0), "top")))
+        self.assertEqual(result["footer_internal_top_borders_cleared"], 1)
+        # The data row above the block is untouched.
+        self.assertIsNone(cell_at(tbl, 0, 0).find("w:tcPr/w:tcBorders", NS))
+
+    def test_three_consecutive_notes_only_first_row_has_top_border(self):
+        tbl = make_table(
+            [
+                ["資料", "", "", "", ""],
+                ["註1：a", "", "", "", ""],  # top footer
+                ["註2：b", "", "", "", ""],
+                ["註3：c", "", "", "", ""],
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+        self.assertEqual(result["footer_row_count"], 3)
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "top")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 2, 0), "top")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "top")))
+        self.assertEqual(result["footer_internal_top_borders_cleared"], 2)
+        self.assertEqual(result["footer_note_cells_adjusted"], 3)
+
+    def test_base_source_note_block_only_top_row_has_separator(self):
+        tbl = make_table(
+            [
+                ["資料", "", "", "", ""],
+                ["基期：100年", "", "", "", ""],  # top footer
+                ["資料來源：本所", "", "", "", ""],
+                ["註1：a", "", "", "", ""],
+                ["註2：b", "", "", "", ""],
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+        # All four bottom rows form one contiguous footer block.
+        self.assertEqual(result["footer_row_count"], 4)
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "top")))
+        for row in (2, 3, 4):
+            self.assertTrue(is_nil(tc_border(cell_at(tbl, row, 0), "top")), row)
+        self.assertEqual(result["footer_base_period_cells_adjusted"], 1)
+        self.assertEqual(result["footer_source_cells_adjusted"], 1)
+        self.assertEqual(result["footer_note_cells_adjusted"], 2)
+
+    def test_top_border_spans_all_cells_of_top_footer_row(self):
+        tbl = make_table(
+            [
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["土地", "100", "50%", "1", "ok"],
+                ["基期：100年", "其他", "資料來源：本所", "", ""],  # footer row
+            ]
+        )
+        apply_table_footer_source_format(tbl)
+        # The separator double line spans EVERY cell of the footer row, including
+        # the unmatched ones, so the line is not broken.
+        for col in range(5):
+            self.assertTrue(
+                is_double_black(tc_border(cell_at(tbl, 2, col), "top")), col
+            )
+
+    def test_blank_last_row_stops_scan_upward(self):
+        tbl = make_table(
+            [
+                ["註1：a", "", "", "", ""],  # footer-like, but not at the bottom
+                ["", "", "", "", ""],  # bottom row is blank -> stops the scan
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+        self.assertEqual(result["footer_row_count"], 0)
+        # The note row above the blank bottom row is NOT processed.
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 0, 0)), ["22"])
+
+    def test_borders_outside_footer_block_are_preserved(self):
+        tbl = make_table(
+            [
+                ["資料", "", "", "", ""],  # data row with a pre-existing border
+                ["註1：a", "", "", "", ""],  # footer
+            ]
+        )
+        data_cell = cell_at(tbl, 0, 0)
+        tc_pr = etree.SubElement(data_cell, qn("tcPr"))
+        borders = etree.SubElement(tc_pr, qn("tcBorders"))
+        bottom = etree.SubElement(borders, qn("bottom"))
+        bottom.set(qn("val"), "double")
+        bottom.set(qn("color"), "000000")
+        bottom.set(qn("sz"), "4")
+
+        apply_table_footer_source_format(tbl)
+
+        # The data row's own border is untouched (footer block only formats the
+        # footer rows; it never rebuilds tcBorders of cells outside the block).
+        self.assertTrue(is_double_black(tc_border(data_cell, "bottom")))
 
 
 if __name__ == "__main__":
