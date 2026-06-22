@@ -11,9 +11,30 @@ SIMPLE_NUM = "一二三四五六七八九十"
 
 POINTS_PER_CM = 28.3464567
 
+# Central heading font-size rule, keyed by the detected internal outline level
+# (0-8). This is the single source of truth shared by both heading writers:
+#   * outline.apply_outline_level_font_size -> paragraph visible text runs
+#   * numbering.apply_numbering_level_outline_format -> numbering.xml level rPr
+# so manual-text headings and auto-numbered headings stay in sync. Both writers
+# emit w:sz and w:szCs together (half-points = round(pt * 2)).
+#
+# Level mapping (detected level -> numbering marker):
+#   0: 壹、 (financial)   1: 一、 (simple)   2: （一）   3: 1.   4: （1）
+#   5: A.   6: （A）   7: a.   8: （a）
+#
+# Level 0 (壹、) is intentionally absent: it keeps its original size and is never
+# forced. Level 1 (一、) keeps its existing 16 pt rule. Both must not be changed
+# to 14 pt by this feature. Levels 2 and deeper are forced to 14 pt.
 # User-visible level 2 is internal level 1.
 OUTLINE_LEVEL_FONT_SIZE_PT = {
     1: 16.0,
+    2: 14.0,
+    3: 14.0,
+    4: 14.0,
+    5: 14.0,
+    6: 14.0,
+    7: 14.0,
+    8: 14.0,
 }
 
 

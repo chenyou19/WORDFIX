@@ -187,6 +187,16 @@ def paragraph_text_run_sizes(p):
     return sizes
 
 
+def paragraph_text_run_szcs(p):
+    sizes = []
+    for run in p.findall("./w:r", NS):
+        if not "".join(run.xpath(".//w:t/text()", namespaces=NS)):
+            continue
+        size = run.find("./w:rPr/w:szCs", NS)
+        sizes.append(size.get(qn("val")) if size is not None else None)
+    return sizes
+
+
 def add_ind_with_char_attrs(p):
     pPr = p.find("./w:pPr", NS)
     if pPr is None:
@@ -399,7 +409,9 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(OUTLINE_LEVEL_FONT_SIZE_PT[1], 16.0)
         self.assertEqual(paragraph_text_run_sizes(level_two), ["32"])
         self.assertEqual(paragraph_text_run_sizes(marker), ["24"])
-        self.assertEqual(paragraph_text_run_sizes(level_three), ["24"])
+        # Level 0 (壹、) is never forced; level 1 (一、) keeps 16 pt; level 2
+        # (（一）) and deeper are forced to 14 pt = 28 half-points.
+        self.assertEqual(paragraph_text_run_sizes(level_three), ["28"])
         assert_no_char_indent_attrs(self, level_two.find("./w:pPr/w:ind", NS))
 
     def test_auto_numbered_level_two_paragraph_text_is_set_to_16_pt(self):
@@ -420,6 +432,118 @@ class OutlineFixTests(unittest.TestCase):
 
         self.assertEqual(paragraph_text_run_sizes(auto_level_two), ["32"])
         self.assertEqual(paragraph_outline(auto_level_two), "1")
+
+    def test_level_zero_financial_heading_keeps_original_font_size(self):
+        # 壹、/貳、 (level 0) must never be forced; its original size survives.
+        marker = make_paragraph("壹、序言", font_size_pt=12)
+        level_zero = make_paragraph("貳、價格分析", font_size_pt=18)
+        root = make_root(make_paragraph("壹、序言"), marker, level_zero)
+
+        fix_outline_paragraphs(root, include_tables=True)
+
+        self.assertNotIn(0, OUTLINE_LEVEL_FONT_SIZE_PT)
+        self.assertEqual(paragraph_outline(level_zero), "0")
+        # Original 18 pt = 36 half-points stays; not rewritten to 28 (14 pt).
+        self.assertEqual(paragraph_text_run_sizes(level_zero), ["36"])
+        self.assertEqual(paragraph_text_run_szcs(level_zero), ["36"])
+
+    def test_level_one_simple_heading_keeps_existing_16pt(self):
+        # 一、 (level 1) keeps the pre-existing 16 pt rule, never 14 pt.
+        marker = make_paragraph("壹、序言", font_size_pt=12)
+        level_one = make_paragraph("一、標題", font_size_pt=12)
+        root = make_root(make_paragraph("壹、序言"), marker, level_one)
+
+        fix_outline_paragraphs(root, include_tables=True)
+
+        self.assertEqual(OUTLINE_LEVEL_FONT_SIZE_PT[1], 16.0)
+        self.assertEqual(paragraph_outline(level_one), "1")
+        self.assertEqual(paragraph_text_run_sizes(level_one), ["32"])
+        self.assertEqual(paragraph_text_run_szcs(level_one), ["32"])
+
+    def test_levels_two_through_eight_manual_headings_are_forced_to_14pt(self):
+        # Every supported hierarchy level from 2 to the deepest (8) must end up
+        # at 14 pt on the visible run, with both w:sz and w:szCs = 28.
+        prefixes = {
+            2: "（一）標題二",  # （一）標題二
+            3: "1.標題三",                  # 1.標題三
+            4: "（1）標題四",        # （1）標題四
+            5: "A.標題五",                  # A.標題五
+            6: "（A）標題六",        # （A）標題六
+            7: "a.標題七",                  # a.標題七
+            8: "（a）標題八",        # （a）標題八
+        }
+        headings = {
+            level: make_paragraph(text, font_size_pt=12)
+            for level, text in prefixes.items()
+        }
+        root = make_root(
+            make_paragraph("壹、序言"),
+            make_paragraph("壹、序言", font_size_pt=12),
+            *[headings[level] for level in sorted(headings)],
+        )
+
+        fix_outline_paragraphs(root, include_tables=True)
+
+        for level in sorted(headings):
+            with self.subTest(level=level):
+                self.assertEqual(OUTLINE_LEVEL_FONT_SIZE_PT[level], 14.0)
+                p = headings[level]
+                self.assertEqual(paragraph_outline(p), str(level))
+                self.assertEqual(paragraph_text_run_sizes(p), ["28"])
+                self.assertEqual(paragraph_text_run_szcs(p), ["28"])
+
+    def test_numbering_xml_levels_two_through_eight_get_14pt_run_properties(self):
+        # Auto-numbered headings get their number font from numbering.xml level
+        # run properties: levels 2-8 -> 14 pt, levels 0/1 untouched by 14 pt.
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        level_formats = {
+            0: ("ideographLegalTraditional", "%1、"),       # 壹、
+            1: ("taiwaneseCountingThousand", "%1、"),       # 一、
+            2: ("taiwaneseCountingThousand", "（%1）"),  # （一）
+            3: ("decimal", "%1."),                              # 1.
+            4: ("decimal", "（%1）"),                    # （1）
+            5: ("upperLetter", "%1."),                          # A.
+            6: ("upperLetter", "（%1）"),                # （A）
+            7: ("lowerLetter", "%1."),                          # a.
+            8: ("lowerLetter", "（%1）"),                # （a）
+        }
+        for level, (num_fmt, lvl_text) in level_formats.items():
+            abstract_id = str(100 + level)
+            abstract = etree.SubElement(root, qn("abstractNum"))
+            abstract.set(qn("abstractNumId"), abstract_id)
+            lvl = etree.SubElement(abstract, qn("lvl"))
+            lvl.set(qn("ilvl"), "0")
+            fmt = etree.SubElement(lvl, qn("numFmt"))
+            fmt.set(qn("val"), num_fmt)
+            text_el = etree.SubElement(lvl, qn("lvlText"))
+            text_el.set(qn("val"), lvl_text)
+            num = etree.SubElement(root, qn("num"))
+            num.set(qn("numId"), abstract_id)
+            abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+            abstract_ref.set(qn("val"), abstract_id)
+
+        updated_root = etree.fromstring(apply_numbering_outline_format(etree.tostring(root)))
+
+        def level_rpr(level):
+            abstract_id = str(100 + level)
+            lvl = updated_root.xpath(
+                f"./w:abstractNum[@w:abstractNumId='{abstract_id}']/w:lvl",
+                namespaces=NS,
+            )[0]
+            return lvl.find("./w:rPr", NS)
+
+        # Level 0 (壹、) receives no forced numbering font size at all.
+        self.assertIsNone(level_rpr(0))
+        # Level 1 (一、) keeps the existing 16 pt = 32 half-points rule.
+        self.assertEqual(level_rpr(1).find("./w:sz", NS).get(qn("val")), "32")
+        self.assertEqual(level_rpr(1).find("./w:szCs", NS).get(qn("val")), "32")
+        # Levels 2-8 are forced to 14 pt with both w:sz and w:szCs = 28.
+        for level in range(2, 9):
+            with self.subTest(level=level):
+                rPr = level_rpr(level)
+                self.assertIsNotNone(rPr)
+                self.assertEqual(rPr.find("./w:sz", NS).get(qn("val")), "28")
+                self.assertEqual(rPr.find("./w:szCs", NS).get(qn("val")), "28")
 
     def test_auto_numbering_debug_log_records_paragraph_and_level_positioning(self):
         marker = make_paragraph("\u58f9\u3001\u5e8f\u8a00", font_size_pt=12)
@@ -2123,7 +2247,11 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(suff.get(qn("val")), "nothing")
         self.assertEqual(lvl_jc.get(qn("val")), "left")
         assert_no_char_indent_attrs(self, ind)
-        self.assertIsNone(updated_level_three.find("./w:rPr/w:sz", NS))
+        # ilvl=2 resolves to outline level 2, which is now forced to 14 pt on the
+        # numbering level run properties (both w:sz and w:szCs = 28 half-points).
+        level_three_rPr = updated_level_three.find("./w:rPr", NS)
+        self.assertEqual(level_three_rPr.find("./w:sz", NS).get(qn("val")), "28")
+        self.assertEqual(level_three_rPr.find("./w:szCs", NS).get(qn("val")), "28")
 
     def test_numbering_xml_normalizes_lvljc_suffix_and_removes_tabs(self):
         root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
