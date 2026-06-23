@@ -14,12 +14,14 @@ from docx_fixer.constants import (
 )
 from docx_fixer.models import ProcessSummary
 from docx_fixer.numbering import (
+    TAB_SUFFIX_OUTLINE_LEVELS,
     apply_numbering_outline_format,
     apply_styles_outline_format_to_root,
     build_numbering_format_lookup,
     build_numbering_level_lookup,
     detect_valid_auto_heading_level,
     force_clean_numbering_suffix_tabs,
+    uses_tab_suffix,
 )
 from docx_fixer.style_resolver import build_style_font_size_lookup
 from docx_fixer.indent_settings import twips_to_cm
@@ -302,6 +304,72 @@ def make_heading_validation_numbering_xml():
     add_num("9", "9")
     add_num("77", "77")
     return etree.tostring(root)
+
+
+# Recognizable (numFmt, lvlText) per detected outline level 0-8.
+RECOGNIZABLE_LEVEL_FORMATS = {
+    0: ("ideographLegalTraditional", "%1、"),
+    1: ("taiwaneseCountingThousand", "%1、"),
+    2: ("taiwaneseCountingThousand", "（%1）"),
+    3: ("decimal", "%1."),
+    4: ("decimal", "（%1）"),
+    5: ("upperLetter", "%1."),
+    6: ("upperLetter", "（%1）"),
+    7: ("lowerLetter", "%1."),
+    8: ("lowerLetter", "（%1）"),
+}
+
+
+def build_recognizable_nine_level_numbering(*, pollute: bool = False):
+    """Numbering root with one abstractNum carrying all 9 recognizable levels.
+
+    When pollute=True, every level gets a wrong suffix, wrong/duplicated tab
+    stops, and trailing whitespace in lvlText, so cleanup behaviour can be
+    verified against the central rule.
+    """
+    root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    abstract = etree.SubElement(root, qn("abstractNum"))
+    abstract.set(qn("abstractNumId"), "1")
+    for level, (num_fmt, lvl_text) in RECOGNIZABLE_LEVEL_FORMATS.items():
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), str(level))
+        fmt = etree.SubElement(lvl, qn("numFmt"))
+        fmt.set(qn("val"), num_fmt)
+        text_el = etree.SubElement(lvl, qn("lvlText"))
+        text_el.set(qn("val"), lvl_text + (" \t　" if pollute else ""))
+        if pollute:
+            suff = etree.SubElement(lvl, qn("suff"))
+            suff.set(qn("val"), "space")  # deliberately wrong for every level
+            pPr = etree.SubElement(lvl, qn("pPr"))
+            tabs = etree.SubElement(pPr, qn("tabs"))
+            for pos in ("111", "222"):  # wrong type, wrong position, duplicated
+                tab = etree.SubElement(tabs, qn("tab"))
+                tab.set(qn("val"), "num")
+                tab.set(qn("pos"), pos)
+    num = etree.SubElement(root, qn("num"))
+    num.set(qn("numId"), "1")
+    abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+    abstract_ref.set(qn("val"), "1")
+    return root
+
+
+def assert_level_suffix_rule(testcase, lvl, level):
+    """Assert one numbering w:lvl matches the central tab-suffix rule."""
+    suff = lvl.find("./w:suff", NS)
+    tabs = lvl.find("./w:pPr/w:tabs", NS)
+    if uses_tab_suffix(level):
+        testcase.assertEqual(suff.get(qn("val")), "tab")
+        testcase.assertIsNotNone(tabs)
+        tab_list = tabs.findall("./w:tab", NS)
+        testcase.assertEqual(len(tab_list), 1)
+        testcase.assertEqual(tab_list[0].get(qn("val")), "left")
+        testcase.assertEqual(tab_list[0].get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[level]["left"])
+    else:
+        testcase.assertEqual(suff.get(qn("val")), "nothing")
+        testcase.assertIsNone(tabs)
+    lvl_text = lvl.find("./w:lvlText", NS)
+    if lvl_text is not None and lvl_text.get(qn("val")) is not None:
+        testcase.assertFalse(lvl_text.get(qn("val")).endswith((" ", "\t", "　")))
 
 
 def make_styles_font_xml(
@@ -2188,14 +2256,13 @@ class OutlineFixTests(unittest.TestCase):
 
         decimal_lvl = root.xpath("./w:abstractNum/w:lvl[@w:ilvl='3']", namespaces=NS)[0]
         decimal_ind = decimal_lvl.find("./w:pPr/w:ind", NS)
-        decimal_suff = decimal_lvl.find("./w:suff", NS)
         decimal_lvl_jc = decimal_lvl.find("./w:lvlJc", NS)
         self.assertEqual(
             (decimal_ind.get(qn("left")), decimal_ind.get(qn("hanging"))),
             expected_indent(3),
         )
-        self.assertIsNone(decimal_lvl.find("./w:pPr/w:tabs", NS))
-        self.assertEqual(decimal_suff.get(qn("val")), "nothing")
+        # decimal "%1." is outline level 3, a tab-suffix level.
+        assert_level_suffix_rule(self, decimal_lvl, 3)
         self.assertEqual(decimal_lvl_jc.get(qn("val")), "left")
 
         bullet_lvl = root.xpath("./w:abstractNum/w:lvl[@w:ilvl='4']", namespaces=NS)[0]
@@ -2343,8 +2410,8 @@ class OutlineFixTests(unittest.TestCase):
         updated_root = etree.fromstring(updated)
         updated_override_lvl = updated_root.xpath("./w:num/w:lvlOverride/w:lvl", namespaces=NS)[0]
 
-        self.assertEqual(updated_override_lvl.find("./w:suff", NS).get(qn("val")), "nothing")
-        self.assertIsNone(updated_override_lvl.find("./w:pPr/w:tabs", NS))
+        # The override's own decimal "%1." is outline level 3, a tab-suffix level.
+        assert_level_suffix_rule(self, updated_override_lvl, 3)
 
     def test_force_clean_numbering_suffix_tabs_cleans_all_levels(self):
         root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
@@ -2399,8 +2466,11 @@ class OutlineFixTests(unittest.TestCase):
             [lvl.find("w:lvlText", NS).get(qn("val")) for lvl in updated_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)],
             ["%1.", "（%1）", "%3."],
         )
-        self.assertTrue(any("missing_suffix_fixed=2" in log for log in logs))
-        self.assertTrue(any("non_nothing_suffix_fixed=2" in log for log in logs))
+        # Every level here resolves to outline 0/1/2 (no numFmt -> ilvl fallback),
+        # so all are nothing-suffix and all four list tabs are removed.
+        self.assertTrue(any("suffixes_set_to_nothing=4" in log for log in logs))
+        self.assertTrue(any("suffixes_set_to_tab=0" in log for log in logs))
+        self.assertTrue(any("tab_stops_rebuilt=0" in log for log in logs))
         self.assertTrue(any("tab_stops_removed=4" in log for log in logs))
         self.assertTrue(any("lvl_text_trimmed=4" in log for log in logs))
 
@@ -2533,26 +2603,13 @@ class OutlineFixTests(unittest.TestCase):
         self.assertEqual(updated_ind.get(qn("left")), "2279")
         self.assertEqual(updated_ind.get(qn("hanging")), "420")
 
-    def test_numbering_xml_suffix_by_internal_level_and_no_tabs(self):
-        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
-        abstract = etree.SubElement(root, qn("abstractNum"))
-        abstract.set(qn("abstractNumId"), "1")
-
-        for level in range(9):
-            lvl = etree.SubElement(abstract, qn("lvl"))
-            lvl.set(qn("ilvl"), str(level))
-            num_fmt = etree.SubElement(lvl, qn("numFmt"))
-            num_fmt.set(qn("val"), "custom")
-            lvl_text = etree.SubElement(lvl, qn("lvlText"))
-            lvl_text.set(qn("val"), f"%{level + 1} \t")
-            pPr = etree.SubElement(lvl, qn("pPr"))
-            tabs = etree.SubElement(pPr, qn("tabs"))
-            tab = etree.SubElement(tabs, qn("tab"))
-            tab.set(qn("val"), "left")
-            tab.set(qn("pos"), "999")
-            ind = etree.SubElement(pPr, qn("ind"))
-            ind.set(qn("left"), "999")
-            ind.set(qn("hanging"), "111")
+    def test_numbering_xml_suffix_and_tabs_follow_outline_level_rule(self):
+        # A. Build recognizable 0-8 numbering with trailing lvlText whitespace and
+        # verify the normal numbering.xml format pass applies the tab-suffix rule.
+        root = build_recognizable_nine_level_numbering()
+        for lvl in root.xpath("./w:abstractNum/w:lvl", namespaces=NS):
+            lvl_text = lvl.find("w:lvlText", NS)
+            lvl_text.set(qn("val"), lvl_text.get(qn("val")) + " \t\u3000")
 
         updated = apply_numbering_outline_format(etree.tostring(root))
         updated_root = etree.fromstring(updated)
@@ -2560,21 +2617,73 @@ class OutlineFixTests(unittest.TestCase):
         for level in range(9):
             with self.subTest(level=level):
                 lvl = updated_root.xpath(f"./w:abstractNum/w:lvl[@w:ilvl='{level}']", namespaces=NS)[0]
+                # Suffix, tab stop, and trailing lvlText whitespace per the rule.
+                assert_level_suffix_rule(self, lvl, level)
                 ind = lvl.find("./w:pPr/w:ind", NS)
                 expected_left, expected_hanging = expected_indent(level)
-                self.assertEqual(lvl.find("./w:suff", NS).get(qn("val")), "nothing")
-                self.assertIsNone(lvl.find("./w:pPr/w:tabs", NS))
-                self.assertFalse(lvl.find("./w:lvlText", NS).get(qn("val")).endswith((" ", "\t", "\u3000")))
                 self.assertEqual(ind.get(qn("left")), expected_left)
                 self.assertEqual(ind.get(qn("hanging")), expected_hanging)
-                self.assertLessEqual(
-                    abs(
-                        int(ind.get(qn("left")))
-                        - int(ind.get(qn("hanging")))
-                        - int(TEMPLATE_OUTLINE_INDENTS[level]["number_start"])
-                    ),
-                    1,
-                )
+
+    def test_numbering_xml_lvl_override_resolves_base_format_for_tab_suffix(self):
+        # B. A lvlOverride that carries only pPr (no numFmt/lvlText) must inherit
+        # the base abstract level's format, so A./a./1. are not misread from ilvl.
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "1")
+        base_levels = {0: ("upperLetter", "%1."), 1: ("lowerLetter", "%1."), 2: ("decimal", "%1.")}
+        for ilvl, (num_fmt, lvl_text) in base_levels.items():
+            lvl = etree.SubElement(abstract, qn("lvl"))
+            lvl.set(qn("ilvl"), str(ilvl))
+            fmt = etree.SubElement(lvl, qn("numFmt"))
+            fmt.set(qn("val"), num_fmt)
+            text_el = etree.SubElement(lvl, qn("lvlText"))
+            text_el.set(qn("val"), lvl_text)
+
+        num = etree.SubElement(root, qn("num"))
+        num.set(qn("numId"), "42")
+        abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+        abstract_ref.set(qn("val"), "1")
+        for ilvl in base_levels:
+            override = etree.SubElement(num, qn("lvlOverride"))
+            override.set(qn("ilvl"), str(ilvl))
+            override_lvl = etree.SubElement(override, qn("lvl"))
+            override_lvl.set(qn("ilvl"), str(ilvl))
+            # Only pPr, no numFmt/lvlText: the level must be recovered from base.
+            etree.SubElement(override_lvl, qn("pPr"))
+
+        updated = apply_numbering_outline_format(etree.tostring(root))
+        updated_root = etree.fromstring(updated)
+
+        # Base formats A.(level 5), a.(level 7), 1.(level 3) are all tab-suffix.
+        expected_levels = {0: 5, 1: 7, 2: 3}
+        for ilvl, level in expected_levels.items():
+            with self.subTest(ilvl=ilvl):
+                override_lvl = updated_root.xpath(
+                    f"./w:num/w:lvlOverride[@w:ilvl='{ilvl}']/w:lvl",
+                    namespaces=NS,
+                )[0]
+                assert_level_suffix_rule(self, override_lvl, level)
+
+    def test_force_clean_numbering_suffix_tabs_applies_nine_level_rule(self):
+        # C. Pollute every recognizable level (wrong suffix, wrong/duplicated
+        # tabs, trailing lvlText whitespace); the final hard clean must rebuild
+        # the exact nine-level rule.
+        root = build_recognizable_nine_level_numbering(pollute=True)
+        logs: list[str] = []
+        updated = force_clean_numbering_suffix_tabs(etree.tostring(root), logs=logs)
+        updated_root = etree.fromstring(updated)
+
+        for level in range(9):
+            with self.subTest(level=level):
+                lvl = updated_root.xpath(f"./w:abstractNum/w:lvl[@w:ilvl='{level}']", namespaces=NS)[0]
+                assert_level_suffix_rule(self, lvl, level)
+
+        # Five tab-suffix levels (3/5/6/7/8) and four nothing-suffix levels.
+        self.assertTrue(any("suffixes_set_to_tab=5" in log for log in logs))
+        self.assertTrue(any("suffixes_set_to_nothing=4" in log for log in logs))
+        self.assertTrue(any("tab_stops_rebuilt=5" in log for log in logs))
+        self.assertTrue(any("tab_stops_removed=4" in log for log in logs))
+        self.assertTrue(any("lvl_text_trimmed=9" in log for log in logs))
 
 
 if __name__ == "__main__":
