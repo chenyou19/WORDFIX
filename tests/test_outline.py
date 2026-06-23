@@ -35,7 +35,12 @@ from docx_fixer.outline import (
     remove_all_outline_levels_from_any_root,
     remove_all_outline_levels_from_root,
 )
-from docx_fixer.xml_utils import qn
+from docx_fixer.xml_utils import (
+    LEVEL_CHILD_ORDER,
+    PPR_CHILD_ORDER,
+    children_in_schema_order,
+    qn,
+)
 
 
 def make_root(*children):
@@ -353,8 +358,19 @@ def build_recognizable_nine_level_numbering(*, pollute: bool = False):
     return root
 
 
+def assert_lvl_child_order(testcase, lvl):
+    """Assert a w:lvl has a single, schema-ordered w:suff and valid child order."""
+    testcase.assertEqual(len(lvl.findall("./w:suff", NS)), 1)
+    testcase.assertTrue(children_in_schema_order(lvl, LEVEL_CHILD_ORDER))
+    pPr = lvl.find("./w:pPr", NS)
+    if pPr is not None:
+        testcase.assertLessEqual(len(pPr.findall("./w:tabs", NS)), 1)
+        testcase.assertTrue(children_in_schema_order(pPr, PPR_CHILD_ORDER))
+
+
 def assert_level_suffix_rule(testcase, lvl, level):
-    """Assert one numbering w:lvl matches the central tab-suffix rule."""
+    """Assert one numbering w:lvl matches the central tab-suffix rule and that the
+    w:suff / w:tabs are written in valid WordprocessingML child order."""
     suff = lvl.find("./w:suff", NS)
     tabs = lvl.find("./w:pPr/w:tabs", NS)
     if uses_tab_suffix(level):
@@ -370,6 +386,7 @@ def assert_level_suffix_rule(testcase, lvl, level):
     lvl_text = lvl.find("./w:lvlText", NS)
     if lvl_text is not None and lvl_text.get(qn("val")) is not None:
         testcase.assertFalse(lvl_text.get(qn("val")).endswith((" ", "\t", "　")))
+    assert_lvl_child_order(testcase, lvl)
 
 
 def make_styles_font_xml(
@@ -2684,6 +2701,98 @@ class OutlineFixTests(unittest.TestCase):
         self.assertTrue(any("tab_stops_rebuilt=5" in log for log in logs))
         self.assertTrue(any("tab_stops_removed=4" in log for log in logs))
         self.assertTrue(any("lvl_text_trimmed=9" in log for log in logs))
+
+    def test_numbering_xml_repairs_misordered_lvl_children(self):
+        # A. A w:lvl with w:suff AFTER pPr/rPr (Word-ignored order) is rebuilt so
+        # suff precedes lvlText/pPr/rPr and only one w:suff remains.
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "1")
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")  # "1." -> outline level 3 (tab)
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1.")
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        etree.SubElement(pPr, qn("ind")).set(qn("left"), "999")
+        rPr = etree.SubElement(lvl, qn("rPr"))
+        etree.SubElement(rPr, qn("sz")).set(qn("val"), "24")
+        # Misplaced + duplicated w:suff at the very end.
+        etree.SubElement(lvl, qn("suff")).set(qn("val"), "nothing")
+        etree.SubElement(lvl, qn("suff")).set(qn("val"), "space")
+
+        updated = apply_numbering_outline_format(etree.tostring(root))
+        updated_root = etree.fromstring(updated)
+        updated_lvl = updated_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]
+
+        # Exactly one w:suff, and numFmt < suff < lvlText < lvlJc < pPr < rPr.
+        self.assertEqual(len(updated_lvl.findall("./w:suff", NS)), 1)
+        order = [child.tag for child in updated_lvl if child.tag in LEVEL_CHILD_ORDER]
+        positions = [LEVEL_CHILD_ORDER.index(tag) for tag in order]
+        self.assertEqual(positions, sorted(positions))
+        suff_pos = order.index(qn("suff"))
+        self.assertLess(order.index(qn("numFmt")), suff_pos)
+        self.assertLess(suff_pos, order.index(qn("lvlText")))
+        self.assertLess(order.index(qn("lvlText")), order.index(qn("pPr")))
+        self.assertLess(order.index(qn("pPr")), order.index(qn("rPr")))
+        assert_level_suffix_rule(self, updated_lvl, 3)
+
+    def test_numbering_xml_repairs_ppr_tabs_before_ind(self):
+        # B. A w:pPr with w:ind BEFORE w:tabs is rebuilt so tabs precedes ind and
+        # exactly one tabs / one tab remains.
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "1")
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")  # "1." -> outline level 3 (tab)
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1.")
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        etree.SubElement(pPr, qn("ind")).set(qn("left"), "999")
+        old_tabs = etree.SubElement(pPr, qn("tabs"))  # after ind (wrong)
+        etree.SubElement(old_tabs, qn("tab")).set(qn("pos"), "111")
+
+        updated = apply_numbering_outline_format(etree.tostring(root))
+        updated_root = etree.fromstring(updated)
+        updated_pPr = updated_root.xpath("./w:abstractNum/w:lvl/w:pPr", namespaces=NS)[0]
+
+        self.assertEqual(len(updated_pPr.findall("./w:tabs", NS)), 1)
+        self.assertEqual(len(updated_pPr.findall("./w:tabs/w:tab", NS)), 1)
+        ppr_children = [child.tag for child in updated_pPr if child.tag in PPR_CHILD_ORDER]
+        self.assertLess(ppr_children.index(qn("tabs")), ppr_children.index(qn("ind")))
+        assert_level_suffix_rule(self, updated_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0], 3)
+
+    def test_force_clean_repairs_misordered_suffix_and_tabs(self):
+        # D. Heavily pollute each recognizable level with mis-ordered + duplicated
+        # suff/tabs, wrong tab pos, and trailing lvlText whitespace; the final
+        # hard clean must produce the rule AND valid child order.
+        root = build_recognizable_nine_level_numbering()
+        for lvl in root.xpath("./w:abstractNum/w:lvl", namespaces=NS):
+            lvl_text = lvl.find("w:lvlText", NS)
+            lvl_text.set(qn("val"), lvl_text.get(qn("val")) + "  \t")
+            pPr = etree.SubElement(lvl, qn("pPr"))  # appended after lvlText
+            etree.SubElement(pPr, qn("ind")).set(qn("left"), "700")
+            tabs = etree.SubElement(pPr, qn("tabs"))  # tabs after ind (wrong)
+            for pos in ("111", "222"):
+                etree.SubElement(tabs, qn("tab")).set(qn("pos"), pos)
+            # Duplicated, mis-ordered w:suff placed at the very end (after pPr).
+            etree.SubElement(lvl, qn("suff")).set(qn("val"), "space")
+            etree.SubElement(lvl, qn("suff")).set(qn("val"), "tab")
+
+        updated = force_clean_numbering_suffix_tabs(etree.tostring(root))
+        updated_root = etree.fromstring(updated)
+
+        for level in range(9):
+            with self.subTest(level=level):
+                lvl = updated_root.xpath(f"./w:abstractNum/w:lvl[@w:ilvl='{level}']", namespaces=NS)[0]
+                assert_level_suffix_rule(self, lvl, level)
+                self.assertEqual(len(lvl.findall("./w:suff", NS)), 1)
+                pPr = lvl.find("./w:pPr", NS)
+                if pPr is not None:
+                    self.assertLessEqual(len(pPr.findall("./w:tabs", NS)), 1)
 
 
 if __name__ == "__main__":

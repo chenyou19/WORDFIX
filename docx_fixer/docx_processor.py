@@ -41,6 +41,10 @@ from .protected_region import (
 )
 from .stop_controller import StopController
 from .style_resolver import build_style_font_size_lookup
+from .word_com_numbering_suffix import (
+    apply_and_verify_numbering_suffixes_with_word_com,
+    build_numbering_suffix_word_com_records,
+)
 from .table_fallback import fallback_normal_table_autofit_in_docx
 from .table_footer_postprocess import apply_table_footer_source_format_in_docx
 from .table_pipeline import process_tables_in_part
@@ -257,6 +261,8 @@ def _auto_suffix_details(
         "left_cm": _twips_to_log_cm(left),
         "hanging_cm": _twips_to_log_cm(hanging),
         "number_start_cm": _twips_to_log_cm(number_start),
+        "level_child_order_ok": level_format.get("level_child_order_ok", True),
+        "ppr_child_order_ok": level_format.get("ppr_child_order_ok", True),
     }
 
 
@@ -999,6 +1005,29 @@ def fix_docx_fast(
         )
     else:
         summary.paragraph_logs.append("NOTE_DEBUG_LOG_SKIPPED reason=disabled")
+
+    # Final numbering-suffix writer: make Word itself adopt the per-level trailing
+    # character (ListLevel.TrailingCharacter) and verify it on reopen. This runs
+    # AFTER force_clean_numbering_suffix_tabs_in_docx and is the last step that
+    # touches word/numbering.xml's suffix/tabs, so nothing can overwrite it.
+    if options.normalize_with_word_com and options.fix_paragraph:
+        if progress_callback:
+            progress_callback(percent=99, message="word/numbering.xml: Word COM suffix apply + verify")
+        numbering_suffix_records = build_numbering_suffix_word_com_records(
+            output_docx,
+            protected_numbering_pairs=final_protected_numbering_pairs,
+            logs=summary.word_com_numbering_suffix_logs,
+        )
+        summary.word_com_numbering_suffix_result = apply_and_verify_numbering_suffixes_with_word_com(
+            output_docx,
+            numbering_suffix_records,
+            summary.word_com_numbering_suffix_logs,
+            stop=stop,
+        )
+    else:
+        summary.word_com_numbering_suffix_logs.append(
+            "WORD_COM_NUMBERING_SUFFIX_SKIPPED reason=disabled"
+        )
 
     try:
         summary.heading_suffix_after_records = collect_heading_suffix_records_from_docx(output_docx)

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .constants import TEMPLATE_OUTLINE_INDENTS
 from .indent_settings import current_indent_settings, format_cm
 from .models import ProcessSummary
+from .numbering import uses_tab_suffix
 
 
 def get_process_log_path(output_docx: str | Path) -> Path:
@@ -39,6 +41,53 @@ def _effective_suffix_count(records: list[dict[str, object]], suffix: str) -> in
 
 def _lvl_text_trailing_space_count(records: list[dict[str, object]]) -> int:
     return sum(1 for record in records if record.get("lvlText_has_trailing_space") is True)
+
+
+def _expected_tab_pos_twips(level: object) -> str | None:
+    spec = TEMPLATE_OUTLINE_INDENTS.get(level) if isinstance(level, int) else None
+    return spec["left"] if spec is not None else None
+
+
+def _validate_after_record(record: dict[str, object]) -> dict[str, bool]:
+    """Validate one AFTER_FIX record against the central tab-suffix rule.
+
+    The rule is per logical outline level, so a legitimate Tab on level 3/5/6/7/8
+    is NOT a problem; only a suffix that disagrees with the level, a wrong/missing
+    tab stop, or out-of-order XML children count as violations.
+    """
+    result = {
+        "expected_tab": False,
+        "expected_nothing": False,
+        "suffix_violation": False,
+        "tab_geometry_violation": False,
+        "level_child_order_violation": False,
+        "ppr_child_order_violation": False,
+    }
+    source = record.get("source")
+
+    if source == "auto_numbering_xml":
+        level = record.get("outline_level")
+        effective = record.get("effective_suffix", record.get("suffix"))
+        has_tab = bool(record.get("has_tab_stop"))
+        result["level_child_order_violation"] = record.get("level_child_order_ok", True) is False
+        result["ppr_child_order_violation"] = record.get("ppr_child_order_ok", True) is False
+
+        if isinstance(level, int) and uses_tab_suffix(level):
+            result["expected_tab"] = True
+            result["suffix_violation"] = effective != "tab"
+            expected_pos = _expected_tab_pos_twips(level)
+            result["tab_geometry_violation"] = (not has_tab) or record.get("tab_pos_twips") != expected_pos
+        else:
+            result["expected_nothing"] = True
+            result["suffix_violation"] = effective != "nothing"
+            result["tab_geometry_violation"] = has_tab
+        return result
+
+    # manual_text headings: the visible numbering text must carry no trailing
+    # tab/space (the tab, when any, lives in numbering.xml, never in body text).
+    result["expected_nothing"] = True
+    result["suffix_violation"] = record.get("suffix") not in (None, "nothing")
+    return result
 
 
 def _change_type(before_record: dict[str, object], after_record: dict[str, object]) -> str:
@@ -92,6 +141,24 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
     after_suffix_space_count = _suffix_count(after, "space")
     after_tab_stop_remaining_count = _tab_stop_count(after)
     after_lvl_text_trailing_space_count = _lvl_text_trailing_space_count(after)
+
+    # Per-record validation against the per-level tab-suffix rule. A legitimate
+    # Tab on level 3/5/6/7/8 is expected and must NOT raise a warning.
+    after_expected_tab_count = 0
+    after_expected_nothing_count = 0
+    after_suffix_rule_violation_count = 0
+    after_tab_geometry_violation_count = 0
+    after_level_child_order_violation_count = 0
+    after_ppr_child_order_violation_count = 0
+    for record in after:
+        verdict = _validate_after_record(record)
+        after_expected_tab_count += 1 if verdict["expected_tab"] else 0
+        after_expected_nothing_count += 1 if verdict["expected_nothing"] else 0
+        after_suffix_rule_violation_count += 1 if verdict["suffix_violation"] else 0
+        after_tab_geometry_violation_count += 1 if verdict["tab_geometry_violation"] else 0
+        after_level_child_order_violation_count += 1 if verdict["level_child_order_violation"] else 0
+        after_ppr_child_order_violation_count += 1 if verdict["ppr_child_order_violation"] else 0
+
     for key in keys:
         before_record = before_by_key.get(key, {})
         after_record = after_by_key.get(key, {})
@@ -137,6 +204,12 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
         f"after_suffix_space_count: {after_suffix_space_count}",
         f"after_tab_stop_remaining_count: {after_tab_stop_remaining_count}",
         f"after_lvlText_trailing_space_count: {after_lvl_text_trailing_space_count}",
+        f"after_expected_tab_count: {after_expected_tab_count}",
+        f"after_expected_nothing_count: {after_expected_nothing_count}",
+        f"after_suffix_rule_violation_count: {after_suffix_rule_violation_count}",
+        f"after_tab_geometry_violation_count: {after_tab_geometry_violation_count}",
+        f"after_level_child_order_violation_count: {after_level_child_order_violation_count}",
+        f"after_ppr_child_order_violation_count: {after_ppr_child_order_violation_count}",
         "",
         "===== SUMMARY CHANGE =====",
         f"changed_to_nothing: {changed_to_nothing}",
@@ -146,26 +219,24 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
         f"still_other: {still_other}",
         "",
     ]
+    # Only genuine rule / geometry / child-order violations warrant a warning;
+    # the mere presence of legitimate Tab suffixes (levels 3/5/6/7/8) does not.
     if any(
         count
         for count in (
-            after_raw_suffix_missing_count,
-            after_effective_suffix_tab_count,
-            _suffix_count(after, "tab"),
-            after_suffix_space_count,
-            after_tab_stop_remaining_count,
-            after_lvl_text_trailing_space_count,
+            after_suffix_rule_violation_count,
+            after_tab_geometry_violation_count,
+            after_level_child_order_violation_count,
+            after_ppr_child_order_violation_count,
         )
     ):
         lines.extend(
             [
-                "WARNING: AFTER_FIX numbering suffix/tab cleanup still has remaining issues.",
-                f"WARNING raw_suffix_after_missing={after_raw_suffix_missing_count}",
-                f"WARNING effective_suffix_after_tab={after_effective_suffix_tab_count}",
-                f"WARNING suffix_after_tab={_suffix_count(after, 'tab')}",
-                f"WARNING suffix_after_space={after_suffix_space_count}",
-                f"WARNING has_tab_stop_after_true={after_tab_stop_remaining_count}",
-                f"WARNING lvlText_after_has_trailing_space={after_lvl_text_trailing_space_count}",
+                "WARNING: AFTER_FIX numbering suffix/tab rule violations detected.",
+                f"WARNING after_suffix_rule_violation_count={after_suffix_rule_violation_count}",
+                f"WARNING after_tab_geometry_violation_count={after_tab_geometry_violation_count}",
+                f"WARNING after_level_child_order_violation_count={after_level_child_order_violation_count}",
+                f"WARNING after_ppr_child_order_violation_count={after_ppr_child_order_violation_count}",
                 "",
             ]
         )
@@ -271,7 +342,83 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
             ]
         )
 
+    lines.append("")
+    lines.extend(format_word_com_numbering_suffix_log_lines(summary))
+
     return lines[:-1] if lines and lines[-1] == "" else lines
+
+
+def format_word_com_numbering_suffix_log_lines(summary: ProcessSummary) -> list[str]:
+    """Render the Word COM trailing-character apply/verify result.
+
+    Word COM — not the XML — is the final source of truth here: success requires
+    word_com_available=true, template_conflicts=0, com_apply_failed=0, and
+    com_verify_failed=0. A non-zero suffix_tab XML count alone never means success.
+    """
+    result = summary.word_com_numbering_suffix_result
+    lines = ["===== WORD_COM_SUFFIX_VERIFICATION ====="]
+    if result is None:
+        lines.append("word_com_available=false")
+        lines.append("word_com_numbering_suffix_verified=false")
+        lines.append("reason=word_com_numbering_suffix_step_not_run")
+        return lines
+
+    fields = (
+        "word_com_available",
+        "records_total",
+        "records_targeted",
+        "records_protected_skipped",
+        "template_conflicts",
+        "com_apply_success",
+        "com_apply_failed",
+        "com_verify_success",
+        "com_verify_failed",
+        "expected_tab",
+        "expected_nothing",
+        "actual_tab",
+        "actual_nothing",
+        "tab_position_mismatch",
+        "format_identity_mismatch",
+    )
+    for name in fields:
+        value = getattr(result, name, None)
+        lines.append(f"{name}={_bool_text(value) if isinstance(value, bool) else value}")
+    lines.append(f"word_com_numbering_suffix_verified={_bool_text(getattr(result, 'verified', False))}")
+
+    for conflict in getattr(result, "conflict_details", []) or []:
+        lines.append(conflict)
+
+    record_details = getattr(result, "record_details", []) or []
+    if record_details:
+        lines.append("----- records -----")
+        for detail in record_details:
+            lines.append(
+                "record "
+                f"paragraph_index={detail.get('paragraph_index')}; "
+                f"outline_level={detail.get('outline_level')}; "
+                f"expected_trailing={detail.get('expected_trailing')}; "
+                f"word_com_list_level_number={detail.get('word_com_list_level_number')}; "
+                f"word_com_number_format={detail.get('word_com_number_format')}; "
+                f"word_com_number_style={detail.get('word_com_number_style')}; "
+                f"word_com_trailing_before={detail.get('word_com_trailing_before')}; "
+                f"word_com_trailing_after_apply={detail.get('word_com_trailing_after_apply')}; "
+                f"word_com_trailing_after_reopen={detail.get('word_com_trailing_after_reopen')}; "
+                f"word_com_tab_position_before={detail.get('word_com_tab_position_before')}; "
+                f"word_com_tab_position_after_apply={detail.get('word_com_tab_position_after_apply')}; "
+                f"word_com_tab_position_after_reopen={detail.get('word_com_tab_position_after_reopen')}; "
+                f"word_com_verified={_bool_text(detail.get('word_com_verified'))}"
+            )
+
+    if not getattr(result, "verified", False):
+        failed = [
+            d for d in record_details if not d.get("word_com_verified")
+        ]
+        lines.append(
+            "WARNING: WORD_COM numbering suffix not verified by Word; "
+            f"failed_records={[d.get('paragraph_index') for d in failed]}"
+        )
+
+    return lines
 
 
 def format_numbering_indent_log_lines(summary: ProcessSummary) -> list[str]:

@@ -3,7 +3,16 @@ from __future__ import annotations
 from lxml import etree
 
 from .constants import NS, OUTLINE_LEVEL_FONT_SIZE_PT, TEMPLATE_OUTLINE_INDENTS
-from .xml_utils import get_or_add, qn
+from .xml_utils import (
+    LEVEL_CHILD_ORDER,
+    PPR_CHILD_ORDER,
+    child_is_in_schema_order,
+    children_in_schema_order,
+    get_or_add,
+    get_or_add_in_schema_order,
+    insert_child_in_schema_order,
+    qn,
+)
 
 BULLET_OUTLINE_LEVEL = -1
 PAREN_PAIRS = {
@@ -30,33 +39,46 @@ def numbering_suffix_for_level(level: int | None) -> str:
 
 
 def _set_level_suffix(lvl, desired: str) -> bool:
-    """Set w:suff to the desired value, creating it if missing. Returns changed."""
-    suff = lvl.find("w:suff", NS)
-    if suff is None:
-        suff = etree.Element(qn("suff"))
-        lvl.append(suff)
-    if suff.get(qn("val")) != desired:
-        suff.set(qn("val"), desired)
-        return True
-    return False
+    """Set the level's single w:suff to `desired`, in schema order. Returns changed.
+
+    Even a w:suff that already carries the right value is removed and reinserted
+    when it is mis-ordered or duplicated, because Word ignores a w:suff that does
+    not precede w:lvlText / w:pPr / w:rPr (the symptom: UI shows "no character").
+    """
+    existing = lvl.findall("w:suff", NS)
+    already_correct = (
+        len(existing) == 1
+        and existing[0].get(qn("val")) == desired
+        and child_is_in_schema_order(lvl, existing[0], LEVEL_CHILD_ORDER)
+    )
+    suff = get_or_add_in_schema_order(lvl, "suff", LEVEL_CHILD_ORDER)
+    suff.set(qn("val"), desired)
+    return not already_correct
 
 
 def _rebuild_single_left_tab(pPr, pos_twips: str) -> bool:
-    """Ensure pPr holds exactly one left tab stop at pos_twips. Returns changed."""
-    tabs = pPr.find("w:tabs", NS)
-    if tabs is not None:
+    """Ensure pPr holds exactly one left tab stop at pos_twips, in schema order.
+
+    The single <w:tab w:val="left" w:pos=.../> must live in a <w:tabs> placed
+    BEFORE <w:ind>; otherwise Word drops or rewrites it. Returns changed.
+    """
+    existing = pPr.findall("w:tabs", NS)
+    if len(existing) == 1:
+        tabs = existing[0]
         tab_list = tabs.findall("w:tab", NS)
         if (
             len(tab_list) == 1
             and tab_list[0].get(qn("val")) == "left"
             and tab_list[0].get(qn("pos")) == pos_twips
+            and child_is_in_schema_order(pPr, tabs, PPR_CHILD_ORDER)
         ):
             return False
-        pPr.remove(tabs)
-    tabs = etree.SubElement(pPr, qn("tabs"))
+
+    tabs = etree.Element(qn("tabs"))
     tab = etree.SubElement(tabs, qn("tab"))
     tab.set(qn("val"), "left")
     tab.set(qn("pos"), pos_twips)
+    insert_child_in_schema_order(pPr, tabs, PPR_CHILD_ORDER)
     return True
 
 
@@ -91,7 +113,7 @@ def normalize_level_suffix_and_tabs(lvl, outline_level: int | None) -> dict[str,
     if spec is not None:
         result["suffix"] = "tab"
         result["suffix_changed"] = _set_level_suffix(lvl, "tab")
-        pPr = get_or_add(lvl, "pPr")
+        pPr = get_or_add_in_schema_order(lvl, "pPr", LEVEL_CHILD_ORDER)
         result["tab_rebuilt"] = _rebuild_single_left_tab(pPr, spec["left"])
         return result
 
@@ -691,23 +713,20 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
 
     font_size_pt = OUTLINE_LEVEL_FONT_SIZE_PT.get(level)
     if font_size_pt is not None:
-        rPr = get_or_add(lvl, "rPr")
+        rPr = get_or_add_in_schema_order(lvl, "rPr", LEVEL_CHILD_ORDER)
         font_size = str(round(font_size_pt * 2))
         for tag in ("sz", "szCs"):
             size_el = get_or_add(rPr, tag)
             size_el.set(qn("val"), font_size)
 
-    lvl_jc = get_or_add(lvl, "lvlJc")
+    lvl_jc = get_or_add_in_schema_order(lvl, "lvlJc", LEVEL_CHILD_ORDER)
     lvl_jc.set(qn("val"), "left")
 
-    suff = lvl.find("w:suff", NS)
-    if suff is None:
-        suff = etree.Element(qn("suff"))
-        lvl.append(suff)
+    # Suffix goes through the one schema-ordered helper; no separate append here.
     suffix = numbering_suffix_for_level(level)
-    suff.set(qn("val"), suffix)
+    _set_level_suffix(lvl, suffix)
 
-    pPr = get_or_add(lvl, "pPr")
+    pPr = get_or_add_in_schema_order(lvl, "pPr", LEVEL_CHILD_ORDER)
     written = apply_indent_spec_to_pPr(
         pPr,
         spec,
@@ -762,6 +781,16 @@ def get_numbering_level_format(lvl) -> dict[str, str | None]:
         "tab_pos": tab.get(qn("pos")) if tab is not None else None,
         "numFmt": num_fmt.get(qn("val")) if num_fmt is not None else None,
         "lvlText": lvl_text.get(qn("val")) if lvl_text is not None else None,
+        # Schema-order health of the actual XML, so the heading-suffix log can
+        # tell a legitimate tab from a Word-ignored, mis-ordered one.
+        "level_child_order_ok": children_in_schema_order(lvl, LEVEL_CHILD_ORDER)
+        and len(lvl.findall("w:suff", NS)) <= 1,
+        "ppr_child_order_ok": (
+            children_in_schema_order(pPr, PPR_CHILD_ORDER)
+            and len(pPr.findall("w:tabs", NS)) <= 1
+            if pPr is not None
+            else True
+        ),
     }
 
 

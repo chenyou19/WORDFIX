@@ -108,6 +108,10 @@ class ProcessSummary:
     heading_suffix_before_records: list[dict[str, object]] = field(default_factory=list)
     heading_suffix_after_records: list[dict[str, object]] = field(default_factory=list)
     word_com_body_indent_logs: list[str] = field(default_factory=list)
+    word_com_numbering_suffix_logs: list[str] = field(default_factory=list)
+    # NumberingSuffixWordComResult (duck-typed to avoid importing the COM module
+    # here); None when the Word COM numbering-suffix step did not run.
+    word_com_numbering_suffix_result: object | None = None
     character_indent_attrs_removed: int = 0
 
     @property

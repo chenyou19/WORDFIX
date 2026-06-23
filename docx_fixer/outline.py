@@ -28,7 +28,15 @@ from .numbering import (
 )
 from .stop_controller import StopController
 from .style_resolver import half_points_to_pt
-from .xml_utils import CHAR_INDENT_ATTRS, get_or_add, paragraph_text, qn
+from .xml_utils import (
+    CHAR_INDENT_ATTRS,
+    PPR_CHILD_ORDER,
+    get_or_add,
+    get_or_add_in_schema_order,
+    insert_child_in_schema_order,
+    paragraph_text,
+    qn,
+)
 
 PARAGRAPH_JC_FOLLOWING_TAGS = {
     qn("textDirection"),
@@ -380,19 +388,14 @@ def normalize_tabs_to_text_position(pPr, text_position_twips: str) -> None:
 
     Old tab settings on Word numbered paragraphs can shift the number and body
     text positions. Existing tabs are cleared before writing a new tab stop
-    aligned with the left indent, preserving the expected layout after Word
-    reopens the document.
+    aligned with the left indent. The fresh <w:tabs> is inserted in schema order
+    (before <w:ind>) so Word keeps it instead of dropping or rewriting it.
     """
-    tabs = pPr.find("w:tabs", NS)
-    if tabs is not None:
-        pPr.remove(tabs)
-
     tabs = etree.Element(qn("tabs"))
-    tab = etree.Element(qn("tab"))
+    tab = etree.SubElement(tabs, qn("tab"))
     tab.set(qn("val"), "left")
     tab.set(qn("pos"), text_position_twips)
-    tabs.append(tab)
-    pPr.append(tabs)
+    insert_child_in_schema_order(pPr, tabs, PPR_CHILD_ORDER)
 
 
 def remove_paragraph_tabs(pPr) -> None:
@@ -435,7 +438,7 @@ def apply_indent_spec_to_pPr(
     and start indents, explicitly zeroes first-line/hanging and character-unit
     indents, and removes tabs and numbering.
     """
-    ind = get_or_add(pPr, "ind")
+    ind = get_or_add_in_schema_order(pPr, "ind", PPR_CHILD_ORDER)
     clear_indent_attrs(ind)
     removed_tabs = False
     removed_numPr = False

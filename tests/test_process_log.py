@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from docx_fixer.constants import TEMPLATE_OUTLINE_INDENTS
 from docx_fixer.models import ProcessSummary
 from docx_fixer.process_log import (
     format_indent_settings_log_lines,
@@ -202,6 +203,8 @@ class ProcessLogTests(unittest.TestCase):
         self.assertIn("change_type: missing_effective_tab_to_nothing", lines)
 
     def test_heading_suffix_log_warns_when_after_fix_auto_suffix_is_dirty(self):
+        # outline level 4 is a nothing-suffix level, but this record still has a
+        # Tab suffix and a tab stop -> a genuine rule + geometry violation.
         summary = ProcessSummary()
         summary.heading_suffix_after_records.append(
             {
@@ -211,25 +214,57 @@ class ProcessLogTests(unittest.TestCase):
                 "outline_level": 4,
                 "heading_text": "自動標題",
                 "number_token": "%5.",
-                "suffix": "missing",
-                "raw_suffix": "missing",
+                "suffix": "tab",
+                "raw_suffix": "tab",
                 "effective_suffix": "tab",
                 "numId": "18",
                 "ilvl": 0,
                 "numFmt": "decimal",
-                "lvlText": "%5. ",
-                "lvlText_has_trailing_space": True,
+                "lvlText": "%5.",
+                "lvlText_has_trailing_space": False,
                 "has_tab_stop": True,
             }
         )
 
         lines = format_heading_suffix_log_lines(summary)
 
-        self.assertIn("WARNING: AFTER_FIX numbering suffix/tab cleanup still has remaining issues.", lines)
-        self.assertIn("WARNING raw_suffix_after_missing=1", lines)
-        self.assertIn("WARNING effective_suffix_after_tab=1", lines)
-        self.assertIn("WARNING has_tab_stop_after_true=1", lines)
-        self.assertIn("WARNING lvlText_after_has_trailing_space=1", lines)
+        self.assertIn("WARNING: AFTER_FIX numbering suffix/tab rule violations detected.", lines)
+        self.assertIn("WARNING after_suffix_rule_violation_count=1", lines)
+        self.assertIn("WARNING after_tab_geometry_violation_count=1", lines)
+
+    def test_heading_suffix_log_does_not_warn_for_legitimate_tab_levels(self):
+        # A correct level-3 Tab (suffix=tab, has_tab_stop at spec left, child
+        # order ok) must NOT raise a warning.
+        summary = ProcessSummary()
+        summary.heading_suffix_after_records.append(
+            {
+                "part_name": "word/document.xml",
+                "paragraph_index": 7,
+                "source": "auto_numbering_xml",
+                "outline_level": 3,
+                "heading_text": "自動標題",
+                "number_token": "%1.",
+                "suffix": "tab",
+                "raw_suffix": "tab",
+                "effective_suffix": "tab",
+                "numId": "18",
+                "ilvl": 0,
+                "numFmt": "decimal",
+                "lvlText": "%1.",
+                "lvlText_has_trailing_space": False,
+                "has_tab_stop": True,
+                "tab_pos_twips": TEMPLATE_OUTLINE_INDENTS[3]["left"],
+                "level_child_order_ok": True,
+                "ppr_child_order_ok": True,
+            }
+        )
+
+        lines = format_heading_suffix_log_lines(summary)
+
+        self.assertNotIn("WARNING: AFTER_FIX numbering suffix/tab rule violations detected.", lines)
+        self.assertIn("after_expected_tab_count: 1", lines)
+        self.assertIn("after_suffix_rule_violation_count: 0", lines)
+        self.assertIn("after_tab_geometry_violation_count: 0", lines)
 
     def test_table_log_file_writes_structured_table_records(self):
         summary = ProcessSummary()
