@@ -56,7 +56,7 @@ class ProcessLogTests(unittest.TestCase):
         lines = format_indent_settings_log_lines()
 
         self.assertIn("Indent settings snapshot:", lines)
-        self.assertTrue(any("level=2;" in line and "body_left_cm=2.96" in line for line in lines))
+        self.assertTrue(any("level=2;" in line and "body_left_cm=2.99" in line for line in lines))
         self.assertTrue(any("level=2;" in line and "heading_text_start_cm=" in line for line in lines))
 
     def test_process_log_writes_word_com_skip_section(self):
@@ -146,6 +146,12 @@ class ProcessLogTests(unittest.TestCase):
                 "ilvl": 0,
                 "numFmt": "decimal",
                 "lvlText": "%1.",
+                "numbering_level_source": "abstractNum",
+                "numbering_lvl_child_order": "start,numFmt,suff,lvlText,lvlJc,pPr,rPr",
+                "numbering_pPr_child_order": "tabs,ind",
+                "suffix_before_lvlText": True,
+                "tabs_before_ind": True,
+                "compat_doNotUseIndentAsNumberingTabStop": False,
                 "has_tab_stop": True,
                 "tab_pos_twips": "2279",
                 "tab_pos_cm": 4.02,
@@ -180,6 +186,12 @@ class ProcessLogTests(unittest.TestCase):
                 "ilvl": 0,
                 "numFmt": "decimal",
                 "lvlText": "%1.",
+                "numbering_level_source": "lvlOverride",
+                "numbering_lvl_child_order": "start,numFmt,suff,lvlText,lvlJc,pPr,rPr",
+                "numbering_pPr_child_order": "ind,tabs",
+                "suffix_before_lvlText": True,
+                "tabs_before_ind": False,
+                "compat_doNotUseIndentAsNumberingTabStop": True,
                 "has_tab_stop": False,
                 "tab_pos_twips": None,
                 "tab_pos_cm": None,
@@ -219,6 +231,13 @@ class ProcessLogTests(unittest.TestCase):
         self.assertIn("expected_heading_text_start_twips_before: 2430", lines)
         self.assertIn("expected_heading_text_start_cm_before: 4.29", lines)
         self.assertIn("expected_tab_pos_twips_before: 2430", lines)
+        self.assertNotIn("numbering_level_source_before: abstractNum", lines)
+        self.assertIn("numbering_level_source_after: lvlOverride", lines)
+        self.assertIn("numbering_lvl_child_order_after: start,numFmt,suff,lvlText,lvlJc,pPr,rPr", lines)
+        self.assertIn("numbering_pPr_child_order_after: ind,tabs", lines)
+        self.assertIn("suffix_before_lvlText_after: true", lines)
+        self.assertIn("tabs_before_ind_after: false", lines)
+        self.assertIn("compat_doNotUseIndentAsNumberingTabStop_after: true", lines)
         self.assertIn("change_type: missing_effective_tab_to_nothing", lines)
 
     def test_heading_suffix_log_warns_when_after_fix_auto_suffix_is_dirty(self):

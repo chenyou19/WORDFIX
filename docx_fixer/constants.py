@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 DEFAULT_SUFFIX = "_fixed"
 DEFAULT_GRAY = "D9D9D9"
 
@@ -48,44 +50,138 @@ def cm_to_twips(cm: float) -> str:
 
 
 def make_outline_indent_spec(
+    *,
     number_start_cm: float,
-    hanging_cm: float,
+    text_indent_cm: float,
+    tab_stop_cm: float,
     body_left_cm: float,
-    heading_text_start_cm: float | None = None,
 ) -> dict[str, str]:
-    if heading_text_start_cm is None:
-        heading_text_start_cm = body_left_cm + DEFAULT_HEADING_TEXT_START_OFFSET_CM
+    for value, name in (
+        (number_start_cm, "number_start_cm"),
+        (text_indent_cm, "text_indent_cm"),
+        (tab_stop_cm, "tab_stop_cm"),
+        (body_left_cm, "body_left_cm"),
+    ):
+        if not math.isfinite(float(value)):
+            raise ValueError(f"{name} must be finite.")
+    if text_indent_cm <= number_start_cm:
+        raise ValueError("文字縮排必須大於標號起點。")
     return {
-        "left": cm_to_twips(number_start_cm + hanging_cm),
-        "hanging": cm_to_twips(hanging_cm),
+        "left": cm_to_twips(text_indent_cm),
+        "hanging": cm_to_twips(text_indent_cm - number_start_cm),
         "number_start": cm_to_twips(number_start_cm),
-        "heading_text_start": cm_to_twips(heading_text_start_cm),
+        "heading_text_start": cm_to_twips(tab_stop_cm),
         "body_left": cm_to_twips(body_left_cm),
     }
 
 
 TEMPLATE_OUTLINE_INDENTS = {
-    0: make_outline_indent_spec(-0.04, 1.27, 1.23),
-    1: make_outline_indent_spec(0.73, 1.13, 1.86),
-    2: make_outline_indent_spec(1.51, 1.48, 2.99),
-    3: make_outline_indent_spec(3.49, 0.50, 3.99),
-    4: make_outline_indent_spec(3.74, 1.23, 4.96),
-    5: make_outline_indent_spec(5.45, 0.50, 5.95),
-    6: make_outline_indent_spec(4.70, 1.23, 5.94),
-    7: make_outline_indent_spec(5.94, 0.49, 6.85),
-    8: make_outline_indent_spec(7.72, 1.24, 8.96),
+    0: make_outline_indent_spec(#壹
+        number_start_cm=-0.04,
+        text_indent_cm=1.23,
+        tab_stop_cm=2.08,
+        body_left_cm=1.23,
+    ),
+    1: make_outline_indent_spec(#一
+        number_start_cm=0.73,
+        text_indent_cm=1.86,
+        tab_stop_cm=2.71,
+        body_left_cm=1.86,
+    ),
+    2: make_outline_indent_spec(#(一)
+        number_start_cm=1.51,
+        text_indent_cm=2.99,
+        tab_stop_cm=3.84,
+        body_left_cm=2.99,
+    ),
+    3: make_outline_indent_spec(#1.
+        number_start_cm=3.11,
+        text_indent_cm=3.98,
+        tab_stop_cm=4.84,
+        body_left_cm=3.98,
+    ),
+    4: make_outline_indent_spec(#(1)
+        number_start_cm=3.74,
+        text_indent_cm=4.96,
+        tab_stop_cm=5.81,
+        body_left_cm=4.98,
+    ),
+    5: make_outline_indent_spec(#A.
+        number_start_cm=5.16,
+        text_indent_cm=5.97,
+        tab_stop_cm=6.80,
+        body_left_cm=5.97,
+    ),
+    6: make_outline_indent_spec(#(A)
+        number_start_cm=5.93,
+        text_indent_cm=6.96,
+        tab_stop_cm=8.6,
+        body_left_cm=6.96,
+    ),
+    7: make_outline_indent_spec(#a.
+        number_start_cm=7.04,
+        text_indent_cm=8.1,
+        tab_stop_cm=8.72,
+        body_left_cm=8.1,
+    ),
+    8: make_outline_indent_spec(#(a)
+        number_start_cm=7.72,
+        text_indent_cm=8.6,
+        tab_stop_cm=9.81,
+        body_left_cm=8.6,
+    ),
 }
 
 
 PREFACE_OUTLINE_INDENTS = {
-    0: make_outline_indent_spec(-0.04, 1.14, 1.09),  # 一、
-    1: make_outline_indent_spec(0.73, 1.48, 2.21),  # （一）
-    2: make_outline_indent_spec(2.21, 0.49, 3.45),  # 1.
-    3: make_outline_indent_spec(2.45, 1.24, 4.44),  # （1）
-    4: make_outline_indent_spec(4.43, 0.50, 4.92),  # A.
-    5: make_outline_indent_spec(4.67, 1.24, 5.90),  # （A）
-    6: make_outline_indent_spec(6.39, 0.50, 6.85),  # a.
-    7: make_outline_indent_spec(7.72, 1.24, 8.96),  # （a）
+    0: make_outline_indent_spec(  # 一、
+        number_start_cm=-0.04,
+        text_indent_cm=1.10,
+        tab_stop_cm=1.94,
+        body_left_cm=1.09,
+    ),
+    1: make_outline_indent_spec(  # （一）
+        number_start_cm=0.73,
+        text_indent_cm=2.21,
+        tab_stop_cm=3.06,
+        body_left_cm=2.21,
+    ),
+    2: make_outline_indent_spec(  # 1.
+        number_start_cm=2.21,
+        text_indent_cm=2.70,
+        tab_stop_cm=4.30,
+        body_left_cm=3.45,
+    ),
+    3: make_outline_indent_spec(  # （1）
+        number_start_cm=2.45,
+        text_indent_cm=3.69,
+        tab_stop_cm=5.29,
+        body_left_cm=4.44,
+    ),
+    4: make_outline_indent_spec(  # A.
+        number_start_cm=4.43,
+        text_indent_cm=4.93,
+        tab_stop_cm=5.77,
+        body_left_cm=4.92,
+    ),
+    5: make_outline_indent_spec(  # （A）
+        number_start_cm=4.67,
+        text_indent_cm=5.91,
+        tab_stop_cm=6.75,
+        body_left_cm=5.90,
+    ),
+    6: make_outline_indent_spec(  # a.
+        number_start_cm=6.39,
+        text_indent_cm=6.89,
+        tab_stop_cm=7.70,
+        body_left_cm=6.85,
+    ),
+    7: make_outline_indent_spec(  # （a）
+        number_start_cm=7.72,
+        text_indent_cm=8.96,
+        tab_stop_cm=9.81,
+        body_left_cm=8.96,
+    ),
 }
 
 BUILTIN_TEMPLATE_OUTLINE_INDENTS = {

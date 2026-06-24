@@ -97,7 +97,12 @@ def make_indent_spec(
     if hanging_cm <= 0:
         raise ValueError("凸排距離必須大於 0。")
 
-    return make_outline_indent_spec(number_start_cm, hanging_cm, body_left_cm, heading_text_start_cm)
+    return make_outline_indent_spec(
+        number_start_cm=number_start_cm,
+        text_indent_cm=number_start_cm + hanging_cm,
+        tab_stop_cm=heading_text_start_cm,
+        body_left_cm=body_left_cm,
+    )
 
 
 def built_in_indent_settings() -> dict[str, list[dict[str, float | int | str]]]:

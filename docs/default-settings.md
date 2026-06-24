@@ -27,6 +27,7 @@ indent_defaults.json
 ```
 
 - `indent_settings`：儲存縮排設定，包含 `body` 與 `preface`。每列包含 `level`、`label`、`number_start_cm`、`hanging_cm`、`heading_text_start_cm`、`body_left_cm`。
+- constants.py 的內建預設直接明寫 Word 清單視窗的 `number_start_cm`、`text_indent_cm`、`tab_stop_cm`、`body_left_cm`；GUI/JSON 仍保留 `hanging_cm`，載入時以 `number_start_cm + hanging_cm` 轉成 canonical `text_indent_cm`，並以 `heading_text_start_cm` 轉成 canonical `tab_stop_cm`。
 - `gui_defaults`：儲存 GUI 第一頁勾選狀態。
 
 ## 載入規則

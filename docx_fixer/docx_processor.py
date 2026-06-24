@@ -118,6 +118,25 @@ def _twips_to_log_cm(value: object) -> float | None:
         return None
 
 
+def _settings_do_not_use_indent_as_numbering_tab_stop(settings_xml: bytes | None) -> bool:
+    if not settings_xml:
+        return False
+    try:
+        root = etree.fromstring(settings_xml)
+    except Exception:
+        return False
+    compat = root.find("w:compat", NS)
+    if compat is None:
+        return False
+    flag = compat.find("w:doNotUseIndentAsNumberingTabStop", NS)
+    if flag is None:
+        return False
+    raw_value = flag.get(qn("val"))
+    if raw_value is None:
+        return True
+    return raw_value.strip().lower() not in {"0", "false", "off"}
+
+
 def _tabs_summary_from_pPr(pPr) -> str:
     if pPr is None:
         return "none"
@@ -223,6 +242,7 @@ def _auto_suffix_details(
     ilvl: int | None,
     numbering_format_lookup,
     outline_level: int | None = None,
+    compat_do_not_use_indent_as_numbering_tab_stop: bool = False,
 ) -> dict[str, object]:
     level_format = numbering_format_lookup.get((num_id, ilvl), {}) if num_id is not None and ilvl is not None else {}
     raw_suffix = level_format.get("suff")
@@ -260,6 +280,12 @@ def _auto_suffix_details(
         "numFmt": level_format.get("numFmt"),
         "lvlText": lvl_text,
         "lvlText_has_trailing_space": isinstance(lvl_text, str) and lvl_text.endswith((" ", "\t", "\u3000")),
+        "numbering_level_source": level_format.get("level_source"),
+        "numbering_lvl_child_order": level_format.get("lvl_child_order", "none"),
+        "numbering_pPr_child_order": level_format.get("pPr_child_order", "none"),
+        "suffix_before_lvlText": bool(level_format.get("suffix_before_lvlText", False)),
+        "tabs_before_ind": bool(level_format.get("tabs_before_ind", False)),
+        "compat_doNotUseIndentAsNumberingTabStop": compat_do_not_use_indent_as_numbering_tab_stop,
         "has_tab_stop": tab_pos is not None,
         "tab_pos_twips": tab_pos,
         "tab_pos_cm": _twips_to_log_cm(tab_pos),
@@ -287,10 +313,14 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
         names = set(zin.namelist())
         numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in names else None
         styles_xml = zin.read("word/styles.xml") if "word/styles.xml" in names else None
+        settings_xml = zin.read("word/settings.xml") if "word/settings.xml" in names else None
         numbering_level_lookup = build_numbering_level_lookup(numbering_xml)
         numbering_format_lookup = build_numbering_format_lookup(numbering_xml)
         style_numbering_lookup = build_style_numbering_lookup(styles_xml)
         style_tabs_lookup = _style_tabs_lookup(styles_xml)
+        compat_do_not_use_indent_as_numbering_tab_stop = (
+            _settings_do_not_use_indent_as_numbering_tab_stop(settings_xml)
+        )
 
         for part_name in sorted(name for name in names if should_process_part(name)):
             try:
@@ -330,14 +360,26 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
                     level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
                     if level is not None:
                         source = "auto_numbering_xml"
-                        details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup, level)
+                        details = _auto_suffix_details(
+                            num_id,
+                            ilvl,
+                            numbering_format_lookup,
+                            level,
+                            compat_do_not_use_indent_as_numbering_tab_stop,
+                        )
 
                 if level is None and not should_skip_style_numbering(text):
                     num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
                     level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
                     if level is not None:
                         source = "auto_numbering_xml"
-                        details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup, level)
+                        details = _auto_suffix_details(
+                            num_id,
+                            ilvl,
+                            numbering_format_lookup,
+                            level,
+                            compat_do_not_use_indent_as_numbering_tab_stop,
+                        )
 
                 if level is None or source is None or details is None:
                     continue

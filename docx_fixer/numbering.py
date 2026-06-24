@@ -749,7 +749,33 @@ def _calculated_number_start(left: str | None, hanging: str | None) -> str | Non
         return None
 
 
-def get_numbering_level_format(lvl) -> dict[str, str | None]:
+def _local_tag_name(element) -> str:
+    return etree.QName(element).localname
+
+
+def direct_child_order(element) -> str:
+    if element is None:
+        return "none"
+    names = [_local_tag_name(child) for child in element]
+    return ",".join(names) if names else "none"
+
+
+def direct_child_index(element, local_name: str) -> int | None:
+    if element is None:
+        return None
+    for index, child in enumerate(element):
+        if _local_tag_name(child) == local_name:
+            return index
+    return None
+
+
+def direct_child_before(element, first_name: str, second_name: str) -> bool:
+    first_index = direct_child_index(element, first_name)
+    second_index = direct_child_index(element, second_name)
+    return first_index is not None and second_index is not None and first_index < second_index
+
+
+def get_numbering_level_format(lvl, *, level_source: str | None = None) -> dict[str, object]:
     pPr = lvl.find("w:pPr", NS)
     ind = pPr.find("w:ind", NS) if pPr is not None else None
     tab = pPr.find("./w:tabs/w:tab", NS) if pPr is not None else None
@@ -770,10 +796,15 @@ def get_numbering_level_format(lvl) -> dict[str, str | None]:
         "tab_pos": tab.get(qn("pos")) if tab is not None else None,
         "numFmt": num_fmt.get(qn("val")) if num_fmt is not None else None,
         "lvlText": lvl_text.get(qn("val")) if lvl_text is not None else None,
+        "level_source": level_source,
+        "lvl_child_order": direct_child_order(lvl),
+        "pPr_child_order": direct_child_order(pPr),
+        "suffix_before_lvlText": direct_child_before(lvl, "suff", "lvlText"),
+        "tabs_before_ind": direct_child_before(pPr, "tabs", "ind"),
     }
 
 
-def build_numbering_format_lookup(numbering_xml: bytes | None) -> dict[tuple[str, int], dict[str, str | None]]:
+def build_numbering_format_lookup(numbering_xml: bytes | None) -> dict[tuple[str, int], dict[str, object]]:
     if not numbering_xml:
         return {}
 
@@ -782,22 +813,22 @@ def build_numbering_format_lookup(numbering_xml: bytes | None) -> dict[tuple[str
     except Exception:
         return {}
 
-    abstract_formats: dict[str, dict[int, dict[str, str | None]]] = {}
+    abstract_formats: dict[str, dict[int, dict[str, object]]] = {}
     for abstract_num in root.xpath("./w:abstractNum", namespaces=NS):
         abstract_id = abstract_num.get(qn("abstractNumId"))
         if abstract_id is None:
             continue
 
-        levels: dict[int, dict[str, str | None]] = {}
+        levels: dict[int, dict[str, object]] = {}
         for lvl in abstract_num.xpath("./w:lvl", namespaces=NS):
             try:
                 ilvl = int(lvl.get(qn("ilvl")))
             except Exception:
                 continue
-            levels[ilvl] = get_numbering_level_format(lvl)
+            levels[ilvl] = get_numbering_level_format(lvl, level_source="abstractNum")
         abstract_formats[abstract_id] = levels
 
-    lookup: dict[tuple[str, int], dict[str, str | None]] = {}
+    lookup: dict[tuple[str, int], dict[str, object]] = {}
     for num in root.xpath("./w:num", namespaces=NS):
         num_id = num.get(qn("numId"))
         abstract_el = num.find("w:abstractNumId", NS)
@@ -816,7 +847,7 @@ def build_numbering_format_lookup(numbering_xml: bytes | None) -> dict[tuple[str
 
             lvl = override.find("w:lvl", NS)
             if lvl is not None:
-                lookup[(num_id, ilvl)] = get_numbering_level_format(lvl)
+                lookup[(num_id, ilvl)] = get_numbering_level_format(lvl, level_source="lvlOverride")
 
     return lookup
 

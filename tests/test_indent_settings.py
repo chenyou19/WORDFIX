@@ -10,6 +10,7 @@ from docx_fixer.constants import (
     DEFAULT_HEADING_TEXT_START_OFFSET_CM,
     PREFACE_OUTLINE_INDENTS,
     TEMPLATE_OUTLINE_INDENTS,
+    make_outline_indent_spec,
 )
 from docx_fixer.indent_settings import (
     apply_indent_settings,
@@ -18,6 +19,7 @@ from docx_fixer.indent_settings import (
     load_saved_indent_settings,
     save_indent_settings,
     spec_to_cm_values,
+    twips_to_cm,
 )
 
 
@@ -31,6 +33,31 @@ class IndentSettingsTests(unittest.TestCase):
         TEMPLATE_OUTLINE_INDENTS.update(self.original_body)
         PREFACE_OUTLINE_INDENTS.clear()
         PREFACE_OUTLINE_INDENTS.update(self.original_preface)
+
+    def test_canonical_factory_uses_word_number_text_tab_and_body_positions(self):
+        spec = make_outline_indent_spec(
+            number_start_cm=3.49,
+            text_indent_cm=3.99,
+            tab_stop_cm=4.84,
+            body_left_cm=3.99,
+        )
+
+        self.assertAlmostEqual(twips_to_cm(spec["number_start"]), 3.49, places=2)
+        self.assertAlmostEqual(twips_to_cm(spec["left"]), 3.99, places=2)
+        self.assertAlmostEqual(twips_to_cm(spec["hanging"]), 0.50, places=2)
+        self.assertAlmostEqual(twips_to_cm(spec["heading_text_start"]), 4.84, places=2)
+        self.assertAlmostEqual(twips_to_cm(spec["body_left"]), 3.99, places=2)
+
+    def test_canonical_factory_rejects_text_indent_at_or_before_number_start(self):
+        for text_indent_cm in (3.49, 3.48):
+            with self.subTest(text_indent_cm=text_indent_cm):
+                with self.assertRaisesRegex(ValueError, "文字縮排必須大於標號起點"):
+                    make_outline_indent_spec(
+                        number_start_cm=3.49,
+                        text_indent_cm=text_indent_cm,
+                        tab_stop_cm=4.84,
+                        body_left_cm=3.99,
+                    )
 
     def test_apply_settings_uses_number_start_and_hanging_to_compute_heading_left(self):
         settings = current_indent_settings()
@@ -55,10 +82,10 @@ class IndentSettingsTests(unittest.TestCase):
         expected = [
             (-0.04, 1.27, 1.23),
             (0.73, 1.13, 1.86),
-            (1.47, 1.48, 2.96),
-            (2.96, 0.50, 3.45),
-            (3.21, 1.23, 4.44),
-            (4.45, 0.50, 4.94),
+            (1.51, 1.48, 2.99),
+            (3.49, 0.50, 3.99),
+            (3.74, 1.23, 4.96),
+            (5.45, 0.50, 5.95),
             (4.70, 1.23, 5.94),
             (5.94, 0.49, 6.85),
             (7.72, 1.24, 8.96),
@@ -98,8 +125,8 @@ class IndentSettingsTests(unittest.TestCase):
 
     def test_heading_left_is_computed_from_number_start_and_hanging(self):
         expected = {
-            3: 2.96 + 0.50,
-            5: 4.45 + 0.50,
+            3: 3.49 + 0.50,
+            5: 5.45 + 0.50,
             7: 5.94 + 0.49,
         }
 
@@ -119,14 +146,14 @@ class IndentSettingsTests(unittest.TestCase):
 
         builtin_level_four = built_in_indent_settings()["body"][3]
 
-        self.assertAlmostEqual(float(builtin_level_four["number_start_cm"]), 2.96, places=2)
+        self.assertAlmostEqual(float(builtin_level_four["number_start_cm"]), 3.49, places=2)
         self.assertAlmostEqual(float(builtin_level_four["hanging_cm"]), 0.50, places=2)
         self.assertAlmostEqual(
             float(builtin_level_four["heading_text_start_cm"]),
             float(builtin_level_four["body_left_cm"]) + DEFAULT_HEADING_TEXT_START_OFFSET_CM,
             places=2,
         )
-        self.assertAlmostEqual(float(builtin_level_four["body_left_cm"]), 3.45, places=2)
+        self.assertAlmostEqual(float(builtin_level_four["body_left_cm"]), 3.99, places=2)
 
     def test_save_and_load_settings_round_trips_preface_values(self):
         settings = current_indent_settings()

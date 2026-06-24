@@ -12,7 +12,7 @@ from zipfile import ZipFile
 from lxml import etree
 
 from docx_fixer.constants import NS, TEMPLATE_OUTLINE_INDENTS, W_NS
-from docx_fixer.docx_processor import fix_docx_fast
+from docx_fixer.docx_processor import collect_heading_suffix_records_from_docx, fix_docx_fast
 from docx_fixer.note_debug_log import collect_note_debug_records_from_docx
 from docx_fixer.outline import collect_all_toc_paragraph_ids
 from docx_fixer.protected_region import ProtectedRegionContext, collect_chapter_three_paragraph_ids
@@ -79,6 +79,16 @@ def make_docx(
             zf.writestr("word/numbering.xml", numbering_xml)
         for name, data in (extra_parts or {}).items():
             zf.writestr(name, data)
+
+
+def make_settings_xml(*, do_not_use_indent_as_numbering_tab_stop: str | None | bool = None) -> bytes:
+    settings = etree.Element(qn("settings"), nsmap={"w": W_NS})
+    compat = etree.SubElement(settings, qn("compat"))
+    if do_not_use_indent_as_numbering_tab_stop is not None:
+        flag = etree.SubElement(compat, qn("doNotUseIndentAsNumberingTabStop"))
+        if isinstance(do_not_use_indent_as_numbering_tab_stop, str):
+            flag.set(qn("val"), do_not_use_indent_as_numbering_tab_stop)
+    return etree.tostring(settings, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
 def make_document_xml() -> bytes:
@@ -1113,6 +1123,114 @@ def assert_toc_outlines_are_body(test_case: unittest.TestCase, path: Path) -> No
 
 
 class DocxProcessorTests(unittest.TestCase):
+    def test_numbering_format_lookup_records_effective_level_source_and_child_order(self):
+        numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(numbering, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "1")
+        abstract_lvl = etree.SubElement(abstract, qn("lvl"))
+        abstract_lvl.set(qn("ilvl"), "0")
+        for tag in ("start", "numFmt", "suff", "lvlText", "lvlJc"):
+            child = etree.SubElement(abstract_lvl, qn(tag))
+            if tag == "numFmt":
+                child.set(qn("val"), "decimal")
+            elif tag == "suff":
+                child.set(qn("val"), "tab")
+            elif tag == "lvlText":
+                child.set(qn("val"), "%1.")
+        abstract_ppr = etree.SubElement(abstract_lvl, qn("pPr"))
+        abstract_tabs = etree.SubElement(abstract_ppr, qn("tabs"))
+        abstract_tab = etree.SubElement(abstract_tabs, qn("tab"))
+        abstract_tab.set(qn("val"), "left")
+        abstract_tab.set(qn("pos"), "111")
+        etree.SubElement(abstract_ppr, qn("ind"))
+        etree.SubElement(abstract_lvl, qn("rPr"))
+
+        num_abstract = etree.SubElement(numbering, qn("num"))
+        num_abstract.set(qn("numId"), "42")
+        abstract_ref = etree.SubElement(num_abstract, qn("abstractNumId"))
+        abstract_ref.set(qn("val"), "1")
+
+        num_override = etree.SubElement(numbering, qn("num"))
+        num_override.set(qn("numId"), "43")
+        override_ref = etree.SubElement(num_override, qn("abstractNumId"))
+        override_ref.set(qn("val"), "1")
+        override = etree.SubElement(num_override, qn("lvlOverride"))
+        override.set(qn("ilvl"), "0")
+        override_lvl = etree.SubElement(override, qn("lvl"))
+        override_lvl.set(qn("ilvl"), "0")
+        for tag in ("start", "numFmt", "lvlText", "suff", "lvlJc"):
+            child = etree.SubElement(override_lvl, qn(tag))
+            if tag == "numFmt":
+                child.set(qn("val"), "decimal")
+            elif tag == "suff":
+                child.set(qn("val"), "nothing")
+            elif tag == "lvlText":
+                child.set(qn("val"), "%9.")
+        override_ppr = etree.SubElement(override_lvl, qn("pPr"))
+        etree.SubElement(override_ppr, qn("ind"))
+        override_tabs = etree.SubElement(override_ppr, qn("tabs"))
+        override_tab = etree.SubElement(override_tabs, qn("tab"))
+        override_tab.set(qn("val"), "left")
+        override_tab.set(qn("pos"), "222")
+
+        abstract_missing = etree.SubElement(numbering, qn("abstractNum"))
+        abstract_missing.set(qn("abstractNumId"), "2")
+        missing_lvl = etree.SubElement(abstract_missing, qn("lvl"))
+        missing_lvl.set(qn("ilvl"), "0")
+        missing_fmt = etree.SubElement(missing_lvl, qn("numFmt"))
+        missing_fmt.set(qn("val"), "decimal")
+        missing_text = etree.SubElement(missing_lvl, qn("lvlText"))
+        missing_text.set(qn("val"), "%1.")
+        num_missing = etree.SubElement(numbering, qn("num"))
+        num_missing.set(qn("numId"), "44")
+        missing_ref = etree.SubElement(num_missing, qn("abstractNumId"))
+        missing_ref.set(qn("val"), "2")
+
+        lookup = build_numbering_format_lookup(etree.tostring(numbering))
+
+        self.assertEqual(lookup[("42", 0)]["level_source"], "abstractNum")
+        self.assertEqual(lookup[("42", 0)]["suff"], "tab")
+        self.assertEqual(lookup[("42", 0)]["tab_pos"], "111")
+        self.assertEqual(lookup[("42", 0)]["lvl_child_order"], "start,numFmt,suff,lvlText,lvlJc,pPr,rPr")
+        self.assertEqual(lookup[("42", 0)]["pPr_child_order"], "tabs,ind")
+        self.assertTrue(lookup[("42", 0)]["suffix_before_lvlText"])
+        self.assertTrue(lookup[("42", 0)]["tabs_before_ind"])
+
+        self.assertEqual(lookup[("43", 0)]["level_source"], "lvlOverride")
+        self.assertEqual(lookup[("43", 0)]["suff"], "nothing")
+        self.assertEqual(lookup[("43", 0)]["tab_pos"], "222")
+        self.assertEqual(lookup[("43", 0)]["lvl_child_order"], "start,numFmt,lvlText,suff,lvlJc,pPr")
+        self.assertEqual(lookup[("43", 0)]["pPr_child_order"], "ind,tabs")
+        self.assertFalse(lookup[("43", 0)]["suffix_before_lvlText"])
+        self.assertFalse(lookup[("43", 0)]["tabs_before_ind"])
+
+        self.assertEqual(lookup[("44", 0)]["level_source"], "abstractNum")
+        self.assertEqual(lookup[("44", 0)]["pPr_child_order"], "none")
+        self.assertFalse(lookup[("44", 0)]["tabs_before_ind"])
+
+    def test_heading_suffix_records_include_settings_compat_flag_for_auto_numbering(self):
+        cases = [
+            ("present_no_val", make_settings_xml(do_not_use_indent_as_numbering_tab_stop=True), True),
+            ("missing", None, False),
+            ("explicit_zero", make_settings_xml(do_not_use_indent_as_numbering_tab_stop="0"), False),
+        ]
+        for _name, settings_xml, expected in cases:
+            with self.subTest(case=_name):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    input_docx = Path(temp_dir) / "input.docx"
+                    extra_parts = {"word/settings.xml": settings_xml} if settings_xml is not None else None
+                    make_docx(
+                        input_docx,
+                        make_heading_suffix_document_xml(),
+                        numbering_xml=make_heading_suffix_numbering_xml(),
+                        extra_parts=extra_parts,
+                    )
+
+                    records = collect_heading_suffix_records_from_docx(input_docx)
+
+                auto = next(record for record in records if record.get("source") == "auto_numbering_xml")
+                self.assertEqual(auto["compat_doNotUseIndentAsNumberingTabStop"], expected)
+
     def test_collect_chapter_three_ids_uses_title_text_and_level_zero_when_prefix_unknown(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
@@ -2618,7 +2736,7 @@ class DocxProcessorTests(unittest.TestCase):
             body_ind = paragraphs[3].find("./w:pPr/w:ind", NS)
             self.assertEqual(heading_ind.get(qn("left")), spec["left"])
             self.assertEqual(heading_ind.get(qn("hanging")), spec["hanging"])
-            self.assertAlmostEqual(int(heading_ind.get(qn("left"))) / 20 / 28.3464567, 3.46, places=2)
+            self.assertAlmostEqual(int(heading_ind.get(qn("left"))) / 20 / 28.3464567, 3.99, places=2)
             self.assertAlmostEqual(int(heading_ind.get(qn("hanging"))) / 20 / 28.3464567, 0.50, places=2)
             assert_body_indent_hard_override(self, paragraphs[3], spec["body_left"])
 
@@ -2655,20 +2773,20 @@ class DocxProcessorTests(unittest.TestCase):
             logs = "\n".join(summary.numbering_xml_logs)
             self.assertIn("NUMBERING_XML_LEVEL_INDENT", logs)
             self.assertIn("STYLES_XML_NUMBERED_STYLE_INDENT", logs)
-            self.assertIn("expected_number_start_cm=2.96", logs)
+            self.assertIn("expected_number_start_cm=3.49", logs)
             self.assertIn("expected_heading_text_start_cm=", logs)
             self.assertIn("expected_tab_pos_cm=", logs)
             self.assertIn("suff=tab", logs)
             self.assertNotIn("tab_pos_cm=None", logs)
             records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
-            self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.46, places=2)
+            self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.99, places=2)
             self.assertAlmostEqual(
                 records_by_kind["auto(style)"]["expected_heading_text_start_cm"],
                 round(int(spec["heading_text_start"]) / 20 / 28.3464567, 2),
                 places=2,
             )
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_hanging_cm"], 0.50, places=2)
-            self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.45, places=2)
+            self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.99, places=2)
             self.assertEqual(records_by_kind["body"]["expected_firstline_cm"], 0.0)
 
     def test_fix_docx_fast_passes_only_font_check_records_to_word_com(self):
@@ -3179,6 +3297,13 @@ class DocxProcessorTests(unittest.TestCase):
                 TEMPLATE_OUTLINE_INDENTS[3]["heading_text_start"],
             )
             self.assertNotEqual(after_by_index[4]["tab_pos_twips"], TEMPLATE_OUTLINE_INDENTS[3]["left"])
+            self.assertEqual(after_by_index[4]["numbering_level_source"], "abstractNum")
+            self.assertIn("suff", after_by_index[4]["numbering_lvl_child_order"])
+            self.assertIn("pPr", after_by_index[4]["numbering_lvl_child_order"])
+            self.assertIn(after_by_index[4]["numbering_pPr_child_order"], {"tabs,ind", "ind,tabs"})
+            self.assertIn(after_by_index[4]["suffix_before_lvlText"], {True, False})
+            self.assertIn(after_by_index[4]["tabs_before_ind"], {True, False})
+            self.assertFalse(after_by_index[4]["compat_doNotUseIndentAsNumberingTabStop"])
 
     def test_heading_suffix_normalizes_auto_numbering_missing_suffix_and_tabs(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -85,7 +85,7 @@ GUI 的縮排設定頁把每一階拆成四個欄位：
 
 保存後會寫入 `indent_defaults.json` 的 `indent_settings` 區塊。載入後會覆寫執行中的 `TEMPLATE_OUTLINE_INDENTS` 與 `PREFACE_OUTLINE_INDENTS`。
 
-內建預設中，`heading_text_start_cm` 由 `body_left_cm + DEFAULT_HEADING_TEXT_START_OFFSET_CM` 產生，目前 offset 為 `0.85` cm。舊版設定檔若沒有 `heading_text_start_cm`，載入時也會用同一個規則補值；新版設定檔會完整保存使用者手動調整後的值。
+內建預設在 `constants.py` 直接明寫 `tab_stop_cm`，再轉成底層 `heading_text_start`。`DEFAULT_HEADING_TEXT_START_OFFSET_CM = 0.85` 只保留給舊版設定檔缺少 `heading_text_start_cm` 時的相容補值；新版設定檔會完整保存使用者手動調整後的值。
 
 ## Word COM 字號補救
 

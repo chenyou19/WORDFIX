@@ -273,6 +273,20 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
             ):
                 lines.append(f"{key_name}_before: {_format_optional_cm(before_record.get(key_name))}")
                 lines.append(f"{key_name}_after: {_format_optional_cm(after_record.get(key_name))}")
+            for output_name, record_key in (
+                ("numbering_level_source_after", "numbering_level_source"),
+                ("numbering_lvl_child_order_after", "numbering_lvl_child_order"),
+                ("numbering_pPr_child_order_after", "numbering_pPr_child_order"),
+                ("suffix_before_lvlText_after", "suffix_before_lvlText"),
+                ("tabs_before_ind_after", "tabs_before_ind"),
+                (
+                    "compat_doNotUseIndentAsNumberingTabStop_after",
+                    "compat_doNotUseIndentAsNumberingTabStop",
+                ),
+            ):
+                lines.append(
+                    f"{output_name}: {_format_suffix_record_value(after_record, record_key)}"
+                )
         else:
             for key_name in ("space_count", "tab_count", "raw_separator_repr"):
                 lines.append(

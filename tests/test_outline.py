@@ -421,10 +421,10 @@ class OutlineFixTests(unittest.TestCase):
         expected = {
             0: (1.23, -0.04, 1.27, 1.23),
             1: (1.86, 0.73, 1.13, 1.86),
-            2: (2.95, 1.47, 1.48, 2.96),
-            3: (3.46, 2.96, 0.50, 3.45),
-            4: (4.44, 3.21, 1.23, 4.44),
-            5: (4.95, 4.45, 0.50, 4.94),
+            2: (2.99, 1.51, 1.48, 2.99),
+            3: (3.99, 3.49, 0.50, 3.99),
+            4: (4.97, 3.74, 1.23, 4.96),
+            5: (5.95, 5.45, 0.50, 5.95),
             6: (5.93, 4.70, 1.23, 5.94),
             7: (6.43, 5.94, 0.49, 6.85),
             8: (8.96, 7.72, 1.24, 8.96),
@@ -447,9 +447,9 @@ class OutlineFixTests(unittest.TestCase):
         original = dict(TEMPLATE_OUTLINE_INDENTS[3])
         TEMPLATE_OUTLINE_INDENTS[3] = make_outline_indent_spec(
             number_start_cm=1.00,
-            hanging_cm=0.50,
+            text_indent_cm=1.50,
+            tab_stop_cm=3.75,
             body_left_cm=2.25,
-            heading_text_start_cm=3.75,
         )
         spec = TEMPLATE_OUTLINE_INDENTS[3]
         try:
@@ -1427,10 +1427,10 @@ class OutlineFixTests(unittest.TestCase):
         expected = TEMPLATE_OUTLINE_INDENTS[2]["body_left"]
         body_ind = body.find("./w:pPr/w:ind", NS)
         assert_body_indent_hard_override(self, body, expected)
-        self.assertAlmostEqual(twips_to_cm(expected), 2.96, places=2)
+        self.assertAlmostEqual(twips_to_cm(expected), 2.99, places=2)
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=2", debug)
-        self.assertIn("spec_body_left_cm=2.96", debug)
+        self.assertIn("spec_body_left_cm=2.99", debug)
         self.assertIn(f"written_left_twips={expected}", debug)
         self.assertIn(f"written_start_twips={expected}", debug)
         self.assertIn("written_firstLine_twips=0", debug)
@@ -1518,10 +1518,10 @@ class OutlineFixTests(unittest.TestCase):
 
         expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
         assert_body_indent_hard_override(self, body, expected_left)
-        self.assertAlmostEqual(twips_to_cm(expected_left), 3.45, places=2)
+        self.assertAlmostEqual(twips_to_cm(expected_left), 3.99, places=2)
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=3", debug)
-        self.assertIn("spec_body_left_cm=3.45", debug)
+        self.assertIn("spec_body_left_cm=3.99", debug)
         self.assertIn("spec_firstLine_twips=None", debug)
         self.assertIn(f"written_left_twips={expected_left}", debug)
         self.assertIn("tab_pos=None", debug)

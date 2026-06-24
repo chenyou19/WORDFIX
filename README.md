@@ -61,7 +61,7 @@ GUI 第一頁勾選預設以 `docx_fixer/gui_defaults.py` 的 `built_in_gui_defa
 - 原始碼執行時，設定檔位於目前工作目錄。
 - EXE 執行時，設定檔位於 EXE 同層。
 - 設定檔內的 `indent_settings` 儲存縮排設定，`gui_defaults` 儲存 GUI 第一頁勾選狀態。
-- 縮排設定每階包含 `number_start_cm`、`hanging_cm`、`heading_text_start_cm`、`body_left_cm`。其中 `heading_text_start_cm` 只控制自動編號後綴為 Tab 時，Tab 後標題文字的位置；普通內文起點仍由 `body_left_cm` 控制，list left/hanging 仍由 `number_start_cm + hanging_cm` 與 `hanging_cm` 控制。
+- 縮排設定每階包含 `number_start_cm`、`hanging_cm`、`heading_text_start_cm`、`body_left_cm`。GUI/JSON 仍以 `hanging_cm` 表示使用者輸入；內建 constants 則直接明寫 Word 的 `number_start_cm`、`text_indent_cm`、`tab_stop_cm`、`body_left_cm`，再轉成底層 `number_start`、`left`、`hanging`、`heading_text_start`、`body_left`。
 
 若要把 EXE 帶到另一台電腦並沿用設定，請把 EXE 與 `indent_defaults.json` 放在同一層。
 
