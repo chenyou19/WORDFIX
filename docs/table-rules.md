@@ -17,7 +17,7 @@
 5. 搬移後重新計算 `cell_count`、`column_count` 與一般 / 特殊表格類型。
 6. 命中「指定顏色跳過整張表」清單的表格會跳過。
 7. 儲存格數 `cell_count <= 4` 的表格會跳過，`table_type = skipped_small_table`。
-8. 其餘表格依欄數走特殊表格、一般表格或只處理顏色，套用版面、字體、顏色後，**若隱藏選項 `enable_double_black_table_borders` 為 True**，會對一般表格與特殊表格套用黑色雙線外框（預設關閉，不套用）；接著**若選項 `enable_table_footer_source_format` 為 True 且該表格版面有被調整**，僅在此處「記錄」該表格，實際的「表格最後一列說明格式化」延後到 Word COM AutoFit 與 fallback 之後的最後 post-process 才套用（見下方專節）。
+8. 其餘表格依欄數走特殊表格、一般表格或只處理顏色，套用版面、字體、顏色後，**若隱藏選項 `enable_double_black_table_borders` 為 True**，會對一般表格與特殊表格套用黑色雙線外框（預設關閉，不套用）；接著**若選項 `enable_table_footer_source_format` 為 True 且該表格符合 footer eligibility**，僅在此處「記錄」該表格，實際的「表格最後一列說明格式化」延後到 Word COM AutoFit 與 fallback 之後的最後 post-process 才套用（見下方專節）。一般表格需有表格版面處理；參、表格若只是被 `skip_chapter_three_table_layout` 保護而關掉 effective layout，但全域仍有要求表格版面處理，也會被記錄。
 
 註記搬移、黑色雙線外框與表格最後一列說明格式化的詳細規則見下方專節。
 
@@ -175,15 +175,15 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 - 黑色雙線外框只由 `enable_double_black_table_borders` 控制，與「將表格內註記儲存格移至表格下方」「參、不要表格註記搬移」完全獨立，互不耦合。
 - `table_log` 以 `double_border_enabled`（隱藏選項是否啟用）與 `double_border_applied`（該表是否實際套用）記錄，摘要以 `套用黑色雙線外框的表格數` 統計。
 
-## 表格最後一列說明格式化（獨立功能，預設關閉）
+## 表格最後一列說明格式化（獨立功能，核心預設關閉、GUI 內建勾選）
 
-由 `ProcessOptions.enable_table_footer_source_format` 控制（**預設 `False`**），GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆可啟用，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**，只格式化表格底部連續的說明列中符合條件的 cell。元素層級實作在 `table_format.apply_table_footer_source_format()`。
+由 `ProcessOptions.enable_table_footer_source_format` 控制；核心 `ProcessOptions` 與 CLI 預設為 `False`，GUI 內建預設 `gui_defaults["enable_table_footer_source_format"] = True`，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆會傳入同一個布林值。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**，只格式化表格底部連續的說明列中符合條件的 cell，並確保表格最後一列可見底框。元素層級實作在 `table_format.apply_table_footer_source_format()`。
 
 **執行時機（重要）**：本功能是**最後一個表格格式化步驟**。XML pipeline（`table_pipeline.py`）只在處理該表格時把它「記錄」到 `summary.table_footer_source_format_records`，實際格式化延後到 `docx_processor.py` 於 **Word COM AutoFit 與 XML fallback 之後、final note alignment 之前**呼叫 `table_footer_postprocess.apply_table_footer_source_format_in_docx()` 才套用。
 
 原因：一般表格會被加入 Word COM AutoFit 清單，AutoFit 會重存整份文件；若 AutoFit 失敗，fallback `fallback_normal_table_autofit_in_docx()` 會重跑 `apply_table_format()`，把整表 run 改回 11pt、段落改回置中。若 footer 在 XML pipeline 階段就套用（Word COM 之前），一般表格的 footer 會被 AutoFit／fallback 覆蓋（特殊表格不進 Word COM 所以原本正常）。改成最後 post-process 後，一般表格與特殊表格都正確。post-process 只用記錄中的 `(part_name, table_index)` 精準重新定位該表格（與 fallback 相同的定位方式），不會無差別掃全部表格。
 
-啟用且**該表格版面有被調整**時（見「與既有跳過邏輯的關係」），post-process 對每張記錄到的表格依固定順序處理：
+啟用且該表符合 eligibility 時（見「與既有跳過邏輯的關係」），post-process 對每張記錄到的表格依固定順序處理：
 
 1. 整張表格內所有 run 字級設為 11pt（`w:sz`/`w:szCs` 值 `22`）。
 2. 表格外圍框線（`top`/`bottom`/`left`/`right`）設為黑色雙線（`w:val="double"`、`w:color="000000"`、`w:sz="4"`、`w:space="0"`），內框 `insideH`/`insideV` 不動。
@@ -196,21 +196,22 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
      - 符合 `^註(?:\d+)?[：:]`（如「註：」「註:」「註1：」「註10:」；不含「備註：」「註記：」「本註：」「說明註：」）：cell 內所有文字 10pt、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
      - 該列其餘不命中的儲存格不更動字級、對齊與邊框。
    - **停止條件**：某一列若沒有任何 cell 命中 footer 規則（含空白列），立即停止往上掃描。因此只處理表格底部**連續**的說明列；中間夾著資料列或空白列就會中斷，非連續的註記列不會被處理。不會掃整張表。
+5. 最後強制表格最後一個實體 `w:tr` 的每個實體 `w:tc` 都具有 `w:tcBorders/w:bottom` 黑色雙線（`w:val="double"`、`w:sz="4"`、`w:space="0"`、`w:color="000000"`）。這一步在 footer block 之後執行，所以 footer cell 的 `left`/`right` 仍可維持 `nil`，但最後一列即使是「註：」「基期：」「資料來源：」也會以黑色雙框線收尾；普通表格沒有 footer row 時也同樣會補最後一列 cell bottom。這是為了避免 Word 以直接 cell bottom border（例如 `nil`、單線或白線）覆蓋 table-level bottom border，造成 log 顯示外框已套用但畫面底線不可見。
 
 註記規則整合在同一個 footer 流程（`_classify_footer_cell()`），與基期/資料來源共用同一套字級、邊框處理。註記判斷 regex `FOOTER_NOTE_PREFIX_PATTERN` 定義於 `docx_fixer/table_format.py`。
 
-優先權（後者覆蓋前者）：footer 列規則（基期/資料來源/註記）＞ 第一列單 cell 規則 ＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此 footer cell 的 10pt 不會被全表 11pt 蓋掉，footer cell 的左右下無邊框、第一列單 cell 的上左右無邊框也不會被外圍雙線蓋掉。
+優先權（後者覆蓋前者）：最後一列 cell bottom 黑色雙線（只覆蓋 bottom）＞ footer 列規則（基期/資料來源/註記）＞ 第一列單 cell 規則 ＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此 footer cell 的 10pt 不會被全表 11pt 蓋掉，footer cell 的左右無邊框、第一列單 cell 的上左右無邊框也不會被外圍雙線蓋掉；最後一列 footer cell 的 bottom 會在最後被改回黑色雙線。
 
-邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（第一列單 cell 的 `top`/`left`/`right`；命中的 footer cell 的 `left`/`right`/`bottom`）。
+邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（第一列單 cell 的 `top`/`left`/`right`；命中的 footer cell 的 `left`/`right`，以及非最後一列 footer cell 的 `bottom`）。
 
 ### 與既有跳過邏輯的關係
 
-本功能被歸類為「表格版面格式」，只在該表格的版面實際被調整（`effective_fix_table_layout` 為 True）時執行：
+本功能仍以「有要求表格版面處理」作為安全前提，但參、表格的版面／顏色保護不得阻擋它：
 
 - 第一張表格、巢狀表格、小表格（cell_count ≤ 4）、特殊顏色跳過表格：在到達本步驟前就已跳過，本功能不執行。
-- 「參、不要調整」整章保護的表格：整張跳過，本功能不執行。
-- 參、表格**版面**不調整：版面未被調整，本功能不執行（`table_footer_note_source_format_skipped_reason = layout not adjusted for this table`）。
-- 參、表格**顏色**不調整、但版面仍調整：本功能照常執行（顏色跳過不會擋住本功能）。
+- 全域 `fix_table_layout=False`：不會因為本功能啟用而自動套 footer（`table_footer_note_source_format_skipped_reason = layout not adjusted for this table`）。
+- 一般表格：`effective_fix_table_layout=True` 時才記錄並在 final post-process 套用。
+- 參、表格：若全域 `fix_table_layout=True`，即使 `skip_chapter_three_table_layout=True` 使 `effective_fix_table_layout=False`，仍會記錄並在 final post-process 套用；`skip_chapter_three_table_color=True` 也不會阻擋。這只套 footer 格式，不會呼叫一般 `process_table()`，因此參、表格的 width、layout、欄寬與顏色保護仍維持。
 
 ### table_log 欄位
 
@@ -218,9 +219,13 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 - `table_footer_note_source_format_should_apply`：XML pipeline 判定該表需要 footer 格式化（已記錄、待 post-process 套用）。
 - `table_footer_note_source_format_applied`：final post-process 是否實際套用（由 post-process 回寫）。
 - `outer_double_border_applied_by_footer_source_format`：是否套用外圍黑色雙線。
+- `table_bottom_double_border_applied`：是否已對最後一列實體 cell 套用 bottom 黑色雙線。
+- `table_bottom_double_border_cell_count`：最後一列實際套用 bottom 黑色雙線的實體 cell 數。
+- `table_bottom_double_border_xml_verified`：XML 是否確認 table-level bottom 與最後一列所有 cell bottom 均為 `double/4/000000`。這只代表 XML 條件通過，不代表已做 Word 畫面像素驗證。
+- `table_bottom_double_border_verify_detail`：XML 驗證摘要，例如 `tbl_bottom=double/4/000000;last_row_tc_bottoms=double/4/000000|double/4/000000`。
 - `first_row_single_cell_border_adjusted`：第一列單 cell 是否被調整。
-- `footer_rows_processed`：底部連續 footer 列實際處理的列數。
-- `footer_row_matches`：每列命中的類型（由下往上，例如 `base_period,source | note`）。
+- `footer_row_count`：底部連續 footer 列實際處理的列數。
+- `footer_cell_matches`：每列命中的類型（由上往下，例如 `note | base_period,source`）。
 - `footer_note_cells_adjusted`：所有 footer 列命中並格式化的 cell 總數。
 - `footer_note_cell_matches`：所有命中 cell 的類型（`note`／`base_period`／`source`）。
 - `footer_note_cell_debug`：每個命中 cell 文字前 50 字與套用動作。

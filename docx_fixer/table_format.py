@@ -415,6 +415,9 @@ def process_table(
 #          line between consecutive 註1/註2/註3 rows);
 #        - matched cells in every footer row -> 10 pt, aligned, left/right/bottom
 #          no border.
+#   5. final rendered bottom edge: every physical cell in the last row gets a
+#      black double bottom border, so direct cell borders cannot hide the
+#      table-level bottom border in Word.
 # All border updates are local (one side at a time), so other cells keep any
 # borders they already had. This never moves, deletes or adds any cell, row or
 # paragraph; it only formats the matching footer cells (plus the separator).
@@ -508,6 +511,63 @@ def _unique_row_cells(tr) -> list:
     return cells
 
 
+def _apply_rendered_bottom_double_black_border(tbl) -> int:
+    """Force the last physical row's cell bottoms to render as black double.
+
+    Word may let direct ``w:tcBorders/w:bottom`` values override the table-level
+    bottom border, so the visible bottom edge must be present on the last row's
+    cells as well. Only the bottom side is touched.
+    """
+    rows = tbl.findall("w:tr", NS)
+    if not rows:
+        return 0
+
+    applied = 0
+    for tc in _unique_row_cells(rows[-1]):
+        set_border_double_black(_get_or_add_tc_borders(tc), "bottom")
+        applied += 1
+    return applied
+
+
+def _border_signature(border) -> str:
+    if border is None:
+        return "missing"
+    return "/".join(
+        [
+            border.get(qn("val"), "missing"),
+            border.get(qn("sz"), "missing"),
+            border.get(qn("color"), "missing"),
+        ]
+    )
+
+
+def _is_double_black_border(border) -> bool:
+    return (
+        border is not None
+        and border.get(qn("val")) == "double"
+        and border.get(qn("sz")) == TABLE_DOUBLE_BORDER_SIZE
+        and border.get(qn("color")) == TABLE_BORDER_COLOR
+    )
+
+
+def _verify_rendered_bottom_double_black_border(tbl) -> tuple[bool, str]:
+    tbl_bottom = tbl.find("w:tblPr/w:tblBorders/w:bottom", NS)
+    rows = tbl.findall("w:tr", NS)
+    last_row_cells = _unique_row_cells(rows[-1]) if rows else []
+    last_row_bottoms = [
+        tc.find("w:tcPr/w:tcBorders/w:bottom", NS) for tc in last_row_cells
+    ]
+    verified = bool(last_row_cells) and _is_double_black_border(tbl_bottom) and all(
+        _is_double_black_border(bottom) for bottom in last_row_bottoms
+    )
+    detail = (
+        f"tbl_bottom={_border_signature(tbl_bottom)};"
+        "last_row_tc_bottoms="
+        + ("|".join(_border_signature(bottom) for bottom in last_row_bottoms) or "none")
+    )
+    return verified, detail
+
+
 def collect_consecutive_footer_rows_from_bottom(
     tbl, stop: StopController | None = None
 ) -> list:
@@ -543,7 +603,8 @@ def apply_footer_block_format(footer_rows: list) -> dict[str, object]:
     The TOP footer row gets a black double top border across every cell (the one
     data/footer separator). Every other footer row has its top border cleared so
     no line appears between consecutive footer rows. Matched cells get 10 pt,
-    their alignment, and no left/right/bottom border.
+    their alignment, and no left/right/bottom border; the final bottom-edge pass
+    restores bottom double on the table's last row.
     """
     stats: dict[str, object] = {
         "footer_block_top_border_applied": False,
@@ -611,6 +672,10 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         "footer_source_cells_adjusted": 0,
         "footer_note_cell_matches": [],
         "footer_note_cell_debug": [],
+        "table_bottom_double_border_applied": False,
+        "table_bottom_double_border_cell_count": 0,
+        "table_bottom_double_border_xml_verified": False,
+        "table_bottom_double_border_verify_detail": "",
     }
 
     if stop:
@@ -642,5 +707,15 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         result["footer_row_count"] = len(footer_rows)
         result["footer_top_row_index"] = footer_rows[0].row_index
         result.update(apply_footer_block_format(footer_rows))
+
+    # 5. Final visible bottom edge: run after footer formatting so footer cells
+    # may keep their left/right nil borders while the table still ends in a
+    # rendered black double bottom border.
+    bottom_cell_count = _apply_rendered_bottom_double_black_border(tbl)
+    bottom_verified, bottom_detail = _verify_rendered_bottom_double_black_border(tbl)
+    result["table_bottom_double_border_applied"] = bottom_cell_count > 0
+    result["table_bottom_double_border_cell_count"] = bottom_cell_count
+    result["table_bottom_double_border_xml_verified"] = bottom_verified
+    result["table_bottom_double_border_verify_detail"] = bottom_detail
 
     return result

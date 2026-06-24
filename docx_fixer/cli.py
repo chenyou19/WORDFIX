@@ -384,7 +384,7 @@ def parse_args(argv: list[str]):
         action="store_true",
         default=False,
         dest="enable_table_footer_source_format",
-        help="表格最後一列說明格式化: format the table outer frame, the single-cell title row, and the last-row 基期：/資料來源：/註記 cells",
+        help="表格最後一列說明格式化: format the table outer frame, the single-cell title row, last-row 基期：/資料來源：/註記 cells, and the rendered bottom border",
     )
     parser.add_argument(
         "--no-enable-table-footer-source-format",

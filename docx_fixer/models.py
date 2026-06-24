@@ -47,9 +47,9 @@ class ProcessOptions:
             self.skip_chapter_three_table_layout = True
             self.skip_chapter_three_table_color = True
 
-        # "參、不要調整" (skip_chapter_three_adjustments) protects the entire 參、
-        # section from every adjustment, so it implies all granular chapter
-        # three skips. skip_all_under_chapter_three remains as a legacy alias.
+        # "參、不要調整" (skip_chapter_three_adjustments) is a legacy alias that
+        # expands to the granular chapter-three skips below. Table footer-source
+        # formatting has its own eligibility check and is not controlled here.
         if self.skip_all_under_chapter_three or self.skip_chapter_three_adjustments:
             self.skip_chapter_three_table_layout = True
             self.skip_chapter_three_table_color = True

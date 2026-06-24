@@ -467,6 +467,18 @@ def _mark_table_footer_source_format_applied(
         record["outer_double_border_applied_by_footer_source_format"] = bool(
             result.get("outer_double_border_applied", False)
         )
+        record["table_bottom_double_border_applied"] = bool(
+            result.get("table_bottom_double_border_applied", False)
+        )
+        record["table_bottom_double_border_cell_count"] = int(
+            result.get("table_bottom_double_border_cell_count", 0)
+        )
+        record["table_bottom_double_border_xml_verified"] = bool(
+            result.get("table_bottom_double_border_xml_verified", False)
+        )
+        record["table_bottom_double_border_verify_detail"] = str(
+            result.get("table_bottom_double_border_verify_detail", "")
+        )
         record["first_row_single_cell_border_adjusted"] = bool(
             result.get("first_row_single_cell_border_adjusted", False)
         )

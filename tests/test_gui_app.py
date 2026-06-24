@@ -142,9 +142,9 @@ class GuiAppTests(unittest.TestCase):
             gui_source,
         )
 
-        # It is a saved GUI default and defaults to off.
+        # It is a saved GUI default and defaults to on.
         self.assertIn("enable_table_footer_source_format", built_in_gui_defaults())
-        self.assertFalse(built_in_gui_defaults()["enable_table_footer_source_format"])
+        self.assertTrue(built_in_gui_defaults()["enable_table_footer_source_format"])
 
     def test_chapter_three_numbering_suffix_cleanup_option_is_wired_in_gui(self):
         gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")

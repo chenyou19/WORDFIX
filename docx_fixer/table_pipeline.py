@@ -102,6 +102,10 @@ def _footer_source_log_fields(
         "table_footer_note_source_format_should_apply": should_apply,
         "table_footer_note_source_format_applied": applied,
         "outer_double_border_applied_by_footer_source_format": False,
+        "table_bottom_double_border_applied": False,
+        "table_bottom_double_border_cell_count": 0,
+        "table_bottom_double_border_xml_verified": False,
+        "table_bottom_double_border_verify_detail": "",
         "first_row_single_cell_border_adjusted": False,
         "footer_rows_detected": False,
         "footer_row_count": 0,
@@ -197,6 +201,10 @@ def build_table_log_record(
     table_footer_note_source_format_should_apply: bool = False,
     table_footer_note_source_format_applied: bool = False,
     outer_double_border_applied_by_footer_source_format: bool = False,
+    table_bottom_double_border_applied: bool = False,
+    table_bottom_double_border_cell_count: int = 0,
+    table_bottom_double_border_xml_verified: bool = False,
+    table_bottom_double_border_verify_detail: str = "",
     first_row_single_cell_border_adjusted: bool = False,
     footer_rows_detected: bool = False,
     footer_row_count: int = 0,
@@ -275,6 +283,10 @@ def build_table_log_record(
         "outer_double_border_applied_by_footer_source_format": (
             outer_double_border_applied_by_footer_source_format
         ),
+        "table_bottom_double_border_applied": table_bottom_double_border_applied,
+        "table_bottom_double_border_cell_count": table_bottom_double_border_cell_count,
+        "table_bottom_double_border_xml_verified": table_bottom_double_border_xml_verified,
+        "table_bottom_double_border_verify_detail": table_bottom_double_border_verify_detail,
         "first_row_single_cell_border_adjusted": first_row_single_cell_border_adjusted,
         "footer_rows_detected": footer_rows_detected,
         "footer_row_count": footer_row_count,
@@ -307,6 +319,26 @@ def _chapter_three_table_skip_reason(*, layout_skipped: bool, color_skipped: boo
     if color_skipped:
         return "chapter three protected table; layout allowed; color skipped"
     return "chapter three protected table"
+
+
+def _table_footer_source_should_apply(
+    *,
+    enabled: bool,
+    effective_fix_table_layout: bool,
+    footer_layout_requested: bool,
+    is_chapter_three_table: bool,
+    chapter_three_table_layout_skipped: bool,
+) -> bool:
+    if not enabled:
+        return False
+    if effective_fix_table_layout:
+        return True
+    return bool(
+        footer_layout_requested
+        and is_chapter_three_table
+        and chapter_three_table_layout_skipped
+    )
+
 
 def _parse_twips_attr(element, attr_name: str) -> int | None:
     if element is None:
@@ -513,6 +545,7 @@ def process_tables_in_part(
     footer_source_enabled = bool(
         getattr(options, "enable_table_footer_source_format", False)
     )
+    footer_layout_requested = bool(getattr(options, "fix_table_layout", False))
 
     def section_fields(*, in_protected: bool, skipped_by_protection: bool) -> dict[str, object]:
         return _section_three_fields(
@@ -673,10 +706,52 @@ def process_tables_in_part(
             fix_table_layout=effective_fix_table_layout,
             fix_color=effective_fix_color,
         )
+        special_color_matched = False
+        matched_skip_colors: list[str] = []
+        if skip_special_color_tables and special_color_skip_colors:
+            special_color_matched, matched_skip_colors = table_has_special_skip_color(
+                tbl,
+                special_color_skip_colors,
+            )
+
+        # 「表格最後一列說明格式化」 is an independent, opt-in final table
+        # post-step. It normally follows tables whose layout is being adjusted,
+        # but 參、 layout/color protection must not block it when the user did
+        # request table layout globally. First/nested/small/special-color skips
+        # still block it before any record is queued.
+        footer_source_should_apply = bool(
+            cell_count > 4
+            and not special_color_matched
+            and _table_footer_source_should_apply(
+                enabled=footer_source_enabled,
+                effective_fix_table_layout=effective_fix_table_layout,
+                footer_layout_requested=footer_layout_requested,
+                is_chapter_three_table=is_chapter_three_table,
+                chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
+            )
+        )
+        footer_source_skip_reason = "none"
+        if footer_source_enabled and not footer_source_should_apply:
+            if cell_count <= 4:
+                footer_source_skip_reason = "cell_count <= 4"
+            elif special_color_matched:
+                footer_source_skip_reason = "special color table skipped"
+            else:
+                footer_source_skip_reason = "layout not adjusted for this table"
 
         if is_chapter_three_table and not effective_fix_table_layout and not effective_fix_color:
             if section_three_enabled:
                 summary.section_three_protected_tables += 1
+            if footer_source_should_apply:
+                summary.table_footer_source_format_records.append(
+                    {
+                        "part_name": part_name,
+                        "table_index": table_index,
+                        "global_table_index": global_table_index,
+                        "table_type": "skipped_chapter_three_table",
+                        "effective_fix_table_layout": effective_fix_table_layout,
+                    }
+                )
             summary.table_log_records.append(
                 build_table_log_record(
                     part_name=part_name,
@@ -705,17 +780,16 @@ def process_tables_in_part(
                         in_protected=True,
                         skipped_by_protection=section_three_enabled,
                     ),
-                    **footer_fields(skipped_reason="chapter three protected table"),
+                    **footer_fields(
+                        should_apply=footer_source_should_apply,
+                        skipped_reason=footer_source_skip_reason,
+                    ),
                     **common_log_fields,
                 )
             )
             continue
 
         if skip_special_color_tables and special_color_skip_colors:
-            special_color_matched, matched_skip_colors = table_has_special_skip_color(
-                tbl,
-                special_color_skip_colors,
-            )
             if special_color_matched:
                 special_color_cleared_count = 0
                 if clear_special_colors_after_skip:
@@ -814,21 +888,6 @@ def process_tables_in_part(
             apply_double_black_table_borders(tbl)
             double_border_applied = True
             summary.double_border_tables += 1
-        # 「表格最後一列說明格式化」 is an independent, opt-in layout post-step.
-        # It is classified as a table *layout* format, so it runs only when this
-        # table's layout is being adjusted (effective_fix_table_layout). Tables
-        # protected from layout changes (參、 layout skip / full section three
-        # protection) keep their original fonts and borders, while a color-only
-        # skip does not block it. The actual formatting is deferred to a final
-        # post-process (see table_footer_postprocess) that runs AFTER Word COM
-        # AutoFit and the XML fallback, so neither can clobber the footer cells.
-        # Here we only record which tables should be formatted.
-        footer_source_should_apply = bool(
-            footer_source_enabled and effective_fix_table_layout
-        )
-        footer_source_skip_reason = "none"
-        if footer_source_enabled and not footer_source_should_apply:
-            footer_source_skip_reason = "layout not adjusted for this table"
         layout_fixed = bool(effective_options.fix_table_layout)
         color_fixed = bool(effective_options.fix_color)
         if effective_options.fix_table_layout:

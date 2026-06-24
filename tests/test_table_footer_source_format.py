@@ -103,10 +103,22 @@ def tc_border(tc, side: str):
     return tc.find(f"w:tcPr/w:tcBorders/w:{side}", NS)
 
 
+def test_tc_borders(tc):
+    tc_pr = tc.find("w:tcPr", NS)
+    if tc_pr is None:
+        tc_pr = etree.Element(qn("tcPr"))
+        tc.insert(0, tc_pr)
+    borders = tc_pr.find("w:tcBorders", NS)
+    if borders is None:
+        borders = etree.SubElement(tc_pr, qn("tcBorders"))
+    return borders
+
+
 def is_double_black(border) -> bool:
     return (
         border is not None
         and border.get(qn("val")) == "double"
+        and border.get(qn("sz")) == "4"
         and border.get(qn("color")) == "000000"
     )
 
@@ -216,6 +228,33 @@ class FooterFormatUnitTests(unittest.TestCase):
         for side in ("top", "bottom", "left", "right"):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
 
+    def test_last_row_cell_bottom_nil_is_overridden_and_xml_verified(self):
+        tbl = make_table(
+            [
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["土地", "100", "50%", "1", "ok"],
+                ["建物", "200", "80%", "2", "done"],
+            ]
+        )
+        for tc in tbl.findall("w:tr", NS)[-1].findall("w:tc", NS):
+            set_border_nil(test_tc_borders(tc), "bottom")
+
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertTrue(is_double_black(tbl_border(tbl, "bottom")))
+        for tc in tbl.findall("w:tr", NS)[-1].findall("w:tc", NS):
+            bottom = tc_border(tc, "bottom")
+            self.assertTrue(is_double_black(bottom))
+            self.assertEqual(bottom.get(qn("space")), "0")
+        self.assertFalse(result["footer_rows_detected"])
+        self.assertTrue(result["table_bottom_double_border_applied"])
+        self.assertEqual(result["table_bottom_double_border_cell_count"], 5)
+        self.assertTrue(result["table_bottom_double_border_xml_verified"])
+        self.assertIn(
+            "tbl_bottom=double/4/000000",
+            result["table_bottom_double_border_verify_detail"],
+        )
+
     def test_first_row_single_cell_borders(self):
         tbl = footer_table()
         apply_table_footer_source_format(tbl)
@@ -234,7 +273,7 @@ class FooterFormatUnitTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(cell, "top")))
         self.assertTrue(is_nil(tc_border(cell, "left")))
         self.assertTrue(is_nil(tc_border(cell, "right")))
-        self.assertTrue(is_nil(tc_border(cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(cell, "bottom")))
 
     def test_data_source_cell_formatting(self):
         tbl = footer_table()
@@ -245,7 +284,7 @@ class FooterFormatUnitTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(cell, "top")))
         self.assertTrue(is_nil(tc_border(cell, "left")))
         self.assertTrue(is_nil(tc_border(cell, "right")))
-        self.assertTrue(is_nil(tc_border(cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(cell, "bottom")))
 
     def test_non_matching_last_row_cell_is_left_alone(self):
         tbl = footer_table()
@@ -255,10 +294,11 @@ class FooterFormatUnitTests(unittest.TestCase):
         self.assertEqual(cell_run_sizes(other), ["22"])
         # ...but the separator top border spans the WHOLE top footer row.
         self.assertTrue(is_double_black(tc_border(other, "top")))
-        # No left/right/bottom override on the unmatched cell.
+        # No left/right override on the unmatched cell; bottom is the final
+        # rendered table edge applied to every last-row cell.
         self.assertIsNone(tc_border(other, "left"))
         self.assertIsNone(tc_border(other, "right"))
-        self.assertIsNone(tc_border(other, "bottom"))
+        self.assertTrue(is_double_black(tc_border(other, "bottom")))
 
     def test_empty_paragraph_without_run_does_not_crash(self):
         tbl = make_table(
@@ -360,8 +400,8 @@ class FooterFormatBorderPreservationTests(unittest.TestCase):
 
     def test_matched_cell_pre_existing_top_not_destroyed_by_nil_edges(self):
         # A matched 基期 cell with a pre-existing double-black top must keep a
-        # double-black top (rule sets top double) while only left/right/bottom
-        # are cleared.
+        # double-black top (rule sets top double) while left/right are cleared;
+        # bottom is restored by the final rendered table edge step.
         tbl = footer_table()
         base_cell = cell_at(tbl, 3, 0)
         tc_pr = etree.SubElement(base_cell, qn("tcPr"))
@@ -377,7 +417,7 @@ class FooterFormatBorderPreservationTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(base_cell, "top")))
         self.assertTrue(is_nil(tc_border(base_cell, "left")))
         self.assertTrue(is_nil(tc_border(base_cell, "right")))
-        self.assertTrue(is_nil(tc_border(base_cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(base_cell, "bottom")))
 
 
 # ----------------------------------------------------------------------------
@@ -412,13 +452,14 @@ class FooterFormatOrderTests(unittest.TestCase):
         self.assertTrue(is_nil(tc_border(title, "right")))
         self.assertTrue(is_double_black(tc_border(title, "bottom")))
 
-        # Last-row footer cells: left/right/bottom nil survive the outer frame,
-        # alignment overrides the centered content from layout formatting.
+        # Last-row footer cells: left/right nil survive the outer frame; bottom
+        # is restored as the visible black double table edge. Alignment overrides
+        # the centered content from layout formatting.
         base_cell = cell_at(tbl, 3, 0)
         self.assertEqual(cell_paragraph_alignments(base_cell), ["left"])
         self.assertTrue(is_nil(tc_border(base_cell, "left")))
         self.assertTrue(is_nil(tc_border(base_cell, "right")))
-        self.assertTrue(is_nil(tc_border(base_cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(base_cell, "bottom")))
         self.assertTrue(is_double_black(tc_border(base_cell, "top")))
 
         source_cell = cell_at(tbl, 3, 2)
@@ -430,6 +471,13 @@ class FooterFormatOrderTests(unittest.TestCase):
         self.assertTrue(record["table_footer_note_source_format_enabled"])
         self.assertTrue(record["table_footer_note_source_format_applied"])
         self.assertTrue(record["outer_double_border_applied_by_footer_source_format"])
+        self.assertTrue(record["table_bottom_double_border_applied"])
+        self.assertEqual(record["table_bottom_double_border_cell_count"], 5)
+        self.assertTrue(record["table_bottom_double_border_xml_verified"])
+        self.assertIn(
+            "last_row_tc_bottoms=double/4/000000",
+            record["table_bottom_double_border_verify_detail"],
+        )
         self.assertTrue(record["first_row_single_cell_border_adjusted"])
         self.assertEqual(record["footer_base_period_cells_adjusted"], 1)
         self.assertEqual(record["footer_source_cells_adjusted"], 1)
@@ -484,7 +532,7 @@ CHAPTER_THREE_TITLE = "參、價格形成之主要因素分析"
 
 
 class FooterFormatSkipLogicTests(unittest.TestCase):
-    def test_chapter_three_layout_skip_blocks_footer_format(self):
+    def test_chapter_three_layout_skip_still_allows_footer_when_layout_requested(self):
         document = build_document(
             make_paragraph("封面"),
             uniform_table(2, 5),
@@ -499,10 +547,36 @@ class FooterFormatSkipLogicTests(unittest.TestCase):
         summary, root = run_fix(document, options)
         tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
 
-        # Layout is protected -> footer format is not applied.
+        # Layout is protected, but the footer post-process still runs because
+        # table layout was requested globally.
+        self.assertTrue(is_double_black(tbl_border(tbl, "top")))
+        self.assertEqual(summary.table_footer_source_format_tables, 1)
+        record = summary.table_log_records[1]
+        self.assertTrue(record["chapter_three_table_layout_skipped"])
+        self.assertFalse(record["chapter_three_table_color_skipped"])
+        self.assertFalse(record["layout_fixed"])
+        self.assertTrue(record["color_fixed"])
+        self.assertTrue(record["table_footer_note_source_format_should_apply"])
+        self.assertTrue(record["table_footer_note_source_format_applied"])
+        self.assertEqual(record["table_footer_note_source_format_skipped_reason"], "none")
+
+    def test_global_layout_disabled_still_blocks_footer_format(self):
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),
+            make_paragraph("一、報表"),
+            footer_table(),
+        )
+        options = footer_options(fix_table_layout=False, fix_color=True)
+        summary, root = run_fix(document, options)
+        tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+
         self.assertIsNone(tbl_border(tbl, "top"))
         self.assertEqual(summary.table_footer_source_format_tables, 0)
         record = summary.table_log_records[1]
+        self.assertFalse(record["layout_fixed"])
+        self.assertTrue(record["color_fixed"])
+        self.assertFalse(record["table_footer_note_source_format_should_apply"])
         self.assertFalse(record["table_footer_note_source_format_applied"])
         self.assertEqual(
             record["table_footer_note_source_format_skipped_reason"],
@@ -528,7 +602,7 @@ class FooterFormatSkipLogicTests(unittest.TestCase):
         self.assertTrue(is_double_black(tbl_border(tbl, "top")))
         self.assertTrue(record_applied(summary))
 
-    def test_section_three_full_protection_skips_footer_format(self):
+    def test_chapter_three_layout_and_color_protection_still_records_footer(self):
         document = build_document(
             make_paragraph("封面"),
             uniform_table(2, 5),
@@ -539,11 +613,70 @@ class FooterFormatSkipLogicTests(unittest.TestCase):
         summary, root = run_fix(document, options)
         tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
 
-        self.assertIsNone(tbl_border(tbl, "top"))
-        self.assertEqual(summary.table_footer_source_format_tables, 0)
+        self.assertTrue(is_double_black(tbl_border(tbl, "top")))
+        self.assertEqual(summary.table_footer_source_format_tables, 1)
         record = summary.table_log_records[1]
         self.assertEqual(record["table_type"], "skipped_chapter_three_table")
-        self.assertFalse(record["table_footer_note_source_format_applied"])
+        self.assertFalse(record["layout_fixed"])
+        self.assertFalse(record["color_fixed"])
+        self.assertTrue(record["chapter_three_table_layout_skipped"])
+        self.assertTrue(record["chapter_three_table_color_skipped"])
+        self.assertTrue(record["table_footer_note_source_format_should_apply"])
+        self.assertTrue(record["table_footer_note_source_format_applied"])
+        self.assertTrue(record["table_bottom_double_border_applied"])
+        self.assertTrue(record["table_bottom_double_border_xml_verified"])
+        self.assertEqual(record["table_footer_note_source_format_skipped_reason"], "none")
+        self.assertIsNone(tbl.find("w:tblPr/w:tblW", NS))
+        self.assertIsNone(tbl.find("w:tblPr/w:tblLayout", NS))
+
+    def test_explicit_chapter_three_layout_and_color_skips_do_not_block_footer(self):
+        protected_table = footer_table()
+        shaded_cell = cell_at(protected_table, 2, 0)
+        tc_pr = shaded_cell.find("w:tcPr", NS)
+        if tc_pr is None:
+            tc_pr = etree.Element(qn("tcPr"))
+            shaded_cell.insert(0, tc_pr)
+        shd = etree.SubElement(tc_pr, qn("shd"))
+        shd.set(qn("fill"), "BFBFBF")
+        document = build_document(
+            make_paragraph("封面"),
+            uniform_table(2, 5),
+            make_paragraph(CHAPTER_THREE_TITLE),
+            protected_table,
+        )
+        options = footer_options(
+            fix_color=True,
+            skip_chapter_three_table_layout=True,
+            skip_chapter_three_table_color=True,
+        )
+
+        summary, root = run_fix(document, options)
+        tbl = root.xpath(".//w:tbl", namespaces=NS)[1]
+        record = summary.table_log_records[1]
+
+        self.assertEqual(record["table_type"], "skipped_chapter_three_table")
+        self.assertFalse(record["layout_fixed"])
+        self.assertFalse(record["color_fixed"])
+        self.assertTrue(record["chapter_three_table_layout_skipped"])
+        self.assertTrue(record["chapter_three_table_color_skipped"])
+        self.assertEqual(len(summary.table_footer_source_format_records), 1)
+        self.assertTrue(record["table_footer_note_source_format_applied"])
+        self.assertTrue(record["table_bottom_double_border_applied"])
+        self.assertEqual(record["table_bottom_double_border_cell_count"], 5)
+        self.assertTrue(record["table_bottom_double_border_xml_verified"])
+        self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["20"])
+        self.assertEqual(cell_paragraph_alignments(cell_at(tbl, 3, 0)), ["left"])
+        self.assertEqual(cell_paragraph_alignments(cell_at(tbl, 3, 2)), ["right"])
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "left")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "right")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, 0), "bottom")))
+        self.assertIsNone(tbl.find("w:tblPr/w:tblW", NS))
+        self.assertIsNone(tbl.find("w:tblPr/w:tblLayout", NS))
+        self.assertEqual(
+            cell_at(tbl, 2, 0).find("w:tcPr/w:shd", NS).get(qn("fill")),
+            "BFBFBF",
+        )
+        self.assertEqual(summary.changed_to_gray, 0)
 
     def test_small_table_is_not_footer_formatted(self):
         document = build_document(
@@ -640,7 +773,7 @@ class FooterNoteCellUnitTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(cell, "top")))
         self.assertTrue(is_nil(tc_border(cell, "left")))
         self.assertTrue(is_nil(tc_border(cell, "right")))
-        self.assertTrue(is_nil(tc_border(cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(cell, "bottom")))
 
     def test_note_colon_cell_is_formatted(self):
         tbl = note_last_row_table("註：本表為新臺幣元")
@@ -668,9 +801,13 @@ class FooterNoteCellUnitTests(unittest.TestCase):
             tbl = note_last_row_table(text)
             result = apply_table_footer_source_format(tbl)
             self.assertEqual(result["footer_note_cells_adjusted"], 0, text)
-            # The cell keeps the whole-table 11 pt and gets no border override.
+            # The cell keeps the whole-table 11 pt and gets only the final
+            # rendered bottom edge, not footer-cell-specific formatting.
             self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["22"], text)
-            self.assertIsNone(cell_at(tbl, 3, 0).find("w:tcPr/w:tcBorders", NS), text)
+            self.assertIsNone(tc_border(cell_at(tbl, 3, 0), "top"), text)
+            self.assertIsNone(tc_border(cell_at(tbl, 3, 0), "left"), text)
+            self.assertIsNone(tc_border(cell_at(tbl, 3, 0), "right"), text)
+            self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, 0), "bottom")), text)
 
     def test_other_last_row_cells_are_not_changed_to_10pt(self):
         tbl = note_last_row_table("註：說明")
@@ -681,7 +818,7 @@ class FooterNoteCellUnitTests(unittest.TestCase):
             self.assertEqual(cell_run_sizes(cell_at(tbl, 3, col)), ["22"])
             self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, col), "top")))
             self.assertIsNone(tc_border(cell_at(tbl, 3, col), "left"))
-            self.assertIsNone(tc_border(cell_at(tbl, 3, col), "bottom"))
+            self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, col), "bottom")))
 
     def test_note_in_non_last_row_is_ignored(self):
         tbl = make_table(
@@ -743,7 +880,7 @@ class FooterNoteCellUnitTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(note_cell, "top")))
         self.assertTrue(is_nil(tc_border(note_cell, "left")))
         self.assertTrue(is_nil(tc_border(note_cell, "right")))
-        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(note_cell, "bottom")))
 
 
 def special_footer_table(note_text="註：說明"):
@@ -812,7 +949,7 @@ class FooterFormatSpecialTableTests(unittest.TestCase):
         self.assertEqual(cell_run_sizes(note_cell), ["20"])
         self.assertEqual(cell_paragraph_alignments(note_cell), ["left"])
         self.assertTrue(is_double_black(tc_border(note_cell, "top")))
-        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(note_cell, "bottom")))
 
     def test_special_table_data_source_cell_is_10pt_right(self):
         summary, root = run_fix(self._doc(), footer_options())
@@ -850,7 +987,7 @@ class FooterFormatWordComOrderTests(unittest.TestCase):
         self.assertEqual(cell_paragraph_alignments(note_cell), ["left"])
         self.assertTrue(is_nil(tc_border(note_cell, "left")))
         self.assertTrue(is_nil(tc_border(note_cell, "right")))
-        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(note_cell, "bottom")))
         self.assertTrue(is_double_black(tc_border(note_cell, "top")))
         return tbl
 
@@ -925,6 +1062,7 @@ class FooterFormatWordComOrderTests(unittest.TestCase):
         # The reapply ran in the final post-process.
         logs = "\n".join(summary.table_footer_source_format_logs)
         self.assertIn("FOOTER_SOURCE_FORMAT_REAPPLY_APPLIED", logs)
+        self.assertIn("table_bottom_double_border_xml_verified=True", logs)
         self.assertIn("FOOTER_SOURCE_FORMAT_REAPPLY_DONE applied=1", logs)
 
 
@@ -952,7 +1090,7 @@ class FooterNotePipelineTests(unittest.TestCase):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
         self.assertTrue(is_nil(tc_border(note_cell, "left")))
         self.assertTrue(is_nil(tc_border(note_cell, "right")))
-        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_double_black(tc_border(note_cell, "bottom")))
         self.assertTrue(is_double_black(tc_border(note_cell, "top")))
 
         record = summary.table_log_records[1]
@@ -1067,6 +1205,11 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         self.assertEqual(result["footer_row_count"], 0)
         self.assertEqual(result["footer_note_cells_adjusted"], 0)
         self.assertEqual(cell_run_sizes(cell_at(tbl, 0, 0)), ["22"])
+        self.assertFalse(result["footer_rows_detected"])
+        self.assertTrue(result["table_bottom_double_border_applied"])
+        self.assertTrue(result["table_bottom_double_border_xml_verified"])
+        for col in range(5):
+            self.assertTrue(is_double_black(tc_border(cell_at(tbl, 2, col), "bottom")))
 
     def test_merged_cell_in_footer_row_processed_once_per_row(self):
         tbl = make_gridspan_note_table("註：本表單位為新臺幣元", span=5)

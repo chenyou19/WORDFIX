@@ -76,11 +76,11 @@ CLI 與 GUI 的參章縮排預設不同：CLI 的 `--skip-chapter-three-indents`
 
 | 參數 | 狀態 | 預設 | 說明 |
 | --- | --- | --- | --- |
-| `--enable-table-footer-source-format` | 目前參數 | 關閉 | 「表格最後一列說明格式化」：對版面有被調整的表格，依序套用全表 11pt、外圍黑色雙線、第一列單 cell 標題線，以及最後一列符合條件的 cell 格式（「基期：」「資料來源：」以及符合 `^註(?:\d+)?[：:]` 的註記）（`enable_table_footer_source_format`）。獨立功能，不依賴註記搬移或黑色雙線外框，也不混入顏色處理，且不搬移／刪除／新增任何 cell。 |
+| `--enable-table-footer-source-format` | 目前參數 | 關閉 | 「表格最後一列說明格式化」：對符合 footer eligibility 的表格，依序套用全表 11pt、外圍黑色雙線、第一列單 cell 標題線、底部連續說明列格式（「基期：」「資料來源：」以及符合 `^註(?:\d+)?[：:]` 的註記），最後強制最後一列 cell bottom 為黑色雙線（`enable_table_footer_source_format`）。獨立功能，不依賴註記搬移或黑色雙線外框，也不混入顏色處理，且不搬移／刪除／新增任何 cell。 |
 | `--table-footer-source-format` | 別名 | | 與 `--enable-table-footer-source-format` 相同。 |
 | `--no-enable-table-footer-source-format` | 目前參數 | | 不套用此格式（別名 `--no-table-footer-source-format`）。 |
 
-CLI 與 GUI 都把同一個布林值 `enable_table_footer_source_format` 傳入核心流程，預設皆為關閉。詳細處理順序與跳過規則見 [表格處理規則](table-rules.md)。
+CLI 與 GUI 都把同一個布林值 `enable_table_footer_source_format` 傳入核心流程；CLI / 核心 `ProcessOptions` 預設關閉，GUI 內建預設勾選並以設定檔 `gui_defaults` 為準。詳細處理順序與跳過規則見 [表格處理規則](table-rules.md)。
 
 ## 隱藏參數
 

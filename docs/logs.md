@@ -66,13 +66,17 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `word_com_autofit_sequence`
 - `double_border_enabled`：隱藏選項 `enable_double_black_table_borders` 是否啟用（預設 `false`）。
 - `double_border_applied`：該表是否實際套用黑色雙線外框（隱藏選項預設關閉時恆為 `false`）。
-- `table_footer_note_source_format_enabled`：選項 `enable_table_footer_source_format` 是否啟用（預設 `false`）。
+- `table_footer_note_source_format_enabled`：選項 `enable_table_footer_source_format` 是否啟用（核心 / CLI 預設 `false`；GUI 內建預設 `true`，以設定檔中的 `gui_defaults` 為準）。
 - `table_footer_note_source_format_should_apply`：XML pipeline 判定該表需要 footer 格式化（已記錄、待最後 post-process 套用）。
 - `table_footer_note_source_format_applied`：最後 post-process 是否實際套用「表格最後一列說明格式化」（在 Word COM AutoFit／fallback 之後執行）。
 - `outer_double_border_applied_by_footer_source_format`：本功能是否套用外圍黑色雙線。
+- `table_bottom_double_border_applied`：是否已對最後一列實體 cell 套用 bottom 黑色雙線。
+- `table_bottom_double_border_cell_count`：最後一列實際套用 bottom 黑色雙線的實體 cell 數。
+- `table_bottom_double_border_xml_verified`：XML 是否確認 `w:tblBorders/w:bottom` 與最後一列所有 `w:tcBorders/w:bottom` 均為 `double/4/000000`。這只表示 XML 條件通過，不代表已做 Word 畫面像素驗證。
+- `table_bottom_double_border_verify_detail`：XML 驗證摘要，例如 `tbl_bottom=double/4/000000;last_row_tc_bottoms=double/4/000000|double/4/000000`。
 - `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整。
-- `footer_rows_processed`：從表格底部往上連續處理的 footer 列數（中斷於第一個無命中的列）。
-- `footer_row_matches`：每列命中的類型（由下往上），例如 `base_period,source | note`。
+- `footer_row_count`：從表格底部往上連續處理的 footer 列數（中斷於第一個無命中的列）。
+- `footer_cell_matches`：每列命中的類型（由上往下），例如 `note | base_period,source`。
 - `footer_note_cells_adjusted`：所有 footer 列命中「基期：」「資料來源：」或註記（`^註(?:\d+)?[：:]`）並格式化的 cell 總數。
 - `footer_note_cell_matches`：所有命中 cell 的類型清單（`note`／`base_period`／`source`）。
 - `footer_note_cell_debug`：每個命中 cell 文字前 50 字與套用動作。

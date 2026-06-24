@@ -153,25 +153,25 @@ class GuiDefaultsTests(unittest.TestCase):
         self.assertFalse(raw[GUI_DEFAULTS_KEY]["move_table_notes_below"])
         self.assertFalse(raw[GUI_DEFAULTS_KEY]["skip_chapter_three_table_notes"])
 
-    def test_table_footer_source_format_default_is_false(self):
-        self.assertFalse(built_in_gui_defaults()["enable_table_footer_source_format"])
+    def test_table_footer_source_format_default_is_true(self):
+        self.assertTrue(built_in_gui_defaults()["enable_table_footer_source_format"])
 
     def test_table_footer_source_format_round_trip(self):
         settings = built_in_gui_defaults()
-        settings["enable_table_footer_source_format"] = True
+        settings["enable_table_footer_source_format"] = False
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "indent_defaults.json"
             save_gui_defaults(settings, path)
             loaded = load_saved_gui_defaults(path)
 
-        self.assertTrue(loaded["enable_table_footer_source_format"])
+        self.assertFalse(loaded["enable_table_footer_source_format"])
 
     def test_old_settings_without_footer_source_field_get_default(self):
         normalized = normalize_gui_defaults({"fix_table": True})
 
         self.assertIn("enable_table_footer_source_format", normalized)
-        self.assertFalse(normalized["enable_table_footer_source_format"])
+        self.assertTrue(normalized["enable_table_footer_source_format"])
 
     def test_skip_chapter_three_numbering_suffix_cleanup_default_is_true(self):
         self.assertTrue(

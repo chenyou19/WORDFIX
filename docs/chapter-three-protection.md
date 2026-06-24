@@ -86,9 +86,20 @@
 
 `ProtectedRegionContext.from_document(collect_section_three_note_region=...)` 在 `move_table_notes_below and skip_chapter_three_table_notes` 時建立此區段，並寫進 `numbering_xml_logs` 的 `SECTION_THREE_TABLE_NOTE_SKIP_IDS` 行。
 
+## 表格最後一列說明格式化不受版面／顏色保護阻擋
+
+`skip_chapter_three_table_layout` 與 `skip_chapter_three_table_color` 只保護參、表格的版面與顏色處理，不保護「表格最後一列說明格式化」（`enable_table_footer_source_format`）。
+
+- 若全域 `fix_table_layout=True` 且 `enable_table_footer_source_format=True`，參、表格即使因 `skip_chapter_three_table_layout=True` 使 `effective_fix_table_layout=False`，仍會被加入 `summary.table_footer_source_format_records`，最後由 `table_footer_postprocess.apply_table_footer_source_format_in_docx()` 套用。
+- 若同時 `skip_chapter_three_table_layout=True` 與 `skip_chapter_three_table_color=True`，該表仍維持 `layout_fixed=false`、`color_fixed=false`，不會呼叫一般 `process_table()`，因此 table width、layout、欄寬與顏色保護不會被破壞。
+- 若全域 `fix_table_layout=False`，不會因為 footer 功能開啟而強制套用。
+- 第一張表、巢狀表、小表格與特殊顏色跳過表仍維持既有跳過行為，不會因本功能而被重新處理。
+
+成功套用時，`table_log` 會同時顯示 `table_footer_note_source_format_should_apply=true`、`table_footer_note_source_format_applied=true`，並回寫 `table_bottom_double_border_applied` / `table_bottom_double_border_xml_verified` 等底框 XML 驗證欄位。
+
 ## 已移除的「參、不要調整」整章保護（相容說明）
 
-舊版 GUI 曾有「參、不要調整（整個參、章節都不調整）」選項，現已從 GUI 移除。`skip_chapter_three_adjustments` 欄位仍保留在 `ProcessOptions` 與 CLI（`--skip-chapter-three-adjustments` / `--protect-section-three`）作為相容舊腳本用途：啟用時 `__post_init__` 會強制三個 `skip_chapter_three_*` 為真，並改用泛用 `is_section_three_chapter_marker()` 偵測，`ProtectedRegionContext` 記錄 `section_three_detection_source`。它**不再控制表格註記搬移**（改由 `skip_chapter_three_table_notes` 負責）。舊設定檔若仍含 `skip_chapter_three_adjustments` 欄位，GUI 載入時會忽略，不會報錯。
+舊版 GUI 曾有「參、不要調整（整個參、章節都不調整）」選項，現已從 GUI 移除。`skip_chapter_three_adjustments` 欄位仍保留在 `ProcessOptions` 與 CLI（`--skip-chapter-three-adjustments` / `--protect-section-three`）作為相容舊腳本用途：啟用時 `__post_init__` 會強制三個 `skip_chapter_three_*` 為真，並改用泛用 `is_section_three_chapter_marker()` 偵測，`ProtectedRegionContext` 記錄 `section_three_detection_source`。它**不再控制表格註記搬移**（改由 `skip_chapter_three_table_notes` 負責），也不直接控制「表格最後一列說明格式化」（依上一節 eligibility 判斷）。舊設定檔若仍含 `skip_chapter_three_adjustments` 欄位，GUI 載入時會忽略，不會報錯。
 
 ## 與移除大綱階層的關係
 

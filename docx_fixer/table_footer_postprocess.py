@@ -94,7 +94,12 @@ def apply_table_footer_source_format_in_docx(
                     f"footer_top_row_index={result['footer_top_row_index']} "
                     f"footer_cell_matches={'|'.join(result['footer_cell_matches']) or 'none'} "
                     f"footer_block_top_border_applied={result['footer_block_top_border_applied']} "
-                    f"footer_internal_top_borders_cleared={result['footer_internal_top_borders_cleared']}"
+                    f"footer_internal_top_borders_cleared={result['footer_internal_top_borders_cleared']} "
+                    f"table_bottom_double_border_applied={result['table_bottom_double_border_applied']} "
+                    f"table_bottom_double_border_cell_count={result['table_bottom_double_border_cell_count']} "
+                    f"table_bottom_double_border_xml_verified={result['table_bottom_double_border_xml_verified']} "
+                    "table_bottom_double_border_verify_detail="
+                    f"{result['table_bottom_double_border_verify_detail']}"
                 )
 
             if part_changed:
