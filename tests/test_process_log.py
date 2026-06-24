@@ -57,6 +57,7 @@ class ProcessLogTests(unittest.TestCase):
 
         self.assertIn("Indent settings snapshot:", lines)
         self.assertTrue(any("level=2;" in line and "body_left_cm=2.96" in line for line in lines))
+        self.assertTrue(any("level=2;" in line and "heading_text_start_cm=" in line for line in lines))
 
     def test_process_log_writes_word_com_skip_section(self):
         summary = ProcessSummary()
@@ -148,6 +149,14 @@ class ProcessLogTests(unittest.TestCase):
                 "has_tab_stop": True,
                 "tab_pos_twips": "2279",
                 "tab_pos_cm": 4.02,
+                "actual_tab_pos_twips": "2279",
+                "actual_tab_pos_cm": 4.02,
+                "heading_text_start_twips": "2279",
+                "heading_text_start_cm": 4.02,
+                "expected_heading_text_start_twips": "2430",
+                "expected_heading_text_start_cm": 4.29,
+                "expected_tab_pos_twips": "2430",
+                "expected_tab_pos_cm": 4.29,
                 "left_twips": "2279",
                 "hanging_twips": "420",
                 "number_start_twips": "1859",
@@ -174,6 +183,14 @@ class ProcessLogTests(unittest.TestCase):
                 "has_tab_stop": False,
                 "tab_pos_twips": None,
                 "tab_pos_cm": None,
+                "actual_tab_pos_twips": None,
+                "actual_tab_pos_cm": None,
+                "heading_text_start_twips": None,
+                "heading_text_start_cm": None,
+                "expected_heading_text_start_twips": "2430",
+                "expected_heading_text_start_cm": 4.29,
+                "expected_tab_pos_twips": None,
+                "expected_tab_pos_cm": None,
                 "left_twips": "2279",
                 "hanging_twips": "420",
                 "number_start_twips": "1859",
@@ -199,6 +216,9 @@ class ProcessLogTests(unittest.TestCase):
         self.assertIn("effective_suffix_before: tab", lines)
         self.assertIn("effective_suffix_after: nothing", lines)
         self.assertIn("has_tab_stop_after: false", lines)
+        self.assertIn("expected_heading_text_start_twips_before: 2430", lines)
+        self.assertIn("expected_heading_text_start_cm_before: 4.29", lines)
+        self.assertIn("expected_tab_pos_twips_before: 2430", lines)
         self.assertIn("change_type: missing_effective_tab_to_nothing", lines)
 
     def test_heading_suffix_log_warns_when_after_fix_auto_suffix_is_dirty(self):

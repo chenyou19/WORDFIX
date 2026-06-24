@@ -97,7 +97,10 @@ class DocxFixerApp:
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
-        self.indent_vars: dict[str, list[tuple[int, str, tk.StringVar, tk.StringVar, tk.StringVar]]] = {
+        self.indent_vars: dict[
+            str,
+            list[tuple[int, str, tk.StringVar, tk.StringVar, tk.StringVar, tk.StringVar]],
+        ] = {
             "preface": [],
             "body": [],
         }
@@ -582,7 +585,7 @@ class DocxFixerApp:
         frame.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
         parent.columnconfigure(column, weight=1)
 
-        headers = ["階層", "標號", "起點 cm", "懸掛 cm", "內文起點 cm"]
+        headers = ["階層", "標號", "標號起點 cm", "懸掛 cm", "標題文字起點 cm", "內文起點 cm"]
         for col, header in enumerate(headers):
             ttk.Label(frame, text=header).grid(row=0, column=col, padx=4, pady=(6, 4), sticky="w")
 
@@ -591,14 +594,18 @@ class DocxFixerApp:
             label = str(item["label"])
             number_start_var = tk.StringVar(value=format_cm(float(item["number_start_cm"])))
             hanging_var = tk.StringVar(value=format_cm(float(item["hanging_cm"])))
+            heading_text_start_var = tk.StringVar(value=format_cm(float(item["heading_text_start_cm"])))
             body_left_var = tk.StringVar(value=format_cm(float(item["body_left_cm"])))
 
             ttk.Label(frame, text=str(index)).grid(row=index, column=0, padx=4, pady=3, sticky="w")
             ttk.Label(frame, text=label).grid(row=index, column=1, padx=4, pady=3, sticky="w")
             ttk.Entry(frame, textvariable=number_start_var, width=9).grid(row=index, column=2, padx=4, pady=3)
             ttk.Entry(frame, textvariable=hanging_var, width=9).grid(row=index, column=3, padx=4, pady=3)
-            ttk.Entry(frame, textvariable=body_left_var, width=9).grid(row=index, column=4, padx=4, pady=3)
-            self.indent_vars[section].append((level, label, number_start_var, hanging_var, body_left_var))
+            ttk.Entry(frame, textvariable=heading_text_start_var, width=9).grid(row=index, column=4, padx=4, pady=3)
+            ttk.Entry(frame, textvariable=body_left_var, width=9).grid(row=index, column=5, padx=4, pady=3)
+            self.indent_vars[section].append(
+                (level, label, number_start_var, hanging_var, heading_text_start_var, body_left_var)
+            )
 
     def collect_indent_entries(self) -> dict[str, list[dict[str, float | int | str]]]:
         settings: dict[str, list[dict[str, float | int | str]]] = {"preface": [], "body": []}
@@ -608,10 +615,18 @@ class DocxFixerApp:
         }
 
         for section, rows in self.indent_vars.items():
-            for display_index, (level, label, number_start_var, hanging_var, body_left_var) in enumerate(rows, start=1):
+            for display_index, (
+                level,
+                label,
+                number_start_var,
+                hanging_var,
+                heading_text_start_var,
+                body_left_var,
+            ) in enumerate(rows, start=1):
                 try:
                     number_start_cm = float(number_start_var.get().strip())
                     hanging_cm = float(hanging_var.get().strip())
+                    heading_text_start_cm = float(heading_text_start_var.get().strip())
                     body_left_cm = float(body_left_var.get().strip())
                 except ValueError as exc:
                     raise ValueError(
@@ -623,6 +638,7 @@ class DocxFixerApp:
                     "label": label,
                     "number_start_cm": number_start_cm,
                     "hanging_cm": hanging_cm,
+                    "heading_text_start_cm": heading_text_start_cm,
                     "body_left_cm": body_left_cm,
                 })
 
@@ -711,10 +727,18 @@ class DocxFixerApp:
         settings = built_in_indent_settings()
         for section, rows in settings.items():
             by_level = {int(row["level"]): row for row in rows}
-            for level, _label, number_start_var, hanging_var, body_left_var in self.indent_vars[section]:
+            for (
+                level,
+                _label,
+                number_start_var,
+                hanging_var,
+                heading_text_start_var,
+                body_left_var,
+            ) in self.indent_vars[section]:
                 row = by_level[level]
                 number_start_var.set(format_cm(float(row["number_start_cm"])))
                 hanging_var.set(format_cm(float(row["hanging_cm"])))
+                heading_text_start_var.set(format_cm(float(row["heading_text_start_cm"])))
                 body_left_var.set(format_cm(float(row["body_left_cm"])))
 
         apply_indent_settings(settings)

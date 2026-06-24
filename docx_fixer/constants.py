@@ -10,6 +10,7 @@ FINANCIAL_NUM = "壹貳參肆伍陸柒捌玖拾"
 SIMPLE_NUM = "一二三四五六七八九十"
 
 POINTS_PER_CM = 28.3464567
+DEFAULT_HEADING_TEXT_START_OFFSET_CM = 0.85
 
 # Central heading font-size rule, keyed by the detected internal outline level
 # (0-8). This is the single source of truth shared by both heading writers:
@@ -46,11 +47,19 @@ def cm_to_twips(cm: float) -> str:
     return str(round(cm_to_points(cm) * 20))
 
 
-def make_outline_indent_spec(number_start_cm: float, hanging_cm: float, body_left_cm: float) -> dict[str, str]:
+def make_outline_indent_spec(
+    number_start_cm: float,
+    hanging_cm: float,
+    body_left_cm: float,
+    heading_text_start_cm: float | None = None,
+) -> dict[str, str]:
+    if heading_text_start_cm is None:
+        heading_text_start_cm = body_left_cm + DEFAULT_HEADING_TEXT_START_OFFSET_CM
     return {
         "left": cm_to_twips(number_start_cm + hanging_cm),
         "hanging": cm_to_twips(hanging_cm),
         "number_start": cm_to_twips(number_start_cm),
+        "heading_text_start": cm_to_twips(heading_text_start_cm),
         "body_left": cm_to_twips(body_left_cm),
     }
 

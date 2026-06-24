@@ -374,13 +374,17 @@ def clear_indent_attrs(ind) -> None:
         ind.attrib.pop(qn(attr), None)
 
 
+def heading_text_start_twips(spec: dict[str, str]) -> str:
+    return spec.get("heading_text_start", spec["left"])
+
+
 def normalize_tabs_to_text_position(pPr, text_position_twips: str) -> None:
     """
     Rebuild the tab stop required to align with the text start.
 
     Old tab settings on Word numbered paragraphs can shift the number and body
     text positions. Existing tabs are cleared before writing a new tab stop
-    aligned with the left indent, preserving the expected layout after Word
+    aligned with the configured heading text start, preserving the expected layout after Word
     reopens the document.
     """
     tabs = pPr.find("w:tabs", NS)
@@ -429,7 +433,8 @@ def apply_indent_spec_to_pPr(
 
     heading_numbered writes the numbered paragraph/list-template geometry:
     text left = number_start + hanging, first line hangs back by hanging.
-    It removes tab stops unless use_tab_stop=True.
+    It removes tab stops unless use_tab_stop=True; tab stops use
+    heading_text_start and do not alter the left/hanging geometry.
 
     body_plain hard-overrides the body text indent. It writes twips-based left
     and start indents, explicitly zeroes first-line/hanging and character-unit
@@ -444,7 +449,7 @@ def apply_indent_spec_to_pPr(
         ind.set(qn("left"), spec["left"])
         ind.set(qn("hanging"), spec["hanging"])
         if use_tab_stop:
-            normalize_tabs_to_text_position(pPr, spec["left"])
+            normalize_tabs_to_text_position(pPr, heading_text_start_twips(spec))
         else:
             removed_tabs = pPr.find("w:tabs", NS) is not None
             remove_paragraph_tabs(pPr)
@@ -1184,6 +1189,7 @@ def append_numbering_debug_log(
         f"lvl_left={level_format.get('left')}; "
         f"lvl_hanging={level_format.get('hanging')}; "
         f"lvl_number_start={level_format.get('number_start')}; "
+        f"lvl_heading_text_start={level_format.get('heading_text_start')}; "
         f"lvlJc={level_format.get('lvlJc')}; "
         f"suff={level_format.get('suff')}; "
         f"lvl_tab_pos={level_format.get('tab_pos')}"
@@ -1257,6 +1263,9 @@ def append_body_indent_record(
     spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
     expected_hanging_twips = spec["hanging"] if spec is not None else "0"
     expected_heading_left_twips = spec["left"] if spec is not None else expected_left_twips
+    expected_heading_text_start_twips = (
+        heading_text_start_twips(spec) if spec is not None else expected_heading_left_twips
+    )
     expected_number_start_twips = (
         spec.get("number_start", str(int(expected_heading_left_twips) - int(expected_hanging_twips)))
         if spec is not None
@@ -1273,6 +1282,7 @@ def append_body_indent_record(
             "expected_number_start_cm": twips_to_cm(expected_number_start_twips),
             "expected_hanging_cm": 0.0,
             "expected_heading_left_cm": twips_to_cm(expected_heading_left_twips),
+            "expected_heading_text_start_cm": twips_to_cm(expected_heading_text_start_twips),
             "expected_body_left_cm": twips_to_cm(expected_left_twips),
             "expected_left_twips": expected_left_twips,
             "expected_left_cm": twips_to_cm(expected_left_twips),
@@ -1329,6 +1339,9 @@ def append_body_font_check_record(
     spec = get_outline_indent_spec(heading_level, set_outline=heading_uses_outline)
     expected_hanging_twips = spec["hanging"] if spec is not None else "0"
     expected_heading_left_twips = spec["left"] if spec is not None else expected_left_twips
+    expected_heading_text_start_twips = (
+        heading_text_start_twips(spec) if spec is not None else expected_heading_left_twips
+    )
     expected_number_start_twips = (
         spec.get("number_start", str(int(expected_heading_left_twips) - int(expected_hanging_twips)))
         if spec is not None
@@ -1345,6 +1358,7 @@ def append_body_font_check_record(
             "expected_number_start_cm": twips_to_cm(expected_number_start_twips),
             "expected_hanging_cm": 0.0,
             "expected_heading_left_cm": twips_to_cm(expected_heading_left_twips),
+            "expected_heading_text_start_cm": twips_to_cm(expected_heading_text_start_twips),
             "expected_body_left_cm": twips_to_cm(expected_left_twips),
             "expected_left_twips": expected_left_twips,
             "expected_left_cm": twips_to_cm(expected_left_twips),
@@ -1384,6 +1398,7 @@ def append_heading_indent_record(
     paragraph_format = paragraph_indent_debug_format(p)
     left_twips = spec["left"]
     hanging_twips = spec["hanging"]
+    heading_text_start = heading_text_start_twips(spec)
     number_start_twips = spec.get("number_start", str(int(left_twips) - int(hanging_twips)))
     summary.body_indent_records.append(
         {
@@ -1396,6 +1411,7 @@ def append_heading_indent_record(
             "expected_number_start_cm": twips_to_cm(number_start_twips),
             "expected_hanging_cm": twips_to_cm(hanging_twips),
             "expected_heading_left_cm": twips_to_cm(left_twips),
+            "expected_heading_text_start_cm": twips_to_cm(heading_text_start),
             "expected_body_left_cm": twips_to_cm(spec.get("body_left", left_twips)),
             "expected_left_twips": left_twips,
             "expected_left_cm": twips_to_cm(left_twips),
@@ -1472,6 +1488,7 @@ def append_body_indent_debug_log(
         f"heading_uses_outline={heading_uses_outline}; "
         f"enable_level1_level2_body_first_line_indent={enable_level1_level2_body_first_line_indent}; "
         f"spec_left_cm={twips_to_cm(spec['left']):.2f}; "
+        f"spec_heading_text_start_cm={twips_to_cm(heading_text_start_twips(spec)):.2f}; "
         f"spec_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
         f"spec_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
         f"spec_body_left_cm={twips_to_cm(body_left_twips):.2f}; "

@@ -5,7 +5,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
 
-from .constants import NS
+from .constants import NS, TEMPLATE_OUTLINE_INDENTS
 from .exceptions import ProcessStopped
 from .indent_settings import twips_to_cm
 from .indent_sanitizer import (
@@ -23,6 +23,7 @@ from .numbering import (
     build_numbering_level_lookup,
     build_style_numbering_lookup,
     has_auto_numbering,
+    uses_tab_suffix,
 )
 from .outline import (
     detect_manual_numbering_prefix,
@@ -221,6 +222,7 @@ def _auto_suffix_details(
     num_id: str | None,
     ilvl: int | None,
     numbering_format_lookup,
+    outline_level: int | None = None,
 ) -> dict[str, object]:
     level_format = numbering_format_lookup.get((num_id, ilvl), {}) if num_id is not None and ilvl is not None else {}
     raw_suffix = level_format.get("suff")
@@ -236,6 +238,16 @@ def _auto_suffix_details(
     left = level_format.get("left")
     hanging = level_format.get("hanging")
     number_start = level_format.get("number_start")
+    actual_heading_text_start = level_format.get("heading_text_start")
+    spec = TEMPLATE_OUTLINE_INDENTS.get(outline_level) if outline_level is not None else None
+    expected_heading_text_start = (
+        spec.get("heading_text_start", spec["left"]) if spec is not None else None
+    )
+    expected_tab_pos = (
+        expected_heading_text_start
+        if uses_tab_suffix(outline_level)
+        else None
+    )
     lvl_text = level_format.get("lvlText")
     return {
         "suffix": suffix,
@@ -251,9 +263,17 @@ def _auto_suffix_details(
         "has_tab_stop": tab_pos is not None,
         "tab_pos_twips": tab_pos,
         "tab_pos_cm": _twips_to_log_cm(tab_pos),
+        "actual_tab_pos_twips": tab_pos,
+        "actual_tab_pos_cm": _twips_to_log_cm(tab_pos),
         "left_twips": left,
         "hanging_twips": hanging,
         "number_start_twips": number_start,
+        "heading_text_start_twips": actual_heading_text_start,
+        "heading_text_start_cm": _twips_to_log_cm(actual_heading_text_start),
+        "expected_heading_text_start_twips": expected_heading_text_start,
+        "expected_heading_text_start_cm": _twips_to_log_cm(expected_heading_text_start),
+        "expected_tab_pos_twips": expected_tab_pos,
+        "expected_tab_pos_cm": _twips_to_log_cm(expected_tab_pos),
         "left_cm": _twips_to_log_cm(left),
         "hanging_cm": _twips_to_log_cm(hanging),
         "number_start_cm": _twips_to_log_cm(number_start),
@@ -310,14 +330,14 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
                     level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
                     if level is not None:
                         source = "auto_numbering_xml"
-                        details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup)
+                        details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup, level)
 
                 if level is None and not should_skip_style_numbering(text):
                     num_id, ilvl = _effective_paragraph_numbering_identity(p, style_numbering_lookup)
                     level = _outline_level_from_identity(num_id, ilvl, numbering_level_lookup)
                     if level is not None:
                         source = "auto_numbering_xml"
-                        details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup)
+                        details = _auto_suffix_details(num_id, ilvl, numbering_format_lookup, level)
 
                 if level is None or source is None or details is None:
                     continue

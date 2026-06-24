@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unittest
 
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from docx_fixer.constants import PREFACE_OUTLINE_INDENTS, TEMPLATE_OUTLINE_INDENTS
 from docx_fixer.gui_app import (
     DEFAULT_SKIP_CHAPTER_THREE_INDENTS,
     DEFAULT_SKIP_CHAPTER_THREE_TABLE_COLOR,
@@ -37,6 +39,17 @@ class FakeProgressBar:
 class FakeProgressVar:
     def __init__(self):
         self.value = None
+
+    def set(self, value):
+        self.value = value
+
+
+class FakeStringVar:
+    def __init__(self, value=""):
+        self.value = value
+
+    def get(self):
+        return self.value
 
     def set(self, value):
         self.value = value
@@ -85,6 +98,9 @@ class GuiAppTests(unittest.TestCase):
     def test_default_save_buttons_are_wired_in_source(self):
         gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")
 
+        self.assertIn("標題文字起點 cm", gui_source)
+        self.assertIn("heading_text_start_var", gui_source)
+        self.assertIn("\"heading_text_start_cm\": heading_text_start_cm", gui_source)
         self.assertIn("保存成預設樣式", gui_source)
         self.assertIn("command=self.save_indent_defaults", gui_source)
         self.assertIn("保存目前勾選為預設方案", gui_source)
@@ -213,6 +229,51 @@ class GuiAppTests(unittest.TestCase):
         write_table.assert_called_once_with(Path("output.docx"), summary)
         write_heading.assert_called_once_with(Path("output.docx"), summary)
         warning_callback.assert_not_called()
+
+    def test_indent_settings_collect_and_restore_include_heading_text_start(self):
+        original_body = deepcopy(TEMPLATE_OUTLINE_INDENTS)
+        original_preface = deepcopy(PREFACE_OUTLINE_INDENTS)
+        try:
+            app = DocxFixerApp.__new__(DocxFixerApp)
+            app.status_var = FakeStringVar()
+            app.indent_vars = {
+                "preface": [
+                    (
+                        0,
+                        "一、",
+                        FakeStringVar("1.1"),
+                        FakeStringVar("0.5"),
+                        FakeStringVar("2.2"),
+                        FakeStringVar("3.3"),
+                    )
+                ],
+                "body": [
+                    (
+                        0,
+                        "壹、",
+                        FakeStringVar("1.2"),
+                        FakeStringVar("0.6"),
+                        FakeStringVar("2.4"),
+                        FakeStringVar("3.6"),
+                    )
+                ],
+            }
+
+            collected = app.collect_indent_entries()
+
+            self.assertEqual(collected["body"][0]["heading_text_start_cm"], 2.4)
+            self.assertEqual(collected["preface"][0]["heading_text_start_cm"], 2.2)
+
+            app.restore_builtin_indent_defaults()
+
+            self.assertNotEqual(app.indent_vars["body"][0][4].get(), "2.4")
+            self.assertNotEqual(app.indent_vars["preface"][0][4].get(), "2.2")
+            self.assertEqual(app.status_var.get(), "已還原內建縮排設定")
+        finally:
+            TEMPLATE_OUTLINE_INDENTS.clear()
+            TEMPLATE_OUTLINE_INDENTS.update(original_body)
+            PREFACE_OUTLINE_INDENTS.clear()
+            PREFACE_OUTLINE_INDENTS.update(original_preface)
 
 
 if __name__ == "__main__":

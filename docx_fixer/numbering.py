@@ -29,6 +29,10 @@ def numbering_suffix_for_level(level: int | None) -> str:
     return "tab" if uses_tab_suffix(level) else "nothing"
 
 
+def _heading_text_start_twips(spec: dict[str, str]) -> str:
+    return spec.get("heading_text_start", spec["left"])
+
+
 def _set_level_suffix(lvl, desired: str) -> bool:
     """Set w:suff to the desired value, creating it if missing. Returns changed."""
     suff = lvl.find("w:suff", NS)
@@ -74,8 +78,8 @@ def normalize_level_suffix_and_tabs(lvl, outline_level: int | None) -> dict[str,
     """Apply the central number-suffix rule to one numbering level.
 
     Tab-suffix levels (TAB_SUFFIX_OUTLINE_LEVELS) get w:suff="tab" plus a single
-    left tab stop at TEMPLATE_OUTLINE_INDENTS[level]["left"] (the text start, not
-    the number start). Every other level - including unrecognized numbering
+    left tab stop at TEMPLATE_OUTLINE_INDENTS[level]["heading_text_start"].
+    Every other level - including unrecognized numbering
     (outline_level=None) - gets w:suff="nothing" and no tab stops. Indentation
     values and numbering text are left untouched. Returns a dict describing the
     final suffix and which structural changes happened, for logging.
@@ -92,7 +96,7 @@ def normalize_level_suffix_and_tabs(lvl, outline_level: int | None) -> dict[str,
         result["suffix"] = "tab"
         result["suffix_changed"] = _set_level_suffix(lvl, "tab")
         pPr = get_or_add(lvl, "pPr")
-        result["tab_rebuilt"] = _rebuild_single_left_tab(pPr, spec["left"])
+        result["tab_rebuilt"] = _rebuild_single_left_tab(pPr, _heading_text_start_twips(spec))
         return result
 
     result["suffix"] = "nothing"
@@ -193,8 +197,8 @@ def force_clean_numbering_suffix_tabs(
     """Final hard clean of numbering suffixes and list tabs after Word COM.
 
     Applies the central tab-suffix rule per logical outline level: tab-suffix
-    levels (3/5/6/7/8) keep w:suff="tab" plus a single left tab stop at the text
-    start, while every other recognized level - and any unrecognized numbering -
+    levels (3/5/6/7/8) keep w:suff="tab" plus a single left tab stop at
+    heading_text_start, while every other recognized level - and any unrecognized numbering -
     gets w:suff="nothing" with no tab stops. Trailing whitespace in w:lvlText is
     always stripped. Only w:suff, w:pPr/w:tabs, and trailing w:lvlText whitespace
     are touched; indentation values are left intact. Excluded TOC or protected
@@ -678,7 +682,7 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
 
     The number suffix follows the central tab-suffix rule
     (numbering_suffix_for_level): tab-suffix levels (3/5/6/7/8) use
-    w:suff="tab" with a single left tab stop at the text start (spec["left"]);
+    w:suff="tab" with a single left tab stop at heading_text_start;
     all other levels use w:suff="nothing" and have their tab stops removed so
     Word cannot reopen the file and push the effective indent via a list tab.
     """
@@ -716,21 +720,24 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
     )
 
     if change_logs is not None:
-        number_start = int(spec["left"]) - int(spec["hanging"])
+        number_start = int(spec.get("number_start", int(spec["left"]) - int(spec["hanging"])))
+        expected_heading_text_start = _heading_text_start_twips(spec)
         tab_pos_cm = (
             f"{twips_to_cm(written['tab_pos']):.2f}"
             if written.get("tab_pos") is not None
             else "None"
         )
+        expected_tab_pos_cm = f"{twips_to_cm(expected_heading_text_start):.2f}" if uses_tab_suffix(level) else "None"
         change_logs.append(
             "NUMBERING_XML_LEVEL_INDENT: "
             f"level={level}; "
             f"expected_number_start_cm={twips_to_cm(number_start):.2f}; "
             f"expected_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
             f"expected_heading_left_cm={twips_to_cm(spec['left']):.2f}; "
+            f"expected_heading_text_start_cm={twips_to_cm(expected_heading_text_start):.2f}; "
             f"xml_written_left_cm={twips_to_cm(written.get('left') or spec['left']):.2f}; "
             f"xml_written_hanging_cm={twips_to_cm(written.get('hanging') or spec['hanging']):.2f}; "
-            f"suff={suffix}; tab_pos_cm={tab_pos_cm}"
+            f"suff={suffix}; expected_tab_pos_cm={expected_tab_pos_cm}; tab_pos_cm={tab_pos_cm}"
         )
 
 def _calculated_number_start(left: str | None, hanging: str | None) -> str | None:
@@ -757,6 +764,7 @@ def get_numbering_level_format(lvl) -> dict[str, str | None]:
         "left": left,
         "hanging": hanging,
         "number_start": _calculated_number_start(left, hanging),
+        "heading_text_start": tab.get(qn("pos")) if tab is not None else None,
         "lvlJc": lvl_jc.get(qn("val")) if lvl_jc is not None else None,
         "suff": suff.get(qn("val")) if suff is not None else None,
         "tab_pos": tab.get(qn("pos")) if tab is not None else None,
@@ -1163,15 +1171,20 @@ def apply_styles_outline_format_to_root(
                     if written.get("tab_pos") is not None
                     else "None"
                 )
+                expected_heading_text_start = _heading_text_start_twips(spec)
+                expected_tab_pos_cm = (
+                    f"{twips_to_cm(expected_heading_text_start):.2f}" if uses_tab_suffix(level) else "None"
+                )
                 change_logs.append(
                     "STYLES_XML_NUMBERED_STYLE_INDENT: "
                     f"styleId={style_id}; kind=auto(style); level={level}; "
                     f"expected_number_start_cm={twips_to_cm(spec.get('number_start', int(spec['left']) - int(spec['hanging']))):.2f}; "
                     f"expected_hanging_cm={twips_to_cm(spec['hanging']):.2f}; "
                     f"expected_heading_left_cm={twips_to_cm(spec['left']):.2f}; "
+                    f"expected_heading_text_start_cm={twips_to_cm(expected_heading_text_start):.2f}; "
                     f"xml_written_left_cm={twips_to_cm(written.get('left') or spec['left']):.2f}; "
                     f"xml_written_hanging_cm={twips_to_cm(written.get('hanging') or spec['hanging']):.2f}; "
-                    f"suff={suffix}; tab_pos_cm={tab_pos_cm}"
+                    f"suff={suffix}; expected_tab_pos_cm={expected_tab_pos_cm}; tab_pos_cm={tab_pos_cm}"
                 )
             continue
 

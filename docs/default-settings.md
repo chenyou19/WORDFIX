@@ -26,7 +26,7 @@ indent_defaults.json
 }
 ```
 
-- `indent_settings`：儲存縮排設定，包含 `body` 與 `preface`。
+- `indent_settings`：儲存縮排設定，包含 `body` 與 `preface`。每列包含 `level`、`label`、`number_start_cm`、`hanging_cm`、`heading_text_start_cm`、`body_left_cm`。
 - `gui_defaults`：儲存 GUI 第一頁勾選狀態。
 
 ## 載入規則
@@ -34,6 +34,9 @@ indent_defaults.json
 - 若檔案不存在，縮排使用 `constants.py` 的內建值，GUI 勾選使用 `built_in_gui_defaults()`。
 - 若只存在其中一個區塊，另一個區塊仍使用 code 內建預設。
 - 舊格式若直接包含 `body`、`preface`，會被視為舊版縮排設定並轉成 `indent_settings`。
+- 舊版縮排列若已有 `number_start_cm`、`hanging_cm`、`body_left_cm` 但缺少 `heading_text_start_cm`，載入時會補成 `body_left_cm + 0.85`。
+- 更舊版縮排列若只有 `left_cm` 與 `number_start_cm`，會先依既有邏輯推回 `hanging_cm` 與 `body_left_cm`，再補 `heading_text_start_cm = body_left_cm + 0.85`。
+- 新版設定檔保存時會寫出 `heading_text_start_cm`，使用者手動設定的值會 round-trip，不會每次載入都被重算。
 - `gui_defaults` 只會接受既有鍵；缺少的鍵會補成 `built_in_gui_defaults()` 的值。
 
 ## GUI 按鈕對應

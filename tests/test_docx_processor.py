@@ -47,7 +47,7 @@ def assert_numbering_level_follows_suffix_rule(test_case, lvl, level):
     """Assert one numbering w:lvl matches the central tab-suffix rule for its level.
 
     Tab-suffix levels (3/5/6/7/8) keep w:suff="tab" and exactly one left tab stop
-    at TEMPLATE_OUTLINE_INDENTS[level]["left"]; all other levels use
+    at TEMPLATE_OUTLINE_INDENTS[level]["heading_text_start"]; all other levels use
     w:suff="nothing" with no tab stops.
     """
     suff = lvl.find("./w:suff", NS)
@@ -58,7 +58,7 @@ def assert_numbering_level_follows_suffix_rule(test_case, lvl, level):
         tab_list = tabs.findall("./w:tab", NS)
         test_case.assertEqual(len(tab_list), 1)
         test_case.assertEqual(tab_list[0].get(qn("val")), "left")
-        test_case.assertEqual(tab_list[0].get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[level]["left"])
+        test_case.assertEqual(tab_list[0].get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[level]["heading_text_start"])
     else:
         test_case.assertEqual(suff.get(qn("val")), "nothing")
         test_case.assertIsNone(tabs)
@@ -2638,13 +2638,15 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(numbered_ind.get(qn("hanging")), spec["hanging"])
             self.assertIsNone(numbered_ind.get(qn("start")))
             # styles.xml mirrors the level-3 tab stop geometry (w:suff stays in
-            # numbering.xml only); the numbered style now carries a left tab stop.
+            # numbering.xml only); the numbered style now carries a left tab stop
+            # at heading_text_start, independent from list left.
             numbered_style_tabs = numbered_style.find("./w:pPr/w:tabs", NS)
             self.assertIsNotNone(numbered_style_tabs)
             numbered_style_tab_list = numbered_style_tabs.findall("./w:tab", NS)
             self.assertEqual(len(numbered_style_tab_list), 1)
             self.assertEqual(numbered_style_tab_list[0].get(qn("val")), "left")
-            self.assertEqual(numbered_style_tab_list[0].get(qn("pos")), spec["left"])
+            self.assertEqual(numbered_style_tab_list[0].get(qn("pos")), spec["heading_text_start"])
+            self.assertNotEqual(numbered_style_tab_list[0].get(qn("pos")), spec["left"])
             plain_style = styles_root.xpath("./w:style[@w:styleId='BodyText']", namespaces=NS)[0]
             self.assertIsNone(plain_style.find("./w:pPr/w:ind", NS))
             self.assertIsNone(plain_style.find("./w:pPr/w:tabs", NS))
@@ -2654,10 +2656,17 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIn("NUMBERING_XML_LEVEL_INDENT", logs)
             self.assertIn("STYLES_XML_NUMBERED_STYLE_INDENT", logs)
             self.assertIn("expected_number_start_cm=2.96", logs)
+            self.assertIn("expected_heading_text_start_cm=", logs)
+            self.assertIn("expected_tab_pos_cm=", logs)
             self.assertIn("suff=tab", logs)
             self.assertNotIn("tab_pos_cm=None", logs)
             records_by_kind = {record["kind"]: record for record in summary.body_indent_records}
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_heading_left_cm"], 3.46, places=2)
+            self.assertAlmostEqual(
+                records_by_kind["auto(style)"]["expected_heading_text_start_cm"],
+                round(int(spec["heading_text_start"]) / 20 / 28.3464567, 2),
+                places=2,
+            )
             self.assertAlmostEqual(records_by_kind["auto(style)"]["expected_hanging_cm"], 0.50, places=2)
             self.assertAlmostEqual(records_by_kind["body"]["expected_body_left_cm"], 3.45, places=2)
             self.assertEqual(records_by_kind["body"]["expected_firstline_cm"], 0.0)
@@ -3161,10 +3170,15 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(before_by_index[4]["has_tab_stop"], True)
             self.assertEqual(before_by_index[4]["tab_pos_twips"], "2279")
             # decimal "%1." is outline level 3, a tab-suffix level: the number
-            # keeps w:suff="tab" with a tab stop at the level's text start.
+            # keeps w:suff="tab" with a tab stop at the configured heading text start.
             self.assertEqual(after_by_index[4]["suffix"], "tab")
             self.assertEqual(after_by_index[4]["has_tab_stop"], True)
-            self.assertEqual(after_by_index[4]["tab_pos_twips"], TEMPLATE_OUTLINE_INDENTS[3]["left"])
+            self.assertEqual(after_by_index[4]["tab_pos_twips"], TEMPLATE_OUTLINE_INDENTS[3]["heading_text_start"])
+            self.assertEqual(
+                after_by_index[4]["expected_tab_pos_twips"],
+                TEMPLATE_OUTLINE_INDENTS[3]["heading_text_start"],
+            )
+            self.assertNotEqual(after_by_index[4]["tab_pos_twips"], TEMPLATE_OUTLINE_INDENTS[3]["left"])
 
     def test_heading_suffix_normalizes_auto_numbering_missing_suffix_and_tabs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3201,7 +3215,9 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertEqual(after_auto["raw_suffix"], "tab")
             self.assertEqual(after_auto["effective_suffix"], "tab")
             self.assertEqual(after_auto["has_tab_stop"], True)
-            self.assertEqual(after_auto["tab_pos_twips"], TEMPLATE_OUTLINE_INDENTS[3]["left"])
+            self.assertEqual(after_auto["tab_pos_twips"], TEMPLATE_OUTLINE_INDENTS[3]["heading_text_start"])
+            self.assertEqual(after_auto["heading_text_start_twips"], TEMPLATE_OUTLINE_INDENTS[3]["heading_text_start"])
+            self.assertNotEqual(after_auto["tab_pos_twips"], TEMPLATE_OUTLINE_INDENTS[3]["left"])
 
             numbering_root = read_part_root(output_docx, "word/numbering.xml")
             lvl = numbering_root.xpath("./w:abstractNum/w:lvl", namespaces=NS)[0]

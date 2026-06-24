@@ -69,13 +69,23 @@
 
 ## GUI 第二頁欄位
 
-GUI 的縮排設定頁把每一階拆成三個欄位：
+GUI 的縮排設定頁把每一階拆成四個欄位：
 
 - 標號起點 cm：對應 `number_start_cm`。
 - 懸掛 cm / 凸排距離：對應 `hanging_cm`。
+- 標題文字起點 cm：對應 `heading_text_start_cm`。
 - 內文起點 cm：對應 `body_left_cm`。
 
+四個欄位用途不同，不會互相硬套成同一個公式：
+
+- `number_start_cm + hanging_cm` 仍決定自動編號階層的 `w:ind/@w:left`。
+- `hanging_cm` 仍決定 `w:ind/@w:hanging`，因此標題折行續行仍維持既有 left/hanging 行為。
+- `heading_text_start_cm` 只在自動編號後綴為 `w:suff="tab"` 時，決定 `w:tabs/w:tab[@w:val="left"]/@w:pos`，也就是 Tab 後第一個標題文字跳到的位置。
+- `body_left_cm` 只決定標題下方普通內文的起點，對應 body_plain 的 left/start 縮排。
+
 保存後會寫入 `indent_defaults.json` 的 `indent_settings` 區塊。載入後會覆寫執行中的 `TEMPLATE_OUTLINE_INDENTS` 與 `PREFACE_OUTLINE_INDENTS`。
+
+內建預設中，`heading_text_start_cm` 由 `body_left_cm + DEFAULT_HEADING_TEXT_START_OFFSET_CM` 產生，目前 offset 為 `0.85` cm。舊版設定檔若沒有 `heading_text_start_cm`，載入時也會用同一個規則補值；新版設定檔會完整保存使用者手動調整後的值。
 
 ## Word COM 字號補救
 

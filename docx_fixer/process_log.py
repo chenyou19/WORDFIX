@@ -244,14 +244,33 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
                 lines.append(
                     f"{key_name}_after: {_format_suffix_record_value(after_record, key_name)}"
                 )
-            for key_name in ("has_tab_stop", "tab_pos_twips", "left_twips", "hanging_twips", "number_start_twips"):
+            for key_name in (
+                "has_tab_stop",
+                "tab_pos_twips",
+                "actual_tab_pos_twips",
+                "expected_tab_pos_twips",
+                "left_twips",
+                "hanging_twips",
+                "number_start_twips",
+                "heading_text_start_twips",
+                "expected_heading_text_start_twips",
+            ):
                 lines.append(
                     f"{key_name}_before: {_format_suffix_record_value(before_record, key_name)}"
                 )
                 lines.append(
                     f"{key_name}_after: {_format_suffix_record_value(after_record, key_name)}"
                 )
-            for key_name in ("tab_pos_cm", "left_cm", "hanging_cm", "number_start_cm"):
+            for key_name in (
+                "tab_pos_cm",
+                "actual_tab_pos_cm",
+                "expected_tab_pos_cm",
+                "left_cm",
+                "hanging_cm",
+                "number_start_cm",
+                "heading_text_start_cm",
+                "expected_heading_text_start_cm",
+            ):
                 lines.append(f"{key_name}_before: {_format_optional_cm(before_record.get(key_name))}")
                 lines.append(f"{key_name}_after: {_format_optional_cm(after_record.get(key_name))}")
         else:
@@ -337,12 +356,15 @@ def format_indent_settings_log_lines() -> list[str]:
     for row in settings["body"]:
         level = int(row["level"])
         left_cm = float(row["number_start_cm"]) + float(row["hanging_cm"])
+        heading_text_start_twips = round(float(row["heading_text_start_cm"]) * 20 * 28.3464567)
         body_left_twips = round(float(row["body_left_cm"]) * 20 * 28.3464567)
         lines.append(
             f"level={level}; "
             f"number_start_cm={format_cm(float(row['number_start_cm']))}; "
             f"hanging_cm={format_cm(float(row['hanging_cm']))}; "
             f"left_cm={format_cm(left_cm)}; "
+            f"heading_text_start_cm={format_cm(float(row['heading_text_start_cm']))}; "
+            f"heading_text_start_twips={heading_text_start_twips}; "
             f"body_left_cm={format_cm(float(row['body_left_cm']))}; "
             f"body_left_twips={body_left_twips}"
         )

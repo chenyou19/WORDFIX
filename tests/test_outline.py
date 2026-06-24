@@ -10,6 +10,7 @@ from docx_fixer.constants import (
     PREFACE_OUTLINE_INDENTS,
     TEMPLATE_OUTLINE_INDENTS,
     W_NS,
+    make_outline_indent_spec,
     validate_template_outline_indents,
 )
 from docx_fixer.models import ProcessSummary
@@ -363,7 +364,7 @@ def assert_level_suffix_rule(testcase, lvl, level):
         tab_list = tabs.findall("./w:tab", NS)
         testcase.assertEqual(len(tab_list), 1)
         testcase.assertEqual(tab_list[0].get(qn("val")), "left")
-        testcase.assertEqual(tab_list[0].get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[level]["left"])
+        testcase.assertEqual(tab_list[0].get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[level]["heading_text_start"])
     else:
         testcase.assertEqual(suff.get(qn("val")), "nothing")
         testcase.assertIsNone(tabs)
@@ -435,7 +436,43 @@ class OutlineFixTests(unittest.TestCase):
                 self.assertAlmostEqual(twips_to_cm(spec["left"]), left_cm, places=2)
                 self.assertAlmostEqual(twips_to_cm(spec["number_start"]), number_start_cm, places=2)
                 self.assertAlmostEqual(twips_to_cm(spec["hanging"]), hanging_cm, places=2)
+                self.assertAlmostEqual(
+                    twips_to_cm(spec["heading_text_start"]),
+                    body_left_cm + 0.85,
+                    places=2,
+                )
                 self.assertAlmostEqual(twips_to_cm(spec["body_left"]), body_left_cm, places=2)
+
+    def test_custom_heading_text_start_controls_tab_without_changing_left_hanging_or_body(self):
+        original = dict(TEMPLATE_OUTLINE_INDENTS[3])
+        TEMPLATE_OUTLINE_INDENTS[3] = make_outline_indent_spec(
+            number_start_cm=1.00,
+            hanging_cm=0.50,
+            body_left_cm=2.25,
+            heading_text_start_cm=3.75,
+        )
+        spec = TEMPLATE_OUTLINE_INDENTS[3]
+        try:
+            p = make_paragraph("1. 自訂標題")
+            pPr = p.find("./w:pPr", NS)
+            written = apply_indent_spec_to_pPr(pPr, spec, "heading_numbered", use_tab_stop=True)
+
+            ind = pPr.find("w:ind", NS)
+            tab = pPr.find("./w:tabs/w:tab", NS)
+            self.assertEqual(ind.get(qn("left")), spec["left"])
+            self.assertEqual(ind.get(qn("hanging")), spec["hanging"])
+            self.assertEqual(written["tab_pos"], spec["heading_text_start"])
+            self.assertEqual(tab.get(qn("pos")), spec["heading_text_start"])
+            self.assertNotEqual(tab.get(qn("pos")), spec["left"])
+
+            body = make_paragraph("標題下方普通內文")
+            body_pPr = body.find("./w:pPr", NS)
+            add_tab_stop(body, "999")
+            add_num_pr(body)
+            apply_indent_spec_to_pPr(body_pPr, spec, "body_plain")
+            assert_body_indent_hard_override(self, body, spec["body_left"])
+        finally:
+            TEMPLATE_OUTLINE_INDENTS[3] = original
 
     def test_manual_numbering_gets_outline_and_indent(self):
         paragraphs = [
@@ -629,6 +666,7 @@ class OutlineFixTests(unittest.TestCase):
                 "left": spec["left"],
                 "hanging": spec["hanging"],
                 "number_start": str(int(spec["left"]) - int(spec["hanging"])),
+                "heading_text_start": spec["heading_text_start"],
                 "lvlJc": "left",
                 "suff": "nothing",
                 "tab_pos": None,
@@ -651,6 +689,7 @@ class OutlineFixTests(unittest.TestCase):
         self.assertIn(f"p_hanging={spec['hanging']}", debug)
         self.assertIn(f"lvl_left={spec['left']}", debug)
         self.assertIn(f"lvl_hanging={spec['hanging']}", debug)
+        self.assertIn(f"lvl_heading_text_start={spec['heading_text_start']}", debug)
         self.assertIn("lvlJc=left", debug)
         self.assertIn("suff=nothing", debug)
 
