@@ -86,10 +86,18 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `footer_rows_outer_left_none_applied`、`footer_rows_outer_right_none_applied`：footer row 左右外緣 target 是否已寫入 direct nil。
 - `footer_rows_outer_left_target_count`、`footer_rows_outer_right_target_count`：footer row 左右外緣 target 數。
 - `outer_vertical_border_policy_xml_verified`：XML 是否符合「資料列左右 direct double、footer 左右 direct nil」的外側垂直框線 policy。這只表示最終 DOCX XML 條件通過，不代表已做 Word 畫面或像素級驗證。
-- `outer_vertical_border_policy_verify_detail`：外側垂直框線驗證摘要，例如 `data_row_indices=0,1,2;footer_row_indices=3;data_left_targets=...;data_left_border_values=double/4/000000;footer_left_border_values=nil/missing/missing`。
+- `outer_vertical_border_policy_verify_detail`：外側垂直框線驗證摘要，例如 `data_row_indices=1,2;footer_row_indices=3;data_left_targets=...;data_left_border_values=double/4/000000;footer_left_border_values=nil/missing/missing`。
 - `last_row_physical_cell_count`、`last_row_grid_span_sum`、`last_row_vmerge_states`、`last_row_bottom_edge_target_count`：最後列實體 cell、邏輯欄寬、垂直合併與底邊目標診斷。
 - `table_border_schema_order_valid`、`tblPr_child_order`、`last_row_tcPr_child_orders`：`tblPr`、表內既有 `tcPr`、`tblBorders`/`tcBorders` 是否符合已知 OOXML child 順序，以及實際 child order 摘要。若 `jc` 在 `tblBorders` 後、`tblBorders` 在 `tblLayout` 後或 `tcBorders` 在 `vAlign` 後，Word 可能保留 XML 但不照預期顯示。
-- `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整；調整後 title row 的 `top`/`left`/`right`/`bottom` 皆維持 black double，不再清成 nil。
+- `table_top_border_mode`：表格頂端框線決策。`single_title_nil` 表示第一列單 cell title row 的 `top/left/right=nil`、`bottom=double`；`data_double` 表示一般第一列的每個實體 cell 都寫入 direct `tcBorders/top=double`；`not_applied` 表示未套用。
+- `table_top_border_cell_count`：本次頂端 mode 實際處理的第一列實體 cell 數。
+- `table_top_border_xml_verified`：XML 是否符合該頂端 mode 的預期。
+- `table_top_border_verify_detail`：XML 驗證摘要，包含 `tbl_top`、`first_row_tc_tops`、`first_row_single_cell_title`、`first_row_grid_span_sum`、`table_border_schema_order_valid`、`tblPr_child_order`、`first_row_tcPr_child_orders`。
+- `first_row_single_cell_title`：第一列是否為單一實體 cell title row。
+- `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整。
+- `first_row_single_cell_border_mode`：第一列單 cell 的邊框模式；目前為 `title_open_three_sides` 或 `not_applicable`。
+- `first_row_single_cell_border_xml_verified`：第一列單 cell 是否符合 `top/left/right=nil`、`bottom=double/4/000000`。
+- `first_row_single_cell_border_verify_detail`：第一列單 cell 驗證摘要，包含 `top`、`left`、`right`、`bottom`、`grid_span`、`schema_order_valid`。
 - `footer_row_count`：從表格底部往上連續處理的 footer 列數（中斷於第一個無命中的列）。
 - `footer_cell_matches`：每列命中的類型（由上往下），例如 `note | base_period,source`。
 - `footer_note_cells_adjusted`：所有 footer 列命中「基期：」「資料來源：」或註記（`^註(?:\d+)?[：:]`）並格式化的 cell 總數。

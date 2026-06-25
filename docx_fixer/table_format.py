@@ -591,7 +591,10 @@ def process_table(
 # applies, in this fixed order:
 #   1. whole-table font size -> 11 pt
 #   2. table outer frame (top/bottom/left/right) -> black double border
-#   3. first-row single cell -> top/left/right/bottom black double
+#   3. first-row:
+#      - single-cell title -> top/left/right nil, bottom black double;
+#      - otherwise, direct top black double on every first-row cell so Word
+#        does not let existing cell borders override the table top frame.
 #   4. footer block: collect the contiguous block of footer rows at the BOTTOM
 #      of the table (scan upward; a row is a footer row when any of its cells
 #      matches 基期：/資料來源：/註記; stop at the first non-matching/blank row),
@@ -686,10 +689,26 @@ def _apply_table_outer_double_black_borders(tbl) -> None:
 
 def _apply_first_row_single_cell_borders(tc) -> None:
     borders = _get_or_add_tc_borders(tc)
-    set_border_double_black(borders, "top")
-    set_border_double_black(borders, "left")
-    set_border_double_black(borders, "right")
+    set_border_nil(borders, "top")
+    set_border_nil(borders, "left")
+    set_border_nil(borders, "right")
     set_border_double_black(borders, "bottom")
+
+
+def _apply_rendered_top_double_black_border(tbl) -> int:
+    rows = tbl.findall("w:tr", NS)
+    if not rows:
+        return 0
+
+    first_row_cells = _unique_row_cells(rows[0])
+    if len(first_row_cells) == 1:
+        return 0
+
+    applied = 0
+    for tc in first_row_cells:
+        set_border_double_black(_get_or_add_tc_borders(tc), "top")
+        applied += 1
+    return applied
 
 
 def _unique_row_cells(tr) -> list:
@@ -863,9 +882,7 @@ def _outer_vertical_border_targets(tbl, footer_rows: list) -> dict[str, object]:
     footer_indices = _footer_row_index_set(footer_rows)
     column_count = table_column_count(tbl)
     targets: dict[str, object] = {
-        "data_row_indices": [
-            index for index in range(len(rows)) if index not in footer_indices
-        ],
+        "data_row_indices": [],
         "footer_row_indices": [footer_row.row_index for footer_row in footer_rows],
         "data_left_targets": [],
         "data_right_targets": [],
@@ -879,12 +896,17 @@ def _outer_vertical_border_targets(tbl, footer_rows: list) -> dict[str, object]:
 
     for row_index, tr in enumerate(rows):
         row_is_footer = row_index in footer_indices
-        left_key = "footer_left_targets" if row_is_footer else "data_left_targets"
-        right_key = "footer_right_targets" if row_is_footer else "data_right_targets"
         row_infos = _row_cell_infos(tr)
         first_row_single_cell_title = (
             row_index == 0 and not row_is_footer and len(row_infos) == 1
         )
+        if not row_is_footer and not first_row_single_cell_title:
+            targets["data_row_indices"].append(row_index)
+        if first_row_single_cell_title:
+            continue
+
+        left_key = "footer_left_targets" if row_is_footer else "data_left_targets"
+        right_key = "footer_right_targets" if row_is_footer else "data_right_targets"
         for info in row_infos:
             target = {
                 **info,
@@ -892,7 +914,7 @@ def _outer_vertical_border_targets(tbl, footer_rows: list) -> dict[str, object]:
             }
             if int(info["start_col"]) == 0:
                 targets[left_key].append(target)
-            if int(info["end_col"]) == column_count or first_row_single_cell_title:
+            if int(info["end_col"]) == column_count:
                 targets[right_key].append(target)
     return targets
 
@@ -1220,6 +1242,127 @@ def _verify_footer_terminal_bottom_none(
     return verified, detail, {**diagnostics, **schema_summary}
 
 
+def _first_row_cells(tbl) -> list:
+    rows = tbl.findall("w:tr", NS)
+    if not rows:
+        return []
+    return _unique_row_cells(rows[0])
+
+
+def _first_row_grid_span_sum(cells: list) -> int:
+    return sum(_cell_grid_span(tc) for tc in cells)
+
+
+def _first_row_tc_border(tc, side: str):
+    return tc.find(f"w:tcPr/w:tcBorders/w:{side}", NS)
+
+
+def _verify_first_row_single_cell_border(tbl) -> tuple[bool, str, dict[str, object]]:
+    first_row_cells = _first_row_cells(tbl)
+    schema_summary = _schema_order_summary(tbl, first_row_cells)
+    schema_valid = bool(schema_summary["table_border_schema_order_valid"])
+    if len(first_row_cells) != 1:
+        detail = ";".join(
+            [
+                "mode=not_applicable",
+                f"first_row_cell_count={len(first_row_cells)}",
+                f"grid_span={_first_row_grid_span_sum(first_row_cells)}",
+                f"schema_order_valid={'true' if schema_valid else 'false'}",
+            ]
+        )
+        return False, detail, {
+            "first_row_single_cell_border_mode": "not_applicable",
+            "first_row_single_cell_title": False,
+            "first_row_grid_span_sum": _first_row_grid_span_sum(first_row_cells),
+        }
+
+    title_cell = first_row_cells[0]
+    top = _first_row_tc_border(title_cell, "top")
+    left = _first_row_tc_border(title_cell, "left")
+    right = _first_row_tc_border(title_cell, "right")
+    bottom = _first_row_tc_border(title_cell, "bottom")
+    verified = (
+        _is_nil_border(top)
+        and _is_nil_border(left)
+        and _is_nil_border(right)
+        and _is_double_black_border(bottom)
+        and schema_valid
+    )
+    grid_span = _cell_grid_span(title_cell)
+    detail = ";".join(
+        [
+            "mode=title_open_three_sides",
+            f"top={_border_signature(top)}",
+            f"left={_border_signature(left)}",
+            f"right={_border_signature(right)}",
+            f"bottom={_border_signature(bottom)}",
+            f"grid_span={grid_span}",
+            f"schema_order_valid={'true' if schema_valid else 'false'}",
+        ]
+    )
+    return verified, detail, {
+        "first_row_single_cell_border_mode": "title_open_three_sides",
+        "first_row_single_cell_title": True,
+        "first_row_grid_span_sum": grid_span,
+    }
+
+
+def _verify_table_top_border(tbl) -> tuple[bool, str, dict[str, object]]:
+    first_row_cells = _first_row_cells(tbl)
+    schema_summary = _schema_order_summary(tbl, first_row_cells)
+    schema_valid = bool(schema_summary["table_border_schema_order_valid"])
+    tbl_top = tbl.find("w:tblPr/w:tblBorders/w:top", NS)
+    first_row_tops = [
+        tc.find("w:tcPr/w:tcBorders/w:top", NS) for tc in first_row_cells
+    ]
+    first_row_single_cell_title = len(first_row_cells) == 1
+    first_row_grid_span_sum = _first_row_grid_span_sum(first_row_cells)
+
+    if not first_row_cells:
+        mode = "not_applied"
+        verified = False
+    elif first_row_single_cell_title:
+        mode = "single_title_nil"
+        title_cell = first_row_cells[0]
+        verified = (
+            _is_double_black_border(tbl_top)
+            and _is_nil_border(_first_row_tc_border(title_cell, "top"))
+            and _is_nil_border(_first_row_tc_border(title_cell, "left"))
+            and _is_nil_border(_first_row_tc_border(title_cell, "right"))
+            and _is_double_black_border(_first_row_tc_border(title_cell, "bottom"))
+            and schema_valid
+        )
+    else:
+        mode = "data_double"
+        verified = (
+            _is_double_black_border(tbl_top)
+            and all(_is_double_black_border(top) for top in first_row_tops)
+            and schema_valid
+        )
+
+    detail = ";".join(
+        [
+            f"table_top_border_mode={mode}",
+            f"tbl_top={_border_signature(tbl_top)}",
+            "first_row_tc_tops="
+            + ("|".join(_border_signature(top) for top in first_row_tops) or "none"),
+            "first_row_single_cell_title="
+            + ("true" if first_row_single_cell_title else "false"),
+            f"first_row_grid_span_sum={first_row_grid_span_sum}",
+            "table_border_schema_order_valid="
+            + ("true" if schema_valid else "false"),
+            f"tblPr_child_order={schema_summary['tblPr_child_order']}",
+            "first_row_tcPr_child_orders="
+            + ("|".join(schema_summary["last_row_tcPr_child_orders"]) or "none"),
+        ]
+    )
+    return verified, detail, {
+        "table_top_border_mode": mode,
+        "table_top_border_cell_count": len(first_row_cells) if mode != "not_applied" else 0,
+        "first_row_grid_span_sum": first_row_grid_span_sum,
+    }
+
+
 def collect_consecutive_footer_rows_from_bottom(
     tbl, stop: StopController | None = None
 ) -> list:
@@ -1313,6 +1456,14 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
     result: dict[str, object] = {
         "outer_double_border_applied": False,
         "first_row_single_cell_border_adjusted": False,
+        "first_row_single_cell_title": False,
+        "first_row_single_cell_border_mode": "not_applicable",
+        "first_row_single_cell_border_xml_verified": False,
+        "first_row_single_cell_border_verify_detail": "",
+        "table_top_border_mode": "not_applied",
+        "table_top_border_cell_count": 0,
+        "table_top_border_xml_verified": False,
+        "table_top_border_verify_detail": "",
         "footer_rows_detected": False,
         "footer_row_count": 0,
         "footer_top_row_index": None,
@@ -1369,11 +1520,22 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
     if not rows:
         return result
 
-    # 3. first-row single cell overrides the outer frame on three edges.
-    first_row_cells = rows[0].findall("w:tc", NS)
+    # 3. First-row top border: title rows are intentionally open on three
+    # sides; normal first rows get direct top borders so existing cell borders
+    # cannot override the rendered table top in Word.
+    first_row_cells = _unique_row_cells(rows[0])
     if len(first_row_cells) == 1:
         _apply_first_row_single_cell_borders(first_row_cells[0])
         result["first_row_single_cell_border_adjusted"] = True
+        result["first_row_single_cell_title"] = True
+        result["table_top_border_mode"] = "single_title_nil"
+        result["table_top_border_cell_count"] = 1
+    else:
+        top_cell_count = _apply_rendered_top_double_black_border(tbl)
+        result["table_top_border_mode"] = (
+            "data_double" if top_cell_count > 0 else "not_applied"
+        )
+        result["table_top_border_cell_count"] = top_cell_count
 
     # 4. Footer block: collect the bottom contiguous footer rows, then format the
     # block as a unit (separate scan from apply, so the borders are decided per
@@ -1426,5 +1588,19 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         result["table_bottom_double_border_verify_detail"] = detail
 
     result.update(_verify_outer_vertical_border_policy(tbl, footer_rows))
+
+    (
+        first_row_verified,
+        first_row_detail,
+        first_row_diagnostics,
+    ) = _verify_first_row_single_cell_border(tbl)
+    result.update(first_row_diagnostics)
+    result["first_row_single_cell_border_xml_verified"] = first_row_verified
+    result["first_row_single_cell_border_verify_detail"] = first_row_detail
+
+    top_verified, top_detail, top_diagnostics = _verify_table_top_border(tbl)
+    result.update(top_diagnostics)
+    result["table_top_border_xml_verified"] = top_verified
+    result["table_top_border_verify_detail"] = top_detail
 
     return result

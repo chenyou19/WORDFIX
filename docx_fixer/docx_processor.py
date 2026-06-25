@@ -491,6 +491,30 @@ def _mark_table_footer_source_format_applied(
         record["table_bottom_double_border_verify_detail"] = str(
             result.get("table_bottom_double_border_verify_detail", "")
         )
+        record["table_top_border_mode"] = str(
+            result.get("table_top_border_mode", "not_applied")
+        )
+        record["table_top_border_cell_count"] = int(
+            result.get("table_top_border_cell_count", 0)
+        )
+        record["table_top_border_xml_verified"] = bool(
+            result.get("table_top_border_xml_verified", False)
+        )
+        record["table_top_border_verify_detail"] = str(
+            result.get("table_top_border_verify_detail", "")
+        )
+        record["first_row_single_cell_title"] = bool(
+            result.get("first_row_single_cell_title", False)
+        )
+        record["first_row_single_cell_border_mode"] = str(
+            result.get("first_row_single_cell_border_mode", "not_applicable")
+        )
+        record["first_row_single_cell_border_xml_verified"] = bool(
+            result.get("first_row_single_cell_border_xml_verified", False)
+        )
+        record["first_row_single_cell_border_verify_detail"] = str(
+            result.get("first_row_single_cell_border_verify_detail", "")
+        )
         record["footer_terminal_bottom_none_applied"] = bool(
             result.get("footer_terminal_bottom_none_applied", False)
         )

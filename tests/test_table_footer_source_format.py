@@ -399,12 +399,41 @@ class FooterFormatUnitTests(unittest.TestCase):
 
     def test_first_row_single_cell_borders(self):
         tbl = footer_table()
-        apply_table_footer_source_format(tbl)
+        result = apply_table_footer_source_format(tbl)
         title = cell_at(tbl, 0, 0)
-        self.assertTrue(is_double_black(tc_border(title, "top")))
-        self.assertTrue(is_double_black(tc_border(title, "left")))
-        self.assertTrue(is_double_black(tc_border(title, "right")))
+        self.assertTrue(is_nil(tc_border(title, "top")))
+        self.assertTrue(is_nil(tc_border(title, "left")))
+        self.assertTrue(is_nil(tc_border(title, "right")))
         self.assertTrue(is_double_black(tc_border(title, "bottom")))
+        self.assertTrue(result["first_row_single_cell_title"])
+        self.assertEqual(
+            result["first_row_single_cell_border_mode"],
+            "title_open_three_sides",
+        )
+        self.assertTrue(result["first_row_single_cell_border_xml_verified"])
+        self.assertEqual(result["table_top_border_mode"], "single_title_nil")
+        self.assertTrue(result["table_top_border_xml_verified"])
+
+    def test_gridspan_first_row_single_cell_title_stays_open_with_footer(self):
+        tbl = footer_table()
+        set_cell_grid_span(cell_at(tbl, 0, 0), 5)
+
+        result = apply_table_footer_source_format(tbl)
+
+        title = cell_at(tbl, 0, 0)
+        self.assertTrue(is_nil(tc_border(title, "top")))
+        self.assertTrue(is_nil(tc_border(title, "left")))
+        self.assertTrue(is_nil(tc_border(title, "right")))
+        self.assertTrue(is_double_black(tc_border(title, "bottom")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, 0), "top")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "bottom")))
+        self.assertEqual(result["first_row_grid_span_sum"], 5)
+        self.assertEqual(result["data_rows_outer_left_target_count"], 2)
+        self.assertEqual(result["data_rows_outer_right_target_count"], 2)
+        self.assertIn(
+            "grid_span=5",
+            result["first_row_single_cell_border_verify_detail"],
+        )
 
     def test_base_period_cell_formatting(self):
         tbl = footer_table()
@@ -484,8 +513,57 @@ class FooterFormatUnitTests(unittest.TestCase):
         )
         result = apply_table_footer_source_format(tbl)
         self.assertFalse(result["first_row_single_cell_border_adjusted"])
+        self.assertFalse(result["first_row_single_cell_title"])
+        self.assertEqual(result["table_top_border_mode"], "data_double")
+        self.assertEqual(result["table_top_border_cell_count"], 5)
+        self.assertTrue(result["table_top_border_xml_verified"])
+        for col in range(5):
+            self.assertTrue(is_double_black(tc_border(cell_at(tbl, 0, col), "top")))
         self.assertTrue(is_double_black(tc_border(cell_at(tbl, 0, 0), "left")))
         self.assertTrue(is_double_black(tc_border(cell_at(tbl, 0, 4), "right")))
+
+    def test_first_row_direct_top_single_is_overridden_to_double(self):
+        tbl = make_table(
+            [
+                ["h1", "h2", "h3", "h4", "h5"],
+                ["1", "2", "3", "4", "5"],
+            ]
+        )
+        for tc in tbl.findall("w:tr", NS)[0].findall("w:tc", NS):
+            borders = make_tc_borders(tc)
+            top = etree.SubElement(borders, qn("top"))
+            top.set(qn("val"), "single")
+            top.set(qn("sz"), "4")
+            top.set(qn("color"), "000000")
+
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertEqual(result["table_top_border_mode"], "data_double")
+        self.assertEqual(result["table_top_border_cell_count"], 5)
+        self.assertTrue(result["table_top_border_xml_verified"])
+        self.assertIn(
+            "first_row_tc_tops=double/4/000000",
+            result["table_top_border_verify_detail"],
+        )
+        for tc in tbl.findall("w:tr", NS)[0].findall("w:tc", NS):
+            self.assertTrue(is_double_black(tc_border(tc, "top")))
+
+    def test_first_row_direct_top_nil_is_overridden_to_double(self):
+        tbl = make_table(
+            [
+                ["h1", "h2", "h3", "h4", "h5"],
+                ["1", "2", "3", "4", "5"],
+            ]
+        )
+        for tc in tbl.findall("w:tr", NS)[0].findall("w:tc", NS):
+            set_border_nil(make_tc_borders(tc), "top")
+
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertEqual(result["table_top_border_mode"], "data_double")
+        self.assertTrue(result["table_top_border_xml_verified"])
+        for tc in tbl.findall("w:tr", NS)[0].findall("w:tc", NS):
+            self.assertTrue(is_double_black(tc_border(tc, "top")))
 
 
 class OuterVerticalBorderPolicyTests(unittest.TestCase):
@@ -501,19 +579,24 @@ class OuterVerticalBorderPolicyTests(unittest.TestCase):
 
         for row_index, tr in enumerate(tbl.findall("w:tr", NS)):
             cells = tr.findall("w:tc", NS)
-            self.assertTrue(is_double_black(tc_border(cells[0], "left")), row_index)
-            self.assertTrue(is_double_black(tc_border(cells[-1], "right")), row_index)
+            if row_index == 0:
+                self.assertTrue(is_nil(tc_border(cells[0], "left")), row_index)
+                self.assertTrue(is_nil(tc_border(cells[0], "right")), row_index)
+            else:
+                self.assertTrue(is_double_black(tc_border(cells[0], "left")), row_index)
+                self.assertTrue(is_double_black(tc_border(cells[-1], "right")), row_index)
 
         for side in ("top", "left", "right", "bottom"):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
         title = cell_at(tbl, 0, 0)
-        self.assertTrue(is_double_black(tc_border(title, "top")))
-        self.assertTrue(is_double_black(tc_border(title, "left")))
-        self.assertTrue(is_double_black(tc_border(title, "right")))
+        self.assertTrue(is_nil(tc_border(title, "top")))
+        self.assertTrue(is_nil(tc_border(title, "left")))
+        self.assertTrue(is_nil(tc_border(title, "right")))
+        self.assertTrue(is_double_black(tc_border(title, "bottom")))
         self.assertTrue(result["data_rows_outer_left_double_applied"])
         self.assertTrue(result["data_rows_outer_right_double_applied"])
-        self.assertEqual(result["data_rows_outer_left_target_count"], 3)
-        self.assertEqual(result["data_rows_outer_right_target_count"], 3)
+        self.assertEqual(result["data_rows_outer_left_target_count"], 2)
+        self.assertEqual(result["data_rows_outer_right_target_count"], 2)
         self.assertEqual(result["footer_rows_outer_left_target_count"], 0)
         self.assertTrue(result["outer_vertical_border_policy_xml_verified"])
         self.assertTrue(result["table_border_schema_order_valid"])
@@ -530,8 +613,8 @@ class OuterVerticalBorderPolicyTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "left")))
         self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 4), "right")))
         self.assertEqual(result["table_bottom_border_mode"], "footer_none")
-        self.assertEqual(result["data_rows_outer_left_target_count"], 3)
-        self.assertEqual(result["data_rows_outer_right_target_count"], 3)
+        self.assertEqual(result["data_rows_outer_left_target_count"], 2)
+        self.assertEqual(result["data_rows_outer_right_target_count"], 2)
         self.assertEqual(result["footer_rows_outer_left_target_count"], 1)
         self.assertEqual(result["footer_rows_outer_right_target_count"], 1)
         self.assertTrue(result["footer_rows_outer_left_none_applied"])
@@ -757,11 +840,12 @@ class FooterFormatOrderTests(unittest.TestCase):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
         self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
 
-        # First-row single cell keeps the outer frame instead of clearing it.
+        # First-row single cell is open on three sides and keeps only the
+        # bottom double line.
         title = cell_at(tbl, 0, 0)
-        self.assertTrue(is_double_black(tc_border(title, "top")))
-        self.assertTrue(is_double_black(tc_border(title, "left")))
-        self.assertTrue(is_double_black(tc_border(title, "right")))
+        self.assertTrue(is_nil(tc_border(title, "top")))
+        self.assertTrue(is_nil(tc_border(title, "left")))
+        self.assertTrue(is_nil(tc_border(title, "right")))
         self.assertTrue(is_double_black(tc_border(title, "bottom")))
 
         # Last-row footer cells: left/right/bottom nil survive the outer frame.
@@ -789,15 +873,15 @@ class FooterFormatOrderTests(unittest.TestCase):
         self.assertEqual(record["footer_terminal_bottom_none_cell_count"], 5)
         self.assertTrue(record["data_rows_outer_left_double_applied"])
         self.assertTrue(record["data_rows_outer_right_double_applied"])
-        self.assertEqual(record["data_rows_outer_left_target_count"], 3)
-        self.assertEqual(record["data_rows_outer_right_target_count"], 3)
+        self.assertEqual(record["data_rows_outer_left_target_count"], 2)
+        self.assertEqual(record["data_rows_outer_right_target_count"], 2)
         self.assertTrue(record["footer_rows_outer_left_none_applied"])
         self.assertTrue(record["footer_rows_outer_right_none_applied"])
         self.assertEqual(record["footer_rows_outer_left_target_count"], 1)
         self.assertEqual(record["footer_rows_outer_right_target_count"], 1)
         self.assertTrue(record["outer_vertical_border_policy_xml_verified"])
         self.assertIn(
-            "data_row_indices=0,1,2",
+            "data_row_indices=1,2",
             record["outer_vertical_border_policy_verify_detail"],
         )
         self.assertIn(
@@ -816,6 +900,23 @@ class FooterFormatOrderTests(unittest.TestCase):
             record["table_bottom_border_verify_detail"],
         )
         self.assertTrue(record["first_row_single_cell_border_adjusted"])
+        self.assertTrue(record["first_row_single_cell_title"])
+        self.assertEqual(
+            record["first_row_single_cell_border_mode"],
+            "title_open_three_sides",
+        )
+        self.assertTrue(record["first_row_single_cell_border_xml_verified"])
+        self.assertIn(
+            "top=nil/missing/missing",
+            record["first_row_single_cell_border_verify_detail"],
+        )
+        self.assertEqual(record["table_top_border_mode"], "single_title_nil")
+        self.assertEqual(record["table_top_border_cell_count"], 1)
+        self.assertTrue(record["table_top_border_xml_verified"])
+        self.assertIn(
+            "first_row_single_cell_title=true",
+            record["table_top_border_verify_detail"],
+        )
         self.assertEqual(record["footer_base_period_cells_adjusted"], 1)
         self.assertEqual(record["footer_source_cells_adjusted"], 1)
         self.assertEqual(record["footer_note_cells_adjusted"], 0)
@@ -1441,6 +1542,10 @@ class FooterFormatWordComOrderTests(unittest.TestCase):
         self.assertIn("table_bottom_border_mode=footer_none", logs)
         self.assertIn("table_bottom_border_xml_verified=True", logs)
         self.assertIn("table_bottom_double_border_xml_verified=False", logs)
+        self.assertIn("table_top_border_mode=single_title_nil", logs)
+        self.assertIn("table_top_border_xml_verified=True", logs)
+        self.assertIn("first_row_single_cell_border_mode=title_open_three_sides", logs)
+        self.assertIn("first_row_single_cell_border_xml_verified=True", logs)
         self.assertIn("FOOTER_SOURCE_FORMAT_REAPPLY_DONE applied=1", logs)
 
 

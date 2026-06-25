@@ -187,7 +187,9 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 1. 整張表格內所有 run 字級設為 11pt（`w:sz`/`w:szCs` 值 `22`）。
 2. 表格外圍框線（`top`/`bottom`/`left`/`right`）設為黑色雙線（`w:val="double"`、`w:color="000000"`、`w:sz="4"`、`w:space="0"`），內框 `insideH`/`insideV` 不動。
-3. 若第一列只有一個儲存格，覆蓋該 cell 邊框：`top`/`left`/`right`/`bottom` 皆設為黑色雙線。第一列單 cell title row 仍是資料列，不能把外框清成 nil。
+3. 表格頂端分流：
+   - 若第一列只有一個實體儲存格，視為 title row，直接寫入該 cell 的 `tcBorders/top=nil`、`left=nil`、`right=nil`、`bottom=black double`。若該 cell 有 `gridSpan`，仍只處理這個實體 cell，不改變結構。
+   - 若第一列不是單 cell title row，除了 table-level `tblBorders/top=black double` 外，也對第一列每個實體 cell 寫入 direct `tcBorders/top=black double`，避免既有 cell-level `top=single` 或 `top=nil` 覆蓋 Word 的實際顯示。
 4. **從表格底部連續往上掃描 footer 列**。對每一列逐 cell 取可見文字（合併段落、去除前後空白與零寬／cell 結尾控制字元、收斂換行與全/半形空白後）判斷，以 cell 的 XML element 去重，合併儲存格每列只處理一次：
    - 該列只要**任一** cell 命中以下任一規則，即視為 footer 列，格式化該列**所有命中**的 cell，並繼續往上一列檢查。
    - 命中規則與套用格式：
@@ -201,16 +203,16 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
    - `footer_rows_detected=False`：一般資料表底部使用 `data_double` mode。`w:tblBorders/w:bottom` 與最後可見底邊 cell 的 `w:tcBorders/w:bottom` 都設為黑色雙線（`w:val="double"`、`w:sz="4"`、`w:space="0"`、`w:color="000000"`）。若最後列有 `gridSpan`，以實體 cell 承擔跨欄底線；若最後列含 `vMerge=continue`，會同時處理 continuation cell 與對應 restart owner，且不破壞合併 XML。
    - `footer_rows_detected=True`：footer 說明區使用 `footer_none` mode。`w:tblBorders/w:bottom` 與最後一個 footer 實體列的所有實體 cell `w:tcBorders/w:bottom` 都設為 `nil`，避免「註：」「基期：」「資料來源：」下方被補回雙線。資料區與 footer 區之間只保留 footer block 最上方列的 `top` 黑色雙線。
 6. 套用外側垂直框線 policy：
-   - 每一個非 footer row 都用 `gridSpan` 計算邏輯起訖欄位。承擔邏輯第 0 欄外緣的 cell 直接寫入 `tcBorders/left=black double`；承擔邏輯最後欄外緣的 cell 直接寫入 `tcBorders/right=black double`。第一列單 cell title row 視為同時承擔左右外緣。若資料列外側 cell 是 `vMerge=continue`，也會補對應 restart owner 的同側邊框，避免 Word 視覺上斷線。
+   - 每一個非 footer、非第一列單 cell title row 都用 `gridSpan` 計算邏輯起訖欄位。承擔邏輯第 0 欄外緣的 cell 直接寫入 `tcBorders/left=black double`；承擔邏輯最後欄外緣的 cell 直接寫入 `tcBorders/right=black double`。第一列單 cell title row 不參與資料列左右外框 target，避免後續步驟把 title row 的 `left=nil/right=nil` 補回雙線。若資料列外側 cell 是 `vMerge=continue`，也會補對應 restart owner 的同側邊框，避免 Word 視覺上斷線。
    - footer row 不參與左右外框雙線。每一個 footer row 的邏輯最左外緣 cell 直接寫入 `left=nil`，邏輯最右外緣 cell 直接寫入 `right=nil`；這會覆蓋 table-level left/right double 在 footer 區造成的殘線，但不會清除資料列左右雙線。
 
 邊框容器與相關 parent 會維持 WordprocessingML schema 位置：最後會完整重排 `tblPr` 與表內既有 `tcPr` 的已知 child（例如 `tblW,jc,tblBorders,tblLayout,tblCellMar,tblLook`、`gridSpan,tcBorders,noWrap,vAlign`），也會重排 `tblBorders`/`tcBorders` 內部的 border side 順序。若輸入檔或舊版輸出已經有 `tblW,tblBorders,tblLayout,tblCellMar,tblLook,jc` 或 `gridSpan,tcBorders,noWrap,vAlign` 等錯序，本步驟會 relocate 既有節點，不會新增第二個容器，也不會重建整張 `tblBorders` 而誤改 `insideH`/`insideV`；未知 child、屬性、`gridSpan`、`vMerge`、`tcW`、`shd`、`vAlign`、`tblLook`、`tblCellMar` 會保留。
 
 註記規則整合在同一個 footer 流程（`_classify_footer_cell()`），與基期/資料來源共用同一套字級、邊框處理。註記判斷 regex `FOOTER_NOTE_PREFIX_PATTERN` 定義於 `docx_fixer/table_format.py`。
 
-優先權（後者覆蓋前者）：schema normalization（只移動 XML node）＞ footer 左右外側 nil / 資料列左右外側 double ＞ 最後底邊 mode（`data_double` 或 `footer_none`，只覆蓋 bottom）＞ footer 列規則（基期/資料來源/註記）＞ 第一列單 cell 規則 ＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此 footer cell 的 10pt 不會被全表 11pt 蓋掉；footer 區左右外側會保持 nil，資料列左右外側會保持 black double；最後一列 footer cell 的 bottom 會在 `footer_none` mode 中保持 `nil`。
+優先權（後者覆蓋前者）：schema normalization（只移動 XML node）＞ footer 左右外側 nil / 資料列左右外側 double（不含第一列單 cell title row）＞ 最後底邊 mode（`data_double` 或 `footer_none`，只覆蓋 bottom）＞ footer 列規則（基期/資料來源/註記）＞ 第一列頂端規則（`single_title_nil` 或 `data_double`）＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此 footer cell 的 10pt 不會被全表 11pt 蓋掉；footer 區左右外側會保持 nil，資料列左右外側會保持 black double；第一列單 cell title row 會保持 `top/left/right=nil`、`bottom=black double`；最後一列 footer cell 的 bottom 會在 `footer_none` mode 中保持 `nil`。
 
-邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（footer 命中 cell 的 `left`/`right`；footer row 邏輯最左／最右外側的 `left`/`right`；footer block 內部列的 `top`；以及 `footer_none` mode 中 footer 最末列所有實體 cell 的 `bottom`）。
+邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（第一列單 cell title row 的 `top`/`left`/`right`；footer 命中 cell 的 `left`/`right`；footer row 邏輯最左／最右外側的 `left`/`right`；footer block 內部列的 `top`；以及 `footer_none` mode 中 footer 最末列所有實體 cell 的 `bottom`）。
 
 ### 與既有跳過邏輯的關係
 
@@ -235,6 +237,14 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 - `table_bottom_double_border_cell_count`：舊欄位，`data_double` mode 的底邊 cell 數；`footer_none` 為 `0`。
 - `table_bottom_double_border_xml_verified`：舊欄位，僅驗證 `data_double`；`footer_none` 為 `false`。
 - `table_bottom_double_border_verify_detail`：舊欄位，保留相同 XML 摘要供相容讀取。
+- `table_top_border_mode`：頂端框線決策。`single_title_nil` 表示第一列單 cell title row 的 `top/left/right=nil`、`bottom=double`；`data_double` 表示一般第一列每個實體 cell 的 direct `tcBorders/top=double`；`not_applied` 表示未套用。
+- `table_top_border_cell_count`：本次頂端 mode 實際處理的第一列實體 cell 數。
+- `table_top_border_xml_verified`：XML 是否符合該頂端 mode 的預期。
+- `table_top_border_verify_detail`：頂端 XML 驗證摘要，包含 `tbl_top`、`first_row_tc_tops`、`first_row_single_cell_title`、`first_row_grid_span_sum`、`table_border_schema_order_valid`、`tblPr_child_order`、`first_row_tcPr_child_orders`。
+- `first_row_single_cell_title`：第一列是否為單一實體 cell title row。
+- `first_row_single_cell_border_mode`：第一列單 cell 的邊框模式；目前為 `title_open_three_sides` 或 `not_applicable`。
+- `first_row_single_cell_border_xml_verified`：第一列單 cell 是否符合 `top/left/right=nil`、`bottom=double/4/000000`。
+- `first_row_single_cell_border_verify_detail`：第一列單 cell 驗證摘要，包含 `top`、`left`、`right`、`bottom`、`grid_span`、`schema_order_valid`。
 - `footer_terminal_bottom_none_applied`：footer mode 是否已清除 footer 最末列下方底線。
 - `footer_terminal_bottom_none_cell_count`：footer 最末列實際清除 bottom 的實體 cell 數。
 - `data_rows_outer_left_double_applied`、`data_rows_outer_right_double_applied`：是否已對非 footer row 的左右外緣 target 寫入 direct black double。
