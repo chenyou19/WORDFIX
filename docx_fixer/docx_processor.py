@@ -497,6 +497,42 @@ def _mark_table_footer_source_format_applied(
         record["footer_terminal_bottom_none_cell_count"] = int(
             result.get("footer_terminal_bottom_none_cell_count", 0)
         )
+        record["data_rows_outer_left_double_applied"] = bool(
+            result.get("data_rows_outer_left_double_applied", False)
+        )
+        record["data_rows_outer_right_double_applied"] = bool(
+            result.get("data_rows_outer_right_double_applied", False)
+        )
+        record["data_rows_outer_left_target_count"] = int(
+            result.get("data_rows_outer_left_target_count", 0)
+        )
+        record["data_rows_outer_right_target_count"] = int(
+            result.get("data_rows_outer_right_target_count", 0)
+        )
+        record["data_rows_outer_left_vmerge_owner_target_count"] = int(
+            result.get("data_rows_outer_left_vmerge_owner_target_count", 0)
+        )
+        record["data_rows_outer_right_vmerge_owner_target_count"] = int(
+            result.get("data_rows_outer_right_vmerge_owner_target_count", 0)
+        )
+        record["footer_rows_outer_left_none_applied"] = bool(
+            result.get("footer_rows_outer_left_none_applied", False)
+        )
+        record["footer_rows_outer_right_none_applied"] = bool(
+            result.get("footer_rows_outer_right_none_applied", False)
+        )
+        record["footer_rows_outer_left_target_count"] = int(
+            result.get("footer_rows_outer_left_target_count", 0)
+        )
+        record["footer_rows_outer_right_target_count"] = int(
+            result.get("footer_rows_outer_right_target_count", 0)
+        )
+        record["outer_vertical_border_policy_xml_verified"] = bool(
+            result.get("outer_vertical_border_policy_xml_verified", False)
+        )
+        record["outer_vertical_border_policy_verify_detail"] = str(
+            result.get("outer_vertical_border_policy_verify_detail", "")
+        )
         record["last_row_physical_cell_count"] = int(
             result.get("last_row_physical_cell_count", 0)
         )

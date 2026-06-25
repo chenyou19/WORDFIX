@@ -59,7 +59,7 @@ GUI 由 `main.py` 在沒有輸入、輸出檔參數時啟動，主要介面在 `
 - **參、價格形成之主要因素分析：表格顏色不調整**：只停用該章內表格底色處理，不影響版面。
 - **參、價格形成之主要因素分析：縮排不調整**：只停用該章內段落縮排、firstLine、hanging、tabs、字元縮排清理與 Word COM 內文縮排補救；真正標題的 outline level 仍會恢復。
 - **參、不要清理編號後綴 tab/space**：對應 `skip_chapter_three_numbering_suffix_cleanup`，**預設勾選**。只控制 `numbering.xml` 後綴清理：啟用時參章使用到的 numbering definition 不會被改成 `w:suff="nothing"`、不會移除 `w:pPr/w:tabs`、不會 trim `w:lvlText` 結尾空白；不影響表格版面、表格顏色與段落縮排。詳見 [參章保護邏輯](chapter-three-protection.md)。
-- **表格最後一列說明格式化**：對應 `enable_table_footer_source_format`。獨立開關（**不**是表格註記搬移的子選項），不依賴註記搬移、不依賴黑色雙線外框、不混入顏色處理，也**不會搬移、刪除或新增任何 cell／段落**。啟用且該表符合 footer eligibility 時，依序套用全表 11pt、外圍黑色雙線、第一列單 cell 標題線、底部連續說明列格式（「基期：」「資料來源：」以及符合 `^註(?:\d+)?[：:]` 的註記），最後依底部是否為 footer 分流：一般資料表底部為黑色雙線，footer 說明區底部為無線。GUI 內建預設勾選，勾選狀態屬於 `gui_defaults`，會傳入與 CLI 相同的布林參數；CLI / 核心 `ProcessOptions` 預設仍為關閉。參、表格的版面／顏色保護不會阻擋此功能，但也不會因此呼叫一般表格版面或顏色處理。詳見 [表格處理規則](table-rules.md)。
+- **表格最後一列說明格式化**：對應 `enable_table_footer_source_format`。獨立開關（**不**是表格註記搬移的子選項），不依賴註記搬移、不依賴黑色雙線外框、不混入顏色處理，也**不會搬移、刪除或新增任何 cell／段落**。啟用且該表符合 footer eligibility 時，依序套用全表 11pt、外圍黑色雙線、第一列單 cell title row 黑色雙線外框、底部連續說明列格式（「基期：」「資料來源：」以及符合 `^註(?:\d+)?[：:]` 的註記），最後依底部是否為 footer 分流：一般資料表底部為黑色雙線，footer 說明區底部為無線且左右外側不補雙線。GUI 內建預設勾選，勾選狀態屬於 `gui_defaults`，會傳入與 CLI 相同的布林參數；CLI / 核心 `ProcessOptions` 預設仍為關閉。參、表格的版面／顏色保護不會阻擋此功能，但也不會因此呼叫一般表格版面或顏色處理。詳見 [表格處理規則](table-rules.md)。
 
 「將表格內註記儲存格移至表格下方」與「參、不要表格註記搬移」已從 GUI 隱藏並強制關閉，見上方「已隱藏並強制關閉的選項」。
 

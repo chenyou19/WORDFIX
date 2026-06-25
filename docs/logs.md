@@ -80,9 +80,16 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `table_bottom_double_border_verify_detail`：舊相容欄位，保留 XML 摘要。
 - `footer_terminal_bottom_none_applied`：footer mode 是否已清除 footer 最末列下方底線。
 - `footer_terminal_bottom_none_cell_count`：footer 最末列實際清除 bottom 的實體 cell 數。
+- `data_rows_outer_left_double_applied`、`data_rows_outer_right_double_applied`：非 footer row 左右外緣 target 是否已寫入 direct black double。
+- `data_rows_outer_left_target_count`、`data_rows_outer_right_target_count`：非 footer row 左右外緣 target 數；footer row 不計入。
+- `data_rows_outer_left_vmerge_owner_target_count`、`data_rows_outer_right_vmerge_owner_target_count`：資料列外側 `vMerge=continue` 對應 restart owner 的診斷數。
+- `footer_rows_outer_left_none_applied`、`footer_rows_outer_right_none_applied`：footer row 左右外緣 target 是否已寫入 direct nil。
+- `footer_rows_outer_left_target_count`、`footer_rows_outer_right_target_count`：footer row 左右外緣 target 數。
+- `outer_vertical_border_policy_xml_verified`：XML 是否符合「資料列左右 direct double、footer 左右 direct nil」的外側垂直框線 policy。這只表示最終 DOCX XML 條件通過，不代表已做 Word 畫面或像素級驗證。
+- `outer_vertical_border_policy_verify_detail`：外側垂直框線驗證摘要，例如 `data_row_indices=0,1,2;footer_row_indices=3;data_left_targets=...;data_left_border_values=double/4/000000;footer_left_border_values=nil/missing/missing`。
 - `last_row_physical_cell_count`、`last_row_grid_span_sum`、`last_row_vmerge_states`、`last_row_bottom_edge_target_count`：最後列實體 cell、邏輯欄寬、垂直合併與底邊目標診斷。
-- `table_border_schema_order_valid`、`tblPr_child_order`、`last_row_tcPr_child_orders`：`tblBorders`/`tcBorders` 是否位於合法 OOXML schema 位置，以及實際 child order 摘要。若 `tblBorders` 在 `tblLayout` 後或 `tcBorders` 在 `vAlign` 後，Word 可能保留 XML 但不照預期顯示。
-- `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整。
+- `table_border_schema_order_valid`、`tblPr_child_order`、`last_row_tcPr_child_orders`：`tblPr`、表內既有 `tcPr`、`tblBorders`/`tcBorders` 是否符合已知 OOXML child 順序，以及實際 child order 摘要。若 `jc` 在 `tblBorders` 後、`tblBorders` 在 `tblLayout` 後或 `tcBorders` 在 `vAlign` 後，Word 可能保留 XML 但不照預期顯示。
+- `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整；調整後 title row 的 `top`/`left`/`right`/`bottom` 皆維持 black double，不再清成 nil。
 - `footer_row_count`：從表格底部往上連續處理的 footer 列數（中斷於第一個無命中的列）。
 - `footer_cell_matches`：每列命中的類型（由上往下），例如 `note | base_period,source`。
 - `footer_note_cells_adjusted`：所有 footer 列命中「基期：」「資料來源：」或註記（`^註(?:\d+)?[：:]`）並格式化的 cell 總數。

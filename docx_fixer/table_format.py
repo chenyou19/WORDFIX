@@ -217,6 +217,69 @@ def _get_or_add_child_in_schema_order(parent, tag: str, order: tuple[str, ...]):
     return child
 
 
+def _normalize_known_children_in_schema_order(parent, order: tuple[str, ...]) -> None:
+    """Sort existing known OOXML children into schema order.
+
+    Unknown children are preserved and kept after the known children in their
+    original relative order. The helper only moves existing nodes; it does not
+    create or clone anything.
+    """
+    if parent is None or len(parent) < 2:
+        return
+
+    ranks = {name: index for index, name in enumerate(order)}
+    original_children = list(parent)
+    known_children = [
+        (index, child)
+        for index, child in enumerate(original_children)
+        if _local_name(child) in ranks
+    ]
+    unknown_children = [
+        (index, child)
+        for index, child in enumerate(original_children)
+        if _local_name(child) not in ranks
+    ]
+    if len(known_children) > 1:
+        known_children.sort(key=lambda item: (ranks[_local_name(item[1])], item[0]))
+
+    reordered_children = [child for _, child in known_children + unknown_children]
+    if reordered_children == original_children:
+        return
+
+    for child in original_children:
+        parent.remove(child)
+    for child in reordered_children:
+        parent.append(child)
+
+
+def _normalize_border_children_in_schema_order(borders) -> None:
+    _normalize_known_children_in_schema_order(borders, _BORDER_SIDE_ORDER)
+
+
+def _normalize_tbl_pr_known_children_in_schema_order(tbl) -> None:
+    tbl_pr = tbl.find("w:tblPr", NS)
+    if tbl_pr is None:
+        return
+    _normalize_known_children_in_schema_order(tbl_pr, _TBL_PR_CHILD_ORDER)
+    for tbl_borders in tbl_pr.findall("w:tblBorders", NS):
+        _normalize_border_children_in_schema_order(tbl_borders)
+
+
+def _normalize_tc_pr_known_children_in_schema_order(tc) -> None:
+    tc_pr = tc.find("w:tcPr", NS)
+    if tc_pr is None:
+        return
+    _normalize_known_children_in_schema_order(tc_pr, _TC_PR_CHILD_ORDER)
+    for tc_borders in tc_pr.findall("w:tcBorders", NS):
+        _normalize_border_children_in_schema_order(tc_borders)
+
+
+def _normalize_table_border_related_schema_order(tbl) -> None:
+    _normalize_tbl_pr_known_children_in_schema_order(tbl)
+    for tc in tbl.xpath(".//w:tc", namespaces=NS):
+        _normalize_tc_pr_known_children_in_schema_order(tc)
+
+
 def _get_or_add_tbl_borders_in_schema_order(tbl):
     tblPr = get_or_add(tbl, "tblPr", first=True)
     return _get_or_add_child_in_schema_order(tblPr, "tblBorders", _TBL_PR_CHILD_ORDER)
@@ -528,7 +591,7 @@ def process_table(
 # applies, in this fixed order:
 #   1. whole-table font size -> 11 pt
 #   2. table outer frame (top/bottom/left/right) -> black double border
-#   3. first-row single cell -> top/left/right no border, bottom black double
+#   3. first-row single cell -> top/left/right/bottom black double
 #   4. footer block: collect the contiguous block of footer rows at the BOTTOM
 #      of the table (scan upward; a row is a footer row when any of its cells
 #      matches 基期：/資料來源：/註記; stop at the first non-matching/blank row),
@@ -543,6 +606,11 @@ def process_table(
 #      - no bottom footer rows -> visible data edge is black double;
 #      - bottom footer rows -> table/terminal footer bottom is nil, while the
 #        separator above the footer block remains black double.
+#   6. outer vertical edge policy:
+#      - non-footer rows get direct left/right black double borders on the
+#        logical outer cells (gridSpan-aware; vMerge continuation-aware);
+#      - footer rows get direct left/right nil on their logical outer cells.
+#   7. full table-related schema normalization for tblPr/tcPr/border children.
 # All border updates are local (one side at a time), so other cells keep any
 # borders they already had. This never moves, deletes or adds any cell, row or
 # paragraph; it only formats the matching footer cells (plus the separator).
@@ -618,9 +686,9 @@ def _apply_table_outer_double_black_borders(tbl) -> None:
 
 def _apply_first_row_single_cell_borders(tc) -> None:
     borders = _get_or_add_tc_borders(tc)
-    set_border_nil(borders, "top")
-    set_border_nil(borders, "left")
-    set_border_nil(borders, "right")
+    set_border_double_black(borders, "top")
+    set_border_double_black(borders, "left")
+    set_border_double_black(borders, "right")
     set_border_double_black(borders, "bottom")
 
 
@@ -669,6 +737,26 @@ def _find_vmerge_restart_owner(rows: list, target_info: dict[str, object]):
     target_start = int(target_info["start_col"])
     target_end = int(target_info["end_col"])
     for tr in reversed(rows[:-1]):
+        for info in _row_cell_infos(tr):
+            if int(info["start_col"]) != target_start or int(info["end_col"]) != target_end:
+                continue
+            state = str(info["vmerge_state"])
+            if state == "restart":
+                return info["tc"]
+            if state == "none":
+                return None
+            break
+    return None
+
+
+def _find_vmerge_restart_owner_before(
+    rows: list,
+    row_index: int,
+    target_info: dict[str, object],
+):
+    target_start = int(target_info["start_col"])
+    target_end = int(target_info["end_col"])
+    for tr in reversed(rows[:row_index]):
         for info in _row_cell_infos(tr):
             if int(info["start_col"]) != target_start or int(info["end_col"]) != target_end:
                 continue
@@ -758,6 +846,150 @@ def _apply_footer_terminal_bottom_none(tbl, footer_rows: list) -> int:
     return applied
 
 
+def _footer_row_index_set(footer_rows: list) -> set[int]:
+    return {int(footer_row.row_index) for footer_row in footer_rows}
+
+
+def _target_descriptor(target: dict[str, object]) -> str:
+    return (
+        f"r{target['row_index']}c{target['cell_index']}"
+        f"[{target['start_col']}-{target['end_col']}]"
+        f":{target['vmerge_state']}"
+    )
+
+
+def _outer_vertical_border_targets(tbl, footer_rows: list) -> dict[str, object]:
+    rows = tbl.findall("w:tr", NS)
+    footer_indices = _footer_row_index_set(footer_rows)
+    column_count = table_column_count(tbl)
+    targets: dict[str, object] = {
+        "data_row_indices": [
+            index for index in range(len(rows)) if index not in footer_indices
+        ],
+        "footer_row_indices": [footer_row.row_index for footer_row in footer_rows],
+        "data_left_targets": [],
+        "data_right_targets": [],
+        "footer_left_targets": [],
+        "footer_right_targets": [],
+        "data_left_vmerge_owner_targets": [],
+        "data_right_vmerge_owner_targets": [],
+    }
+    if column_count <= 0:
+        return targets
+
+    for row_index, tr in enumerate(rows):
+        row_is_footer = row_index in footer_indices
+        left_key = "footer_left_targets" if row_is_footer else "data_left_targets"
+        right_key = "footer_right_targets" if row_is_footer else "data_right_targets"
+        row_infos = _row_cell_infos(tr)
+        first_row_single_cell_title = (
+            row_index == 0 and not row_is_footer and len(row_infos) == 1
+        )
+        for info in row_infos:
+            target = {
+                **info,
+                "row_index": row_index,
+            }
+            if int(info["start_col"]) == 0:
+                targets[left_key].append(target)
+            if int(info["end_col"]) == column_count or first_row_single_cell_title:
+                targets[right_key].append(target)
+    return targets
+
+
+def _apply_border_to_targets(
+    targets: list[dict[str, object]],
+    side: str,
+    border_setter,
+    *,
+    rows: list | None = None,
+    include_vmerge_owner: bool = False,
+) -> tuple[int, list[str]]:
+    applied = 0
+    owner_descriptors: list[str] = []
+    seen: set[tuple[int, str]] = set()
+    for target in targets:
+        tc = target["tc"]
+        key = (id(tc), side)
+        if key not in seen:
+            border_setter(_get_or_add_tc_borders(tc), side)
+            seen.add(key)
+            applied += 1
+        if (
+            include_vmerge_owner
+            and rows is not None
+            and str(target["vmerge_state"]) == "continue"
+        ):
+            owner = _find_vmerge_restart_owner_before(
+                rows,
+                int(target["row_index"]),
+                target,
+            )
+            owner_key = (id(owner), side) if owner is not None else None
+            if owner is not None:
+                owner_descriptors.append(
+                    f"r{target['row_index']}c{target['cell_index']}->{side}:restart_owner"
+                )
+                if owner_key not in seen:
+                    border_setter(_get_or_add_tc_borders(owner), side)
+                    seen.add(owner_key)
+                    applied += 1
+    return applied, owner_descriptors
+
+
+def _apply_data_rows_outer_vertical_double_borders(
+    tbl,
+    footer_rows: list,
+) -> dict[str, object]:
+    targets = _outer_vertical_border_targets(tbl, footer_rows)
+    rows = tbl.findall("w:tr", NS)
+    left_count, left_owner_targets = _apply_border_to_targets(
+        targets["data_left_targets"],
+        "left",
+        set_border_double_black,
+        rows=rows,
+        include_vmerge_owner=True,
+    )
+    right_count, right_owner_targets = _apply_border_to_targets(
+        targets["data_right_targets"],
+        "right",
+        set_border_double_black,
+        rows=rows,
+        include_vmerge_owner=True,
+    )
+    return {
+        "data_rows_outer_left_double_applied": left_count > 0,
+        "data_rows_outer_right_double_applied": right_count > 0,
+        "data_rows_outer_left_target_count": len(targets["data_left_targets"]),
+        "data_rows_outer_right_target_count": len(targets["data_right_targets"]),
+        "data_rows_outer_left_vmerge_owner_target_count": len(left_owner_targets),
+        "data_rows_outer_right_vmerge_owner_target_count": len(right_owner_targets),
+    }
+
+
+def _apply_footer_rows_outer_vertical_none_borders(
+    tbl,
+    footer_rows: list,
+) -> dict[str, object]:
+    targets = _outer_vertical_border_targets(tbl, footer_rows)
+    left_count, _ = _apply_border_to_targets(
+        targets["footer_left_targets"],
+        "left",
+        set_border_nil,
+    )
+    right_count, _ = _apply_border_to_targets(
+        targets["footer_right_targets"],
+        "right",
+        set_border_nil,
+    )
+    return {
+        "footer_rows_outer_left_none_applied": left_count > 0,
+        "footer_rows_outer_right_none_applied": right_count > 0,
+        "footer_rows_outer_left_target_count": len(targets["footer_left_targets"]),
+        "footer_rows_outer_right_target_count": len(targets["footer_right_targets"]),
+    }
+
+
 def _border_signature(border) -> str:
     if border is None:
         return "missing"
@@ -783,19 +1015,97 @@ def _is_double_black_border(border) -> bool:
     )
 
 
+def _target_border_values(targets: list[dict[str, object]], side: str) -> list[str]:
+    return [
+        _border_signature(target["tc"].find(f"w:tcPr/w:tcBorders/w:{side}", NS))
+        for target in targets
+    ]
+
+
+def _format_index_list(values: list[int]) -> str:
+    return ",".join(str(value) for value in values) if values else "none"
+
+
+def _format_target_list(targets: list[dict[str, object]]) -> str:
+    return "|".join(_target_descriptor(target) for target in targets) or "none"
+
+
+def _format_border_value_list(values: list[str]) -> str:
+    return "|".join(values) if values else "none"
+
+
+def _verify_outer_vertical_border_policy(tbl, footer_rows: list) -> dict[str, object]:
+    targets = _outer_vertical_border_targets(tbl, footer_rows)
+    data_left_targets = targets["data_left_targets"]
+    data_right_targets = targets["data_right_targets"]
+    footer_left_targets = targets["footer_left_targets"]
+    footer_right_targets = targets["footer_right_targets"]
+
+    data_left_values = _target_border_values(data_left_targets, "left")
+    data_right_values = _target_border_values(data_right_targets, "right")
+    footer_left_values = _target_border_values(footer_left_targets, "left")
+    footer_right_values = _target_border_values(footer_right_targets, "right")
+
+    data_left_ok = all(
+        _is_double_black_border(target["tc"].find("w:tcPr/w:tcBorders/w:left", NS))
+        for target in data_left_targets
+    )
+    data_right_ok = all(
+        _is_double_black_border(target["tc"].find("w:tcPr/w:tcBorders/w:right", NS))
+        for target in data_right_targets
+    )
+    footer_left_ok = all(
+        _is_nil_border(target["tc"].find("w:tcPr/w:tcBorders/w:left", NS))
+        for target in footer_left_targets
+    )
+    footer_right_ok = all(
+        _is_nil_border(target["tc"].find("w:tcPr/w:tcBorders/w:right", NS))
+        for target in footer_right_targets
+    )
+    data_targets_present = bool(targets["data_row_indices"])
+    footer_targets_present = bool(targets["footer_row_indices"])
+    verified = (
+        (not data_targets_present or (bool(data_left_targets) and data_left_ok))
+        and (not data_targets_present or (bool(data_right_targets) and data_right_ok))
+        and (not footer_targets_present or (bool(footer_left_targets) and footer_left_ok))
+        and (not footer_targets_present or (bool(footer_right_targets) and footer_right_ok))
+    )
+    detail = ";".join(
+        [
+            f"data_row_indices={_format_index_list(targets['data_row_indices'])}",
+            f"footer_row_indices={_format_index_list(targets['footer_row_indices'])}",
+            f"data_left_targets={_format_target_list(data_left_targets)}",
+            f"data_right_targets={_format_target_list(data_right_targets)}",
+            f"footer_left_targets={_format_target_list(footer_left_targets)}",
+            f"footer_right_targets={_format_target_list(footer_right_targets)}",
+            f"data_left_border_values={_format_border_value_list(data_left_values)}",
+            f"data_right_border_values={_format_border_value_list(data_right_values)}",
+            f"footer_left_border_values={_format_border_value_list(footer_left_values)}",
+            f"footer_right_border_values={_format_border_value_list(footer_right_values)}",
+        ]
+    )
+    return {
+        "outer_vertical_border_policy_xml_verified": verified,
+        "outer_vertical_border_policy_verify_detail": detail,
+    }
+
+
 def _schema_order_summary(tbl, cells: list) -> dict[str, object]:
     tbl_pr = tbl.find("w:tblPr", NS)
     tbl_borders = tbl.find("w:tblPr/w:tblBorders", NS)
     tc_pr_orders = []
-    valid = _is_child_at_schema_position(tbl_pr, "tblBorders", _TBL_PR_CHILD_ORDER)
+    valid = _is_known_child_order_valid(tbl_pr, _TBL_PR_CHILD_ORDER)
     valid = valid and _is_known_child_order_valid(tbl_borders, _BORDER_SIDE_ORDER)
+
+    for tc_pr in tbl.xpath(".//w:tc/w:tcPr", namespaces=NS):
+        valid = valid and _is_known_child_order_valid(tc_pr, _TC_PR_CHILD_ORDER)
+        tc_borders = tc_pr.find("w:tcBorders", NS)
+        valid = valid and _is_known_child_order_valid(tc_borders, _BORDER_SIDE_ORDER)
 
     for tc in cells:
         tc_pr = tc.find("w:tcPr", NS)
         tc_borders = tc.find("w:tcPr/w:tcBorders", NS)
         tc_pr_orders.append(_child_order_text(tc_pr))
-        valid = valid and _is_child_at_schema_position(tc_pr, "tcBorders", _TC_PR_CHILD_ORDER)
-        valid = valid and _is_known_child_order_valid(tc_borders, _BORDER_SIDE_ORDER)
 
     return {
         "table_border_schema_order_valid": valid,
@@ -1024,6 +1334,18 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         "table_bottom_double_border_verify_detail": "",
         "footer_terminal_bottom_none_applied": False,
         "footer_terminal_bottom_none_cell_count": 0,
+        "data_rows_outer_left_double_applied": False,
+        "data_rows_outer_right_double_applied": False,
+        "data_rows_outer_left_target_count": 0,
+        "data_rows_outer_right_target_count": 0,
+        "data_rows_outer_left_vmerge_owner_target_count": 0,
+        "data_rows_outer_right_vmerge_owner_target_count": 0,
+        "footer_rows_outer_left_none_applied": False,
+        "footer_rows_outer_right_none_applied": False,
+        "footer_rows_outer_left_target_count": 0,
+        "footer_rows_outer_right_target_count": 0,
+        "outer_vertical_border_policy_xml_verified": False,
+        "outer_vertical_border_policy_verify_detail": "",
         "last_row_physical_cell_count": 0,
         "last_row_grid_span_sum": 0,
         "last_row_vmerge_states": "none",
@@ -1063,36 +1385,46 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         result["footer_top_row_index"] = footer_rows[0].row_index
         result.update(apply_footer_block_format(footer_rows))
         none_cell_count = _apply_footer_terminal_bottom_none(tbl, footer_rows)
+        result["table_bottom_border_mode"] = "footer_none"
+        result["table_bottom_border_cell_count"] = none_cell_count
+        result["footer_terminal_bottom_none_applied"] = none_cell_count > 0
+        result["footer_terminal_bottom_none_cell_count"] = none_cell_count
+        result["table_bottom_double_border_applied"] = False
+        result["table_bottom_double_border_cell_count"] = 0
+    else:
+        bottom_cell_count = _apply_rendered_bottom_double_black_border(tbl)
+        result["table_bottom_border_mode"] = (
+            "data_double" if bottom_cell_count > 0 else "not_applied"
+        )
+        result["table_bottom_border_cell_count"] = bottom_cell_count
+        result["table_bottom_double_border_applied"] = bottom_cell_count > 0
+        result["table_bottom_double_border_cell_count"] = bottom_cell_count
+
+    result.update(_apply_data_rows_outer_vertical_double_borders(tbl, footer_rows))
+    result.update(_apply_footer_rows_outer_vertical_none_borders(tbl, footer_rows))
+
+    _normalize_table_border_related_schema_order(tbl)
+
+    if footer_rows:
         verified, detail, diagnostics = _verify_footer_terminal_bottom_none(
             tbl,
             footer_rows,
         )
         detail = f"table_bottom_border_mode=footer_none;{detail}"
         result.update(diagnostics)
-        result["table_bottom_border_mode"] = "footer_none"
-        result["table_bottom_border_cell_count"] = none_cell_count
         result["table_bottom_border_xml_verified"] = verified
         result["table_bottom_border_verify_detail"] = detail
-        result["footer_terminal_bottom_none_applied"] = none_cell_count > 0
-        result["footer_terminal_bottom_none_cell_count"] = none_cell_count
-        result["table_bottom_double_border_applied"] = False
-        result["table_bottom_double_border_cell_count"] = 0
         result["table_bottom_double_border_xml_verified"] = False
         result["table_bottom_double_border_verify_detail"] = detail
     else:
-        bottom_cell_count = _apply_rendered_bottom_double_black_border(tbl)
         verified, detail, diagnostics = _verify_data_bottom_double_black_border(tbl)
         detail = f"table_bottom_border_mode=data_double;{detail}"
         result.update(diagnostics)
-        result["table_bottom_border_mode"] = (
-            "data_double" if bottom_cell_count > 0 else "not_applied"
-        )
-        result["table_bottom_border_cell_count"] = bottom_cell_count
         result["table_bottom_border_xml_verified"] = verified
         result["table_bottom_border_verify_detail"] = detail
-        result["table_bottom_double_border_applied"] = bottom_cell_count > 0
-        result["table_bottom_double_border_cell_count"] = bottom_cell_count
         result["table_bottom_double_border_xml_verified"] = verified
         result["table_bottom_double_border_verify_detail"] = detail
+
+    result.update(_verify_outer_vertical_border_policy(tbl, footer_rows))
 
     return result

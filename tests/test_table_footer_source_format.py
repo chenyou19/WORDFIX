@@ -168,6 +168,17 @@ def footer_options(**overrides) -> ProcessOptions:
     return ProcessOptions(**base)
 
 
+def set_cell_grid_span(tc, span: int) -> None:
+    tc_pr = tc.find("w:tcPr", NS)
+    if tc_pr is None:
+        tc_pr = etree.Element(qn("tcPr"))
+        tc.insert(0, tc_pr)
+    grid_span = tc_pr.find("w:gridSpan", NS)
+    if grid_span is None:
+        grid_span = etree.SubElement(tc_pr, qn("gridSpan"))
+    grid_span.set(qn("val"), str(span))
+
+
 # ----------------------------------------------------------------------------
 # Border primitives: local update must not disturb the other sides.
 # ----------------------------------------------------------------------------
@@ -390,9 +401,9 @@ class FooterFormatUnitTests(unittest.TestCase):
         tbl = footer_table()
         apply_table_footer_source_format(tbl)
         title = cell_at(tbl, 0, 0)
-        self.assertTrue(is_nil(tc_border(title, "top")))
-        self.assertTrue(is_nil(tc_border(title, "left")))
-        self.assertTrue(is_nil(tc_border(title, "right")))
+        self.assertTrue(is_double_black(tc_border(title, "top")))
+        self.assertTrue(is_double_black(tc_border(title, "left")))
+        self.assertTrue(is_double_black(tc_border(title, "right")))
         self.assertTrue(is_double_black(tc_border(title, "bottom")))
 
     def test_base_period_cell_formatting(self):
@@ -473,7 +484,172 @@ class FooterFormatUnitTests(unittest.TestCase):
         )
         result = apply_table_footer_source_format(tbl)
         self.assertFalse(result["first_row_single_cell_border_adjusted"])
-        self.assertIsNone(cell_at(tbl, 0, 0).find("w:tcPr/w:tcBorders", NS))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 0, 0), "left")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 0, 4), "right")))
+
+
+class OuterVerticalBorderPolicyTests(unittest.TestCase):
+    def test_no_footer_data_rows_get_direct_outer_vertical_double_borders(self):
+        tbl = make_table(
+            [
+                ["報表標題"],
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["土地", "100", "50%", "1", "ok"],
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+
+        for row_index, tr in enumerate(tbl.findall("w:tr", NS)):
+            cells = tr.findall("w:tc", NS)
+            self.assertTrue(is_double_black(tc_border(cells[0], "left")), row_index)
+            self.assertTrue(is_double_black(tc_border(cells[-1], "right")), row_index)
+
+        for side in ("top", "left", "right", "bottom"):
+            self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
+        title = cell_at(tbl, 0, 0)
+        self.assertTrue(is_double_black(tc_border(title, "top")))
+        self.assertTrue(is_double_black(tc_border(title, "left")))
+        self.assertTrue(is_double_black(tc_border(title, "right")))
+        self.assertTrue(result["data_rows_outer_left_double_applied"])
+        self.assertTrue(result["data_rows_outer_right_double_applied"])
+        self.assertEqual(result["data_rows_outer_left_target_count"], 3)
+        self.assertEqual(result["data_rows_outer_right_target_count"], 3)
+        self.assertEqual(result["footer_rows_outer_left_target_count"], 0)
+        self.assertTrue(result["outer_vertical_border_policy_xml_verified"])
+        self.assertTrue(result["table_border_schema_order_valid"])
+
+    def test_single_footer_boundaries_are_nil_and_not_counted_as_data_targets(self):
+        tbl = footer_table()
+        result = apply_table_footer_source_format(tbl)
+
+        for col in range(5):
+            self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, col), "top")), col)
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "left")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 4), "right")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 4), "bottom")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "left")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 4), "right")))
+        self.assertEqual(result["table_bottom_border_mode"], "footer_none")
+        self.assertEqual(result["data_rows_outer_left_target_count"], 3)
+        self.assertEqual(result["data_rows_outer_right_target_count"], 3)
+        self.assertEqual(result["footer_rows_outer_left_target_count"], 1)
+        self.assertEqual(result["footer_rows_outer_right_target_count"], 1)
+        self.assertTrue(result["footer_rows_outer_left_none_applied"])
+        self.assertTrue(result["footer_rows_outer_right_none_applied"])
+        self.assertTrue(result["outer_vertical_border_policy_xml_verified"])
+        self.assertIn(
+            "footer_left_border_values=nil/missing/missing",
+            result["outer_vertical_border_policy_verify_detail"],
+        )
+
+    def test_multiple_footer_rows_all_have_outer_boundaries_nil(self):
+        tbl = make_table(
+            [
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["土地", "100", "50%", "1", "ok"],
+                ["註1：a", "", "", "", ""],
+                ["註2：b", "", "", "", ""],
+            ]
+        )
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertEqual(result["footer_row_count"], 2)
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 2, 0), "top")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "top")))
+        for row in (2, 3):
+            self.assertTrue(is_nil(tc_border(cell_at(tbl, row, 0), "left")), row)
+            self.assertTrue(is_nil(tc_border(cell_at(tbl, row, 4), "right")), row)
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "bottom")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "left")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 4), "right")))
+        self.assertEqual(result["footer_rows_outer_left_target_count"], 2)
+        self.assertEqual(result["footer_rows_outer_right_target_count"], 2)
+        self.assertTrue(result["outer_vertical_border_policy_xml_verified"])
+
+    def test_gridspan_footer_uses_logical_edges(self):
+        tbl = make_table(
+            [
+                ["h1", "h2", "h3", "h4", "h5", "h6"],
+                ["d1", "d2", "d3", "d4", "d5", "d6"],
+                ["基期：100年", "中間說明", "資料來源：本所"],
+            ]
+        )
+        set_cell_grid_span(cell_at(tbl, 2, 0), 2)
+        set_cell_grid_span(cell_at(tbl, 2, 1), 2)
+        set_cell_grid_span(cell_at(tbl, 2, 2), 2)
+
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertEqual(result["last_row_grid_span_sum"], 6)
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 2, 0), "left")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 2, 2), "right")))
+        self.assertIsNone(tc_border(cell_at(tbl, 2, 1), "left"))
+        self.assertIsNone(tc_border(cell_at(tbl, 2, 1), "right"))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "left")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 5), "right")))
+        self.assertEqual(result["footer_rows_outer_left_target_count"], 1)
+        self.assertEqual(result["footer_rows_outer_right_target_count"], 1)
+        self.assertTrue(result["outer_vertical_border_policy_xml_verified"])
+
+    def test_vmerge_data_and_footer_edges_preserve_merge_xml(self):
+        tbl = make_vmerge_table(last_row_text="註：垂直合併說明")
+        result = apply_table_footer_source_format(tbl)
+
+        owner = cell_at(tbl, 0, 0)
+        continuation = cell_at(tbl, 2, 0)
+        self.assertTrue(is_double_black(tc_border(owner, "left")))
+        self.assertTrue(is_nil(tc_border(continuation, "left")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 2, 2), "right")))
+        self.assertEqual(owner.find("w:tcPr/w:vMerge", NS).get(qn("val")), "restart")
+        self.assertIsNone(continuation.find("w:tcPr/w:vMerge", NS).get(qn("val")))
+        self.assertEqual(result["data_rows_outer_left_vmerge_owner_target_count"], 1)
+        self.assertTrue(result["outer_vertical_border_policy_xml_verified"])
+
+    def test_full_schema_order_regression_reorders_known_children(self):
+        tbl = make_table(
+            [
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["土地", "100", "50%", "1", "ok"],
+            ]
+        )
+        tbl_pr = etree.Element(qn("tblPr"))
+        tbl.insert(0, tbl_pr)
+        etree.SubElement(tbl_pr, qn("tblW"))
+        etree.SubElement(tbl_pr, qn("tblBorders"))
+        etree.SubElement(tbl_pr, qn("tblLayout"))
+        etree.SubElement(tbl_pr, qn("tblCellMar"))
+        etree.SubElement(tbl_pr, qn("tblLook"))
+        etree.SubElement(tbl_pr, qn("jc"))
+        unknown = etree.SubElement(tbl_pr, qn("unknownTblPrChild"))
+        unknown.set(qn("val"), "kept")
+
+        tc_pr = etree.Element(qn("tcPr"))
+        cell_at(tbl, 1, 0).insert(0, tc_pr)
+        grid_span = etree.SubElement(tc_pr, qn("gridSpan"))
+        grid_span.set(qn("val"), "1")
+        etree.SubElement(tc_pr, qn("tcBorders"))
+        no_wrap = etree.SubElement(tc_pr, qn("noWrap"))
+        no_wrap.set(qn("val"), "1")
+        etree.SubElement(tc_pr, qn("vAlign"))
+        unknown_tc = etree.SubElement(tc_pr, qn("unknownTcPrChild"))
+        unknown_tc.set(qn("val"), "kept")
+
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertTrue(result["table_border_schema_order_valid"])
+        tbl_order = child_order(tbl_pr)
+        self.assertLess(tbl_order.index("tblW"), tbl_order.index("jc"))
+        self.assertLess(tbl_order.index("jc"), tbl_order.index("tblBorders"))
+        self.assertLess(tbl_order.index("tblBorders"), tbl_order.index("tblLayout"))
+        self.assertEqual(len(tbl_pr.findall("w:tblBorders", NS)), 1)
+        self.assertEqual(tbl_pr.find("w:unknownTblPrChild", NS).get(qn("val")), "kept")
+
+        tc_order = child_order(tc_pr)
+        self.assertLess(tc_order.index("gridSpan"), tc_order.index("tcBorders"))
+        self.assertLess(tc_order.index("tcBorders"), tc_order.index("noWrap"))
+        self.assertLess(tc_order.index("tcBorders"), tc_order.index("vAlign"))
+        self.assertEqual(len(tc_pr.findall("w:tcBorders", NS)), 1)
+        self.assertEqual(tc_pr.find("w:unknownTcPrChild", NS).get(qn("val")), "kept")
 
 
 class FooterFormatNormalizeTests(unittest.TestCase):
@@ -581,11 +757,11 @@ class FooterFormatOrderTests(unittest.TestCase):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
         self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
 
-        # First-row single cell top/left/right nil survive the outer frame.
+        # First-row single cell keeps the outer frame instead of clearing it.
         title = cell_at(tbl, 0, 0)
-        self.assertTrue(is_nil(tc_border(title, "top")))
-        self.assertTrue(is_nil(tc_border(title, "left")))
-        self.assertTrue(is_nil(tc_border(title, "right")))
+        self.assertTrue(is_double_black(tc_border(title, "top")))
+        self.assertTrue(is_double_black(tc_border(title, "left")))
+        self.assertTrue(is_double_black(tc_border(title, "right")))
         self.assertTrue(is_double_black(tc_border(title, "bottom")))
 
         # Last-row footer cells: left/right/bottom nil survive the outer frame.
@@ -611,6 +787,23 @@ class FooterFormatOrderTests(unittest.TestCase):
         self.assertTrue(record["table_bottom_border_xml_verified"])
         self.assertTrue(record["footer_terminal_bottom_none_applied"])
         self.assertEqual(record["footer_terminal_bottom_none_cell_count"], 5)
+        self.assertTrue(record["data_rows_outer_left_double_applied"])
+        self.assertTrue(record["data_rows_outer_right_double_applied"])
+        self.assertEqual(record["data_rows_outer_left_target_count"], 3)
+        self.assertEqual(record["data_rows_outer_right_target_count"], 3)
+        self.assertTrue(record["footer_rows_outer_left_none_applied"])
+        self.assertTrue(record["footer_rows_outer_right_none_applied"])
+        self.assertEqual(record["footer_rows_outer_left_target_count"], 1)
+        self.assertEqual(record["footer_rows_outer_right_target_count"], 1)
+        self.assertTrue(record["outer_vertical_border_policy_xml_verified"])
+        self.assertIn(
+            "data_row_indices=0,1,2",
+            record["outer_vertical_border_policy_verify_detail"],
+        )
+        self.assertIn(
+            "footer_row_indices=3",
+            record["outer_vertical_border_policy_verify_detail"],
+        )
         self.assertFalse(record["table_bottom_double_border_applied"])
         self.assertEqual(record["table_bottom_double_border_cell_count"], 0)
         self.assertFalse(record["table_bottom_double_border_xml_verified"])
@@ -985,10 +1178,10 @@ class FooterNoteCellUnitTests(unittest.TestCase):
             result = apply_table_footer_source_format(tbl)
             self.assertEqual(result["footer_note_cells_adjusted"], 0, text)
             # The cell keeps the whole-table 11 pt and gets only the data-table
-            # bottom edge, not footer-cell-specific formatting.
+            # bottom plus the data-row outer edge, not footer-cell-specific formatting.
             self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["22"], text)
             self.assertIsNone(tc_border(cell_at(tbl, 3, 0), "top"), text)
-            self.assertIsNone(tc_border(cell_at(tbl, 3, 0), "left"), text)
+            self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, 0), "left")), text)
             self.assertIsNone(tc_border(cell_at(tbl, 3, 0), "right"), text)
             self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, 0), "bottom")), text)
 
@@ -1324,9 +1517,10 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         # Borders applied to the footer cells above the last row too.
         self.assertTrue(is_double_black(tc_border(cell_at(tbl, 2, 0), "top")))
         self.assertTrue(is_nil(tc_border(cell_at(tbl, 2, 0), "bottom")))
-        # Row 1 (data) untouched.
+        # Row 1 is a data row, so it receives the outer vertical frame.
         self.assertEqual(cell_run_sizes(cell_at(tbl, 1, 0)), ["22"])
-        self.assertIsNone(cell_at(tbl, 1, 0).find("w:tcPr/w:tcBorders", NS))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "left")))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 4), "right")))
 
         # footer_cell_matches is top-to-bottom: row 2 (note) first, then row 3.
         self.assertEqual(len(result["footer_cell_matches"]), 2)
@@ -1361,7 +1555,7 @@ class FooterContiguousBottomScanTests(unittest.TestCase):
         self.assertEqual(result["footer_note_cell_matches"], ["base_period"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["20"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 1, 0)), ["22"])
-        self.assertIsNone(cell_at(tbl, 1, 0).find("w:tcPr/w:tcBorders", NS))
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "left")))
 
     def test_blank_row_stops_the_scan(self):
         tbl = make_table(
@@ -1462,8 +1656,8 @@ class FooterBlockSeparatorBorderTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(cell_at(tbl, 1, 0), "top")))
         self.assertTrue(is_nil(tc_border(cell_at(tbl, 2, 0), "top")))
         self.assertEqual(result["footer_internal_top_borders_cleared"], 1)
-        # The data row above the block is untouched.
-        self.assertIsNone(cell_at(tbl, 0, 0).find("w:tcPr/w:tcBorders", NS))
+        # The data row above the block keeps its outer vertical frame.
+        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 0, 0), "left")))
 
     def test_three_consecutive_notes_only_first_row_has_top_border(self):
         tbl = make_table(

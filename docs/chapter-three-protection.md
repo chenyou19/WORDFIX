@@ -95,7 +95,7 @@
 - 若全域 `fix_table_layout=False`，不會因為 footer 功能開啟而強制套用。
 - 第一張表、巢狀表、小表格與特殊顏色跳過表仍維持既有跳過行為，不會因本功能而被重新處理。
 
-成功套用時，`table_log` 會同時顯示 `table_footer_note_source_format_should_apply=true`、`table_footer_note_source_format_applied=true`，並回寫 `table_bottom_border_mode`、`table_bottom_border_xml_verified`、`table_border_schema_order_valid` 等底框 XML 驗證欄位；舊相容欄位 `table_bottom_double_border_*` 只代表一般資料表的 `data_double` mode。
+成功套用時，`table_log` 會同時顯示 `table_footer_note_source_format_should_apply=true`、`table_footer_note_source_format_applied=true`，並回寫 `table_bottom_border_mode`、`table_bottom_border_xml_verified`、`outer_vertical_border_policy_xml_verified`、`table_border_schema_order_valid` 等 XML 驗證欄位；舊相容欄位 `table_bottom_double_border_*` 只代表一般資料表的 `data_double` mode。
 
 ## 已移除的「參、不要調整」整章保護（相容說明）
 
