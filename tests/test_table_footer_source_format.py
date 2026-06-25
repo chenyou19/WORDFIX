@@ -103,7 +103,7 @@ def tc_border(tc, side: str):
     return tc.find(f"w:tcPr/w:tcBorders/w:{side}", NS)
 
 
-def test_tc_borders(tc):
+def make_tc_borders(tc):
     tc_pr = tc.find("w:tcPr", NS)
     if tc_pr is None:
         tc_pr = etree.Element(qn("tcPr"))
@@ -125,6 +125,19 @@ def is_double_black(border) -> bool:
 
 def is_nil(border) -> bool:
     return border is not None and border.get(qn("val")) == "nil"
+
+
+def child_order(element) -> list[str]:
+    if element is None:
+        return []
+    return [etree.QName(child).localname for child in element]
+
+
+def assert_child_before(testcase: unittest.TestCase, parent, first: str, second: str) -> None:
+    order = child_order(parent)
+    testcase.assertIn(first, order)
+    testcase.assertIn(second, order)
+    testcase.assertLess(order.index(first), order.index(second), order)
 
 
 def cell_run_sizes(tc) -> list[str | None]:
@@ -224,9 +237,11 @@ class FooterFormatUnitTests(unittest.TestCase):
 
     def test_table_outer_frame_is_double_black(self):
         tbl = footer_table()
-        apply_table_footer_source_format(tbl)
-        for side in ("top", "bottom", "left", "right"):
+        result = apply_table_footer_source_format(tbl)
+        for side in ("top", "left", "right"):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
+        self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
+        self.assertEqual(result["table_bottom_border_mode"], "footer_none")
 
     def test_last_row_cell_bottom_nil_is_overridden_and_xml_verified(self):
         tbl = make_table(
@@ -237,7 +252,7 @@ class FooterFormatUnitTests(unittest.TestCase):
             ]
         )
         for tc in tbl.findall("w:tr", NS)[-1].findall("w:tc", NS):
-            set_border_nil(test_tc_borders(tc), "bottom")
+            set_border_nil(make_tc_borders(tc), "bottom")
 
         result = apply_table_footer_source_format(tbl)
 
@@ -247,6 +262,10 @@ class FooterFormatUnitTests(unittest.TestCase):
             self.assertTrue(is_double_black(bottom))
             self.assertEqual(bottom.get(qn("space")), "0")
         self.assertFalse(result["footer_rows_detected"])
+        self.assertEqual(result["table_bottom_border_mode"], "data_double")
+        self.assertEqual(result["table_bottom_border_cell_count"], 5)
+        self.assertTrue(result["table_bottom_border_xml_verified"])
+        self.assertTrue(result["table_border_schema_order_valid"])
         self.assertTrue(result["table_bottom_double_border_applied"])
         self.assertEqual(result["table_bottom_double_border_cell_count"], 5)
         self.assertTrue(result["table_bottom_double_border_xml_verified"])
@@ -254,6 +273,118 @@ class FooterFormatUnitTests(unittest.TestCase):
             "tbl_bottom=double/4/000000",
             result["table_bottom_double_border_verify_detail"],
         )
+
+    def test_normal_table_bottom_border_uses_schema_order_with_existing_layout(self):
+        tbl = make_table(
+            [
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["土地", "100", "50%", "1", "ok"],
+                ["建物", "200", "80%", "2", "done"],
+            ]
+        )
+        tbl_pr = etree.Element(qn("tblPr"))
+        tbl.insert(0, tbl_pr)
+        etree.SubElement(tbl_pr, qn("tblW"))
+        etree.SubElement(tbl_pr, qn("jc"))
+        etree.SubElement(tbl_pr, qn("tblLayout"))
+
+        for tc in tbl.findall("w:tr", NS)[-1].findall("w:tc", NS):
+            tc_pr = etree.Element(qn("tcPr"))
+            tc.insert(0, tc_pr)
+            etree.SubElement(tc_pr, qn("tcW"))
+            etree.SubElement(tc_pr, qn("vAlign"))
+            set_border_nil(make_tc_borders(tc), "bottom")
+
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertEqual(result["table_bottom_border_mode"], "data_double")
+        self.assertTrue(result["table_bottom_border_xml_verified"])
+        self.assertTrue(result["table_border_schema_order_valid"])
+        assert_child_before(self, tbl.find("w:tblPr", NS), "tblBorders", "tblLayout")
+        for tc in tbl.findall("w:tr", NS)[-1].findall("w:tc", NS):
+            tc_pr = tc.find("w:tcPr", NS)
+            assert_child_before(self, tc_pr, "tcBorders", "vAlign")
+            self.assertEqual(len(tc_pr.findall("w:tcBorders", NS)), 1)
+            self.assertTrue(is_double_black(tc_border(tc, "bottom")))
+
+    def test_existing_wrong_border_container_order_is_relocated(self):
+        tbl = make_table(
+            [
+                ["項目", "金額", "比率", "排名", "備註"],
+                ["土地", "100", "50%", "1", "ok"],
+            ]
+        )
+        tbl_pr = etree.Element(qn("tblPr"))
+        tbl.insert(0, tbl_pr)
+        etree.SubElement(tbl_pr, qn("tblLayout"))
+        etree.SubElement(tbl_pr, qn("tblBorders"))
+        tc = cell_at(tbl, 1, 0)
+        tc_pr = etree.Element(qn("tcPr"))
+        tc.insert(0, tc_pr)
+        etree.SubElement(tc_pr, qn("vAlign"))
+        etree.SubElement(tc_pr, qn("tcBorders"))
+
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertTrue(result["table_border_schema_order_valid"])
+        assert_child_before(self, tbl.find("w:tblPr", NS), "tblBorders", "tblLayout")
+        assert_child_before(self, tc_pr, "tcBorders", "vAlign")
+        self.assertEqual(len(tbl_pr.findall("w:tblBorders", NS)), 1)
+        self.assertEqual(len(tc_pr.findall("w:tcBorders", NS)), 1)
+
+    def test_gridspan_last_row_diagnostics_keep_full_bottom_edge(self):
+        tbl = make_table(
+            [
+                ["h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8"],
+                ["d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8"],
+                ["span", "c3", "c4", "c5", "c6", "c7", "c8"],
+            ]
+        )
+        first_last_cell = cell_at(tbl, 2, 0)
+        tc_pr = etree.Element(qn("tcPr"))
+        first_last_cell.insert(0, tc_pr)
+        grid_span = etree.SubElement(tc_pr, qn("gridSpan"))
+        grid_span.set(qn("val"), "2")
+
+        result = apply_table_footer_source_format(tbl)
+
+        self.assertFalse(result["footer_rows_detected"])
+        self.assertEqual(result["table_bottom_border_mode"], "data_double")
+        self.assertEqual(result["last_row_physical_cell_count"], 7)
+        self.assertEqual(result["last_row_grid_span_sum"], 8)
+        self.assertEqual(result["last_row_bottom_edge_target_count"], 7)
+        self.assertTrue(result["table_bottom_border_xml_verified"])
+        self.assertTrue(result["table_border_schema_order_valid"])
+        for tc in tbl.findall("w:tr", NS)[-1].findall("w:tc", NS):
+            self.assertTrue(is_double_black(tc_border(tc, "bottom")))
+
+    def test_vmerge_data_bottom_edge_touches_continuation_and_owner(self):
+        tbl = make_vmerge_table(last_row_text="value")
+        result = apply_table_footer_source_format(tbl)
+
+        owner = cell_at(tbl, 0, 0)
+        continuation = cell_at(tbl, 2, 0)
+        self.assertEqual(result["table_bottom_border_mode"], "data_double")
+        self.assertIn("continue", result["last_row_vmerge_states"])
+        self.assertEqual(result["last_row_bottom_edge_target_count"], 4)
+        self.assertTrue(is_double_black(tc_border(owner, "bottom")))
+        self.assertTrue(is_double_black(tc_border(continuation, "bottom")))
+        self.assertEqual(owner.find("w:tcPr/w:vMerge", NS).get(qn("val")), "restart")
+        self.assertIsNone(continuation.find("w:tcPr/w:vMerge", NS).get(qn("val")))
+
+    def test_vmerge_footer_terminal_bottom_none_preserves_merge_xml(self):
+        tbl = make_vmerge_table(last_row_text="註：垂直合併說明")
+        result = apply_table_footer_source_format(tbl)
+
+        continuation = cell_at(tbl, 2, 0)
+        note_cell = cell_at(tbl, 2, 1)
+        self.assertEqual(result["table_bottom_border_mode"], "footer_none")
+        self.assertTrue(result["table_bottom_border_xml_verified"])
+        self.assertEqual(result["footer_terminal_bottom_none_cell_count"], 3)
+        self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
+        self.assertTrue(is_nil(tc_border(continuation, "bottom")))
+        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
+        self.assertIsNone(continuation.find("w:tcPr/w:vMerge", NS).get(qn("val")))
 
     def test_first_row_single_cell_borders(self):
         tbl = footer_table()
@@ -273,7 +404,8 @@ class FooterFormatUnitTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(cell, "top")))
         self.assertTrue(is_nil(tc_border(cell, "left")))
         self.assertTrue(is_nil(tc_border(cell, "right")))
-        self.assertTrue(is_double_black(tc_border(cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(cell, "bottom")))
+        self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
 
     def test_data_source_cell_formatting(self):
         tbl = footer_table()
@@ -284,7 +416,8 @@ class FooterFormatUnitTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(cell, "top")))
         self.assertTrue(is_nil(tc_border(cell, "left")))
         self.assertTrue(is_nil(tc_border(cell, "right")))
-        self.assertTrue(is_double_black(tc_border(cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(cell, "bottom")))
+        self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
 
     def test_non_matching_last_row_cell_is_left_alone(self):
         tbl = footer_table()
@@ -294,11 +427,11 @@ class FooterFormatUnitTests(unittest.TestCase):
         self.assertEqual(cell_run_sizes(other), ["22"])
         # ...but the separator top border spans the WHOLE top footer row.
         self.assertTrue(is_double_black(tc_border(other, "top")))
-        # No left/right override on the unmatched cell; bottom is the final
-        # rendered table edge applied to every last-row cell.
+        # No left/right override on the unmatched cell; bottom is still cleared
+        # because every physical cell in the terminal footer row must be borderless.
         self.assertIsNone(tc_border(other, "left"))
         self.assertIsNone(tc_border(other, "right"))
-        self.assertTrue(is_double_black(tc_border(other, "bottom")))
+        self.assertTrue(is_nil(tc_border(other, "bottom")))
 
     def test_empty_paragraph_without_run_does_not_crash(self):
         tbl = make_table(
@@ -374,9 +507,10 @@ class FooterFormatBorderPreservationTests(unittest.TestCase):
 
         apply_table_footer_source_format(tbl)
 
-        # Outer frame still double black.
-        for side in ("top", "bottom", "left", "right"):
+        # Outer frame keeps top/left/right double; footer mode clears bottom.
+        for side in ("top", "left", "right"):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
+        self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
         # Inside gridlines are not a rule target, so they are preserved.
         self.assertTrue(is_double_black(tbl_border(tbl, "insideH")))
         self.assertTrue(is_double_black(tbl_border(tbl, "insideV")))
@@ -395,13 +529,14 @@ class FooterFormatBorderPreservationTests(unittest.TestCase):
 
         apply_table_footer_source_format(tbl)
 
-        for side in ("top", "left", "bottom", "right"):
+        for side in ("top", "left", "right"):
             self.assertTrue(is_double_black(tc_border(other, side)), side)
+        self.assertTrue(is_nil(tc_border(other, "bottom")))
 
     def test_matched_cell_pre_existing_top_not_destroyed_by_nil_edges(self):
         # A matched 基期 cell with a pre-existing double-black top must keep a
-        # double-black top (rule sets top double) while left/right are cleared;
-        # bottom is restored by the final rendered table edge step.
+        # double-black top (rule sets top double) while left/right/bottom are
+        # cleared for the terminal footer row.
         tbl = footer_table()
         base_cell = cell_at(tbl, 3, 0)
         tc_pr = etree.SubElement(base_cell, qn("tcPr"))
@@ -417,7 +552,7 @@ class FooterFormatBorderPreservationTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(base_cell, "top")))
         self.assertTrue(is_nil(tc_border(base_cell, "left")))
         self.assertTrue(is_nil(tc_border(base_cell, "right")))
-        self.assertTrue(is_double_black(tc_border(base_cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(base_cell, "bottom")))
 
 
 # ----------------------------------------------------------------------------
@@ -441,9 +576,10 @@ class FooterFormatOrderTests(unittest.TestCase):
         self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["20"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 2)), ["20"])
 
-        # Outer frame double black.
-        for side in ("top", "bottom", "left", "right"):
+        # Outer frame keeps top/left/right double; footer terminal bottom is nil.
+        for side in ("top", "left", "right"):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
+        self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
 
         # First-row single cell top/left/right nil survive the outer frame.
         title = cell_at(tbl, 0, 0)
@@ -452,14 +588,13 @@ class FooterFormatOrderTests(unittest.TestCase):
         self.assertTrue(is_nil(tc_border(title, "right")))
         self.assertTrue(is_double_black(tc_border(title, "bottom")))
 
-        # Last-row footer cells: left/right nil survive the outer frame; bottom
-        # is restored as the visible black double table edge. Alignment overrides
-        # the centered content from layout formatting.
+        # Last-row footer cells: left/right/bottom nil survive the outer frame.
+        # Alignment overrides the centered content from layout formatting.
         base_cell = cell_at(tbl, 3, 0)
         self.assertEqual(cell_paragraph_alignments(base_cell), ["left"])
         self.assertTrue(is_nil(tc_border(base_cell, "left")))
         self.assertTrue(is_nil(tc_border(base_cell, "right")))
-        self.assertTrue(is_double_black(tc_border(base_cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(base_cell, "bottom")))
         self.assertTrue(is_double_black(tc_border(base_cell, "top")))
 
         source_cell = cell_at(tbl, 3, 2)
@@ -471,12 +606,21 @@ class FooterFormatOrderTests(unittest.TestCase):
         self.assertTrue(record["table_footer_note_source_format_enabled"])
         self.assertTrue(record["table_footer_note_source_format_applied"])
         self.assertTrue(record["outer_double_border_applied_by_footer_source_format"])
-        self.assertTrue(record["table_bottom_double_border_applied"])
-        self.assertEqual(record["table_bottom_double_border_cell_count"], 5)
-        self.assertTrue(record["table_bottom_double_border_xml_verified"])
+        self.assertEqual(record["table_bottom_border_mode"], "footer_none")
+        self.assertEqual(record["table_bottom_border_cell_count"], 5)
+        self.assertTrue(record["table_bottom_border_xml_verified"])
+        self.assertTrue(record["footer_terminal_bottom_none_applied"])
+        self.assertEqual(record["footer_terminal_bottom_none_cell_count"], 5)
+        self.assertFalse(record["table_bottom_double_border_applied"])
+        self.assertEqual(record["table_bottom_double_border_cell_count"], 0)
+        self.assertFalse(record["table_bottom_double_border_xml_verified"])
+        self.assertEqual(record["last_row_physical_cell_count"], 5)
+        self.assertEqual(record["last_row_grid_span_sum"], 5)
+        self.assertEqual(record["last_row_bottom_edge_target_count"], 5)
+        self.assertTrue(record["table_border_schema_order_valid"])
         self.assertIn(
-            "last_row_tc_bottoms=double/4/000000",
-            record["table_bottom_double_border_verify_detail"],
+            "last_row_tc_bottoms=nil/missing/missing",
+            record["table_bottom_border_verify_detail"],
         )
         self.assertTrue(record["first_row_single_cell_border_adjusted"])
         self.assertEqual(record["footer_base_period_cells_adjusted"], 1)
@@ -623,8 +767,10 @@ class FooterFormatSkipLogicTests(unittest.TestCase):
         self.assertTrue(record["chapter_three_table_color_skipped"])
         self.assertTrue(record["table_footer_note_source_format_should_apply"])
         self.assertTrue(record["table_footer_note_source_format_applied"])
-        self.assertTrue(record["table_bottom_double_border_applied"])
-        self.assertTrue(record["table_bottom_double_border_xml_verified"])
+        self.assertEqual(record["table_bottom_border_mode"], "footer_none")
+        self.assertTrue(record["table_bottom_border_xml_verified"])
+        self.assertFalse(record["table_bottom_double_border_applied"])
+        self.assertFalse(record["table_bottom_double_border_xml_verified"])
         self.assertEqual(record["table_footer_note_source_format_skipped_reason"], "none")
         self.assertIsNone(tbl.find("w:tblPr/w:tblW", NS))
         self.assertIsNone(tbl.find("w:tblPr/w:tblLayout", NS))
@@ -661,15 +807,18 @@ class FooterFormatSkipLogicTests(unittest.TestCase):
         self.assertTrue(record["chapter_three_table_color_skipped"])
         self.assertEqual(len(summary.table_footer_source_format_records), 1)
         self.assertTrue(record["table_footer_note_source_format_applied"])
-        self.assertTrue(record["table_bottom_double_border_applied"])
-        self.assertEqual(record["table_bottom_double_border_cell_count"], 5)
-        self.assertTrue(record["table_bottom_double_border_xml_verified"])
+        self.assertEqual(record["table_bottom_border_mode"], "footer_none")
+        self.assertEqual(record["table_bottom_border_cell_count"], 5)
+        self.assertTrue(record["table_bottom_border_xml_verified"])
+        self.assertFalse(record["table_bottom_double_border_applied"])
+        self.assertEqual(record["table_bottom_double_border_cell_count"], 0)
+        self.assertFalse(record["table_bottom_double_border_xml_verified"])
         self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["20"])
         self.assertEqual(cell_paragraph_alignments(cell_at(tbl, 3, 0)), ["left"])
         self.assertEqual(cell_paragraph_alignments(cell_at(tbl, 3, 2)), ["right"])
         self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "left")))
         self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "right")))
-        self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, 0), "bottom")))
+        self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, 0), "bottom")))
         self.assertIsNone(tbl.find("w:tblPr/w:tblW", NS))
         self.assertIsNone(tbl.find("w:tblPr/w:tblLayout", NS))
         self.assertEqual(
@@ -747,6 +896,40 @@ def make_gridspan_note_table(note_text: str, span: int = 5):
     return tbl
 
 
+def make_vmerge_table(last_row_text: str):
+    """A 3-column table whose first column vertically merges into the last row."""
+    tbl = etree.Element(qn("tbl"))
+
+    def add_cell(tr, text: str, *, vmerge: str | None = None):
+        tc = etree.SubElement(tr, qn("tc"))
+        if vmerge is not None:
+            tc_pr = etree.SubElement(tc, qn("tcPr"))
+            merge = etree.SubElement(tc_pr, qn("vMerge"))
+            if vmerge == "restart":
+                merge.set(qn("val"), "restart")
+        p = etree.SubElement(tc, qn("p"))
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+        return tc
+
+    tr = etree.SubElement(tbl, qn("tr"))
+    add_cell(tr, "owner", vmerge="restart")
+    add_cell(tr, "h2")
+    add_cell(tr, "h3")
+
+    tr = etree.SubElement(tbl, qn("tr"))
+    add_cell(tr, "", vmerge="continue")
+    add_cell(tr, "mid")
+    add_cell(tr, "row")
+
+    tr = etree.SubElement(tbl, qn("tr"))
+    add_cell(tr, "", vmerge="continue")
+    add_cell(tr, last_row_text)
+    add_cell(tr, "tail")
+    return tbl
+
+
 # ----------------------------------------------------------------------------
 # Last-row note cell regex and formatting.
 # ----------------------------------------------------------------------------
@@ -773,7 +956,7 @@ class FooterNoteCellUnitTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(cell, "top")))
         self.assertTrue(is_nil(tc_border(cell, "left")))
         self.assertTrue(is_nil(tc_border(cell, "right")))
-        self.assertTrue(is_double_black(tc_border(cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(cell, "bottom")))
 
     def test_note_colon_cell_is_formatted(self):
         tbl = note_last_row_table("註：本表為新臺幣元")
@@ -801,8 +984,8 @@ class FooterNoteCellUnitTests(unittest.TestCase):
             tbl = note_last_row_table(text)
             result = apply_table_footer_source_format(tbl)
             self.assertEqual(result["footer_note_cells_adjusted"], 0, text)
-            # The cell keeps the whole-table 11 pt and gets only the final
-            # rendered bottom edge, not footer-cell-specific formatting.
+            # The cell keeps the whole-table 11 pt and gets only the data-table
+            # bottom edge, not footer-cell-specific formatting.
             self.assertEqual(cell_run_sizes(cell_at(tbl, 3, 0)), ["22"], text)
             self.assertIsNone(tc_border(cell_at(tbl, 3, 0), "top"), text)
             self.assertIsNone(tc_border(cell_at(tbl, 3, 0), "left"), text)
@@ -818,7 +1001,7 @@ class FooterNoteCellUnitTests(unittest.TestCase):
             self.assertEqual(cell_run_sizes(cell_at(tbl, 3, col)), ["22"])
             self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, col), "top")))
             self.assertIsNone(tc_border(cell_at(tbl, 3, col), "left"))
-            self.assertTrue(is_double_black(tc_border(cell_at(tbl, 3, col), "bottom")))
+            self.assertTrue(is_nil(tc_border(cell_at(tbl, 3, col), "bottom")))
 
     def test_note_in_non_last_row_is_ignored(self):
         tbl = make_table(
@@ -880,7 +1063,7 @@ class FooterNoteCellUnitTests(unittest.TestCase):
         self.assertTrue(is_double_black(tc_border(note_cell, "top")))
         self.assertTrue(is_nil(tc_border(note_cell, "left")))
         self.assertTrue(is_nil(tc_border(note_cell, "right")))
-        self.assertTrue(is_double_black(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
 
 
 def special_footer_table(note_text="註：說明"):
@@ -949,7 +1132,7 @@ class FooterFormatSpecialTableTests(unittest.TestCase):
         self.assertEqual(cell_run_sizes(note_cell), ["20"])
         self.assertEqual(cell_paragraph_alignments(note_cell), ["left"])
         self.assertTrue(is_double_black(tc_border(note_cell, "top")))
-        self.assertTrue(is_double_black(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
 
     def test_special_table_data_source_cell_is_10pt_right(self):
         summary, root = run_fix(self._doc(), footer_options())
@@ -987,7 +1170,7 @@ class FooterFormatWordComOrderTests(unittest.TestCase):
         self.assertEqual(cell_paragraph_alignments(note_cell), ["left"])
         self.assertTrue(is_nil(tc_border(note_cell, "left")))
         self.assertTrue(is_nil(tc_border(note_cell, "right")))
-        self.assertTrue(is_double_black(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
         self.assertTrue(is_double_black(tc_border(note_cell, "top")))
         return tbl
 
@@ -1062,7 +1245,9 @@ class FooterFormatWordComOrderTests(unittest.TestCase):
         # The reapply ran in the final post-process.
         logs = "\n".join(summary.table_footer_source_format_logs)
         self.assertIn("FOOTER_SOURCE_FORMAT_REAPPLY_APPLIED", logs)
-        self.assertIn("table_bottom_double_border_xml_verified=True", logs)
+        self.assertIn("table_bottom_border_mode=footer_none", logs)
+        self.assertIn("table_bottom_border_xml_verified=True", logs)
+        self.assertIn("table_bottom_double_border_xml_verified=False", logs)
         self.assertIn("FOOTER_SOURCE_FORMAT_REAPPLY_DONE applied=1", logs)
 
 
@@ -1085,12 +1270,13 @@ class FooterNotePipelineTests(unittest.TestCase):
         self.assertEqual(cell_run_sizes(note_cell), ["20"])
         self.assertEqual(cell_paragraph_alignments(note_cell), ["left"])
 
-        # Outer frame double black, note cell nil edges survive it.
-        for side in ("top", "bottom", "left", "right"):
+        # Outer frame keeps top/left/right double; note cell nil edges survive it.
+        for side in ("top", "left", "right"):
             self.assertTrue(is_double_black(tbl_border(tbl, side)), side)
+        self.assertTrue(is_nil(tbl_border(tbl, "bottom")))
         self.assertTrue(is_nil(tc_border(note_cell, "left")))
         self.assertTrue(is_nil(tc_border(note_cell, "right")))
-        self.assertTrue(is_double_black(tc_border(note_cell, "bottom")))
+        self.assertTrue(is_nil(tc_border(note_cell, "bottom")))
         self.assertTrue(is_double_black(tc_border(note_cell, "top")))
 
         record = summary.table_log_records[1]

@@ -467,6 +467,18 @@ def _mark_table_footer_source_format_applied(
         record["outer_double_border_applied_by_footer_source_format"] = bool(
             result.get("outer_double_border_applied", False)
         )
+        record["table_bottom_border_mode"] = str(
+            result.get("table_bottom_border_mode", "not_applied")
+        )
+        record["table_bottom_border_cell_count"] = int(
+            result.get("table_bottom_border_cell_count", 0)
+        )
+        record["table_bottom_border_xml_verified"] = bool(
+            result.get("table_bottom_border_xml_verified", False)
+        )
+        record["table_bottom_border_verify_detail"] = str(
+            result.get("table_bottom_border_verify_detail", "")
+        )
         record["table_bottom_double_border_applied"] = bool(
             result.get("table_bottom_double_border_applied", False)
         )
@@ -478,6 +490,31 @@ def _mark_table_footer_source_format_applied(
         )
         record["table_bottom_double_border_verify_detail"] = str(
             result.get("table_bottom_double_border_verify_detail", "")
+        )
+        record["footer_terminal_bottom_none_applied"] = bool(
+            result.get("footer_terminal_bottom_none_applied", False)
+        )
+        record["footer_terminal_bottom_none_cell_count"] = int(
+            result.get("footer_terminal_bottom_none_cell_count", 0)
+        )
+        record["last_row_physical_cell_count"] = int(
+            result.get("last_row_physical_cell_count", 0)
+        )
+        record["last_row_grid_span_sum"] = int(
+            result.get("last_row_grid_span_sum", 0)
+        )
+        record["last_row_vmerge_states"] = str(
+            result.get("last_row_vmerge_states", "none")
+        )
+        record["last_row_bottom_edge_target_count"] = int(
+            result.get("last_row_bottom_edge_target_count", 0)
+        )
+        record["table_border_schema_order_valid"] = bool(
+            result.get("table_border_schema_order_valid", False)
+        )
+        record["tblPr_child_order"] = str(result.get("tblPr_child_order", ""))
+        record["last_row_tcPr_child_orders"] = list(
+            result.get("last_row_tcPr_child_orders", [])
         )
         record["first_row_single_cell_border_adjusted"] = bool(
             result.get("first_row_single_cell_border_adjusted", False)

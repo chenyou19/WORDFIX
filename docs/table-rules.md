@@ -177,7 +177,7 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 ## 表格最後一列說明格式化（獨立功能，核心預設關閉、GUI 內建勾選）
 
-由 `ProcessOptions.enable_table_footer_source_format` 控制；核心 `ProcessOptions` 與 CLI 預設為 `False`，GUI 內建預設 `gui_defaults["enable_table_footer_source_format"] = True`，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆會傳入同一個布林值。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**，只格式化表格底部連續的說明列中符合條件的 cell，並確保表格最後一列可見底框。元素層級實作在 `table_format.apply_table_footer_source_format()`。
+由 `ProcessOptions.enable_table_footer_source_format` 控制；核心 `ProcessOptions` 與 CLI 預設為 `False`，GUI 內建預設 `gui_defaults["enable_table_footer_source_format"] = True`，勾選狀態存於 `indent_defaults.json` 的 `gui_defaults`。GUI 勾選項「表格最後一列說明格式化」、CLI 參數 `--enable-table-footer-source-format`（別名 `--table-footer-source-format`）皆會傳入同一個布林值。這是**完全獨立的功能**：不依賴（已隱藏的）表格註記搬移、不依賴黑色雙線外框、不混入顏色處理，且**不搬移、不刪除、不新增任何 cell／列／段落，不改變表格結構**。它會先格式化表格底部連續說明列，再依最後一列是否為 footer 分流：一般資料表底部保留黑色雙線；footer 說明區底部不顯示框線。元素層級實作在 `table_format.apply_table_footer_source_format()`。
 
 **執行時機（重要）**：本功能是**最後一個表格格式化步驟**。XML pipeline（`table_pipeline.py`）只在處理該表格時把它「記錄」到 `summary.table_footer_source_format_records`，實際格式化延後到 `docx_processor.py` 於 **Word COM AutoFit 與 XML fallback 之後、final note alignment 之前**呼叫 `table_footer_postprocess.apply_table_footer_source_format_in_docx()` 才套用。
 
@@ -191,18 +191,23 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 4. **從表格底部連續往上掃描 footer 列**。對每一列逐 cell 取可見文字（合併段落、去除前後空白與零寬／cell 結尾控制字元、收斂換行與全/半形空白後）判斷，以 cell 的 XML element 去重，合併儲存格每列只處理一次：
    - 該列只要**任一** cell 命中以下任一規則，即視為 footer 列，格式化該列**所有命中**的 cell，並繼續往上一列檢查。
    - 命中規則與套用格式：
-     - 以「基期：」開頭：cell 內所有文字 10pt（值 `20`）、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
-     - 以「資料來源：」開頭：cell 內所有文字 10pt、段落靠右、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
-     - 符合 `^註(?:\d+)?[：:]`（如「註：」「註:」「註1：」「註10:」；不含「備註：」「註記：」「本註：」「說明註：」）：cell 內所有文字 10pt、段落靠左、`left`/`right`/`bottom` 無邊框、`top` 黑色雙線。
-     - 該列其餘不命中的儲存格不更動字級、對齊與邊框。
+     - 以「基期：」開頭：cell 內所有文字 10pt（值 `20`）、段落靠左、`left`/`right`/`bottom` 無邊框。
+     - 以「資料來源：」開頭：cell 內所有文字 10pt、段落靠右、`left`/`right`/`bottom` 無邊框。
+     - 符合 `^註(?:\d+)?[：:]`（如「註：」「註:」「註1：」「註10:」；不含「備註：」「註記：」「本註：」「說明註：」）：cell 內所有文字 10pt、段落靠左、`left`/`right`/`bottom` 無邊框。
+     - footer block 最上方那一列的**所有實體 cell** 會套 `top` 黑色雙線，作為資料區與 footer 區的分隔線；多列 footer 時，後續 footer 列的 `top` 會設為 `nil`，列與列之間不顯示線。
+     - 該列其餘不命中的儲存格不更動字級與對齊，但若位於最後一列 footer，也會在最後分流中清掉 `bottom`。
    - **停止條件**：某一列若沒有任何 cell 命中 footer 規則（含空白列），立即停止往上掃描。因此只處理表格底部**連續**的說明列；中間夾著資料列或空白列就會中斷，非連續的註記列不會被處理。不會掃整張表。
-5. 最後強制表格最後一個實體 `w:tr` 的每個實體 `w:tc` 都具有 `w:tcBorders/w:bottom` 黑色雙線（`w:val="double"`、`w:sz="4"`、`w:space="0"`、`w:color="000000"`）。這一步在 footer block 之後執行，所以 footer cell 的 `left`/`right` 仍可維持 `nil`，但最後一列即使是「註：」「基期：」「資料來源：」也會以黑色雙框線收尾；普通表格沒有 footer row 時也同樣會補最後一列 cell bottom。這是為了避免 Word 以直接 cell bottom border（例如 `nil`、單線或白線）覆蓋 table-level bottom border，造成 log 顯示外框已套用但畫面底線不可見。
+5. 最後依 `footer_rows_detected` 分流：
+   - `footer_rows_detected=False`：一般資料表底部使用 `data_double` mode。`w:tblBorders/w:bottom` 與最後可見底邊 cell 的 `w:tcBorders/w:bottom` 都設為黑色雙線（`w:val="double"`、`w:sz="4"`、`w:space="0"`、`w:color="000000"`）。若最後列有 `gridSpan`，以實體 cell 承擔跨欄底線；若最後列含 `vMerge=continue`，會同時處理 continuation cell 與對應 restart owner，且不破壞合併 XML。
+   - `footer_rows_detected=True`：footer 說明區使用 `footer_none` mode。`w:tblBorders/w:bottom` 與最後一個 footer 實體列的所有實體 cell `w:tcBorders/w:bottom` 都設為 `nil`，避免「註：」「基期：」「資料來源：」下方被補回雙線。資料區與 footer 區之間只保留 footer block 最上方列的 `top` 黑色雙線。
+
+邊框容器本身也會維持 WordprocessingML schema 位置：`w:tblBorders` 會放在 `tblLayout` 等後續 table property 前，`w:tcBorders` 會放在 `vAlign` 等後續 cell property 前。若輸入檔或舊版輸出已經有 `tblLayout -> tblBorders` 或 `vAlign -> tcBorders` 的錯序，本步驟會 relocate 既有 border 容器，不會新增第二個容器，也不會重建整張 `tblBorders` 而誤改 `insideH`/`insideV`。
 
 註記規則整合在同一個 footer 流程（`_classify_footer_cell()`），與基期/資料來源共用同一套字級、邊框處理。註記判斷 regex `FOOTER_NOTE_PREFIX_PATTERN` 定義於 `docx_fixer/table_format.py`。
 
-優先權（後者覆蓋前者）：最後一列 cell bottom 黑色雙線（只覆蓋 bottom）＞ footer 列規則（基期/資料來源/註記）＞ 第一列單 cell 規則 ＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此 footer cell 的 10pt 不會被全表 11pt 蓋掉，footer cell 的左右無邊框、第一列單 cell 的上左右無邊框也不會被外圍雙線蓋掉；最後一列 footer cell 的 bottom 會在最後被改回黑色雙線。
+優先權（後者覆蓋前者）：最後底邊 mode（`data_double` 或 `footer_none`，只覆蓋 bottom）＞ footer 列規則（基期/資料來源/註記）＞ 第一列單 cell 規則 ＞ 表格外圍黑色雙線 ＞ 全表 11pt。因此 footer cell 的 10pt 不會被全表 11pt 蓋掉，footer cell 的左右無邊框、第一列單 cell 的上左右無邊框也不會被外圍雙線蓋掉；最後一列 footer cell 的 bottom 會在 `footer_none` mode 中保持 `nil`。
 
-邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（第一列單 cell 的 `top`/`left`/`right`；命中的 footer cell 的 `left`/`right`，以及非最後一列 footer cell 的 `bottom`）。
+邊框採**局部更新**（`set_border_double_black()`／`set_border_nil()`）：只改指定那一邊，不重建整個 `tcBorders`，因此其他 cell 原本已有的黑色雙線不會被誤清。允許消失的邊只有規則明確指定為無邊框的邊（第一列單 cell 的 `top`/`left`/`right`；命中的 footer cell 的 `left`/`right`；footer block 內部列的 `top`；以及 `footer_none` mode 中 footer 最末列所有實體 cell 的 `bottom`）。
 
 ### 與既有跳過邏輯的關係
 
@@ -219,10 +224,18 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 - `table_footer_note_source_format_should_apply`：XML pipeline 判定該表需要 footer 格式化（已記錄、待 post-process 套用）。
 - `table_footer_note_source_format_applied`：final post-process 是否實際套用（由 post-process 回寫）。
 - `outer_double_border_applied_by_footer_source_format`：是否套用外圍黑色雙線。
-- `table_bottom_double_border_applied`：是否已對最後一列實體 cell 套用 bottom 黑色雙線。
-- `table_bottom_double_border_cell_count`：最後一列實際套用 bottom 黑色雙線的實體 cell 數。
-- `table_bottom_double_border_xml_verified`：XML 是否確認 table-level bottom 與最後一列所有 cell bottom 均為 `double/4/000000`。這只代表 XML 條件通過，不代表已做 Word 畫面像素驗證。
-- `table_bottom_double_border_verify_detail`：XML 驗證摘要，例如 `tbl_bottom=double/4/000000;last_row_tc_bottoms=double/4/000000|double/4/000000`。
+- `table_bottom_border_mode`：最後底邊決策。`data_double` 表示一般資料表底部套黑色雙線；`footer_none` 表示 footer 說明區底部清為無線；`not_applied` 表示未套用。
+- `table_bottom_border_cell_count`：本次 mode 實際處理的底邊 cell 數。
+- `table_bottom_border_xml_verified`：XML 是否符合該 mode 的預期；這只表示最終 DOCX XML 條件通過，不等於 Word 實際畫面或像素級驗證。
+- `table_bottom_border_verify_detail`：XML 驗證摘要，包含 `tbl_bottom`、`last_row_tc_bottoms`、`table_border_schema_order_valid`、`tblPr_child_order`、`last_row_tcPr_child_orders`、`last_row_grid_span_sum`、`last_row_vmerge_states` 等。
+- `table_bottom_double_border_applied`：舊欄位，只有 `data_double` mode 時才會是 `true`；`footer_none` 不會把「無線」記成雙線成功。
+- `table_bottom_double_border_cell_count`：舊欄位，`data_double` mode 的底邊 cell 數；`footer_none` 為 `0`。
+- `table_bottom_double_border_xml_verified`：舊欄位，僅驗證 `data_double`；`footer_none` 為 `false`。
+- `table_bottom_double_border_verify_detail`：舊欄位，保留相同 XML 摘要供相容讀取。
+- `footer_terminal_bottom_none_applied`：footer mode 是否已清除 footer 最末列下方底線。
+- `footer_terminal_bottom_none_cell_count`：footer 最末列實際清除 bottom 的實體 cell 數。
+- `last_row_physical_cell_count`、`last_row_grid_span_sum`、`last_row_vmerge_states`、`last_row_bottom_edge_target_count`：最後列實體 cell、邏輯欄寬與垂直合併診斷。
+- `table_border_schema_order_valid`、`tblPr_child_order`、`last_row_tcPr_child_orders`：`tblBorders`/`tcBorders` 是否位於合法 OOXML schema 位置，以及實際 child order 摘要。
 - `first_row_single_cell_border_adjusted`：第一列單 cell 是否被調整。
 - `footer_row_count`：底部連續 footer 列實際處理的列數。
 - `footer_cell_matches`：每列命中的類型（由上往下，例如 `note | base_period,source`）。

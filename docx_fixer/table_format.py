@@ -102,6 +102,130 @@ TABLE_BORDER_COLOR = "000000"
 # kept in this order so Word does not have to recover the part.
 _BORDER_SIDE_ORDER = ("top", "left", "bottom", "right", "insideH", "insideV", "tl2br", "tr2bl")
 
+# Parent container order matters too. Word may keep out-of-order XML but ignore
+# or repair borders during rendering, so table-specific border containers are
+# inserted and relocated without changing the global get_or_add() helper.
+_TBL_PR_CHILD_ORDER = (
+    "tblStyle",
+    "tblpPr",
+    "tblOverlap",
+    "bidiVisual",
+    "tblStyleRowBandSize",
+    "tblStyleColBandSize",
+    "tblW",
+    "jc",
+    "tblCellSpacing",
+    "tblInd",
+    "tblBorders",
+    "shd",
+    "tblLayout",
+    "tblCellMar",
+    "tblLook",
+    "tblCaption",
+    "tblDescription",
+    "tblPrChange",
+)
+_TC_PR_CHILD_ORDER = (
+    "cnfStyle",
+    "tcW",
+    "gridSpan",
+    "hMerge",
+    "vMerge",
+    "tcBorders",
+    "shd",
+    "noWrap",
+    "tcMar",
+    "textDirection",
+    "tcFitText",
+    "vAlign",
+    "hideMark",
+    "headers",
+    "cellIns",
+    "cellDel",
+    "cellMerge",
+    "tcPrChange",
+)
+
+
+def _local_name(element) -> str:
+    return etree.QName(element).localname
+
+
+def _child_order(parent) -> list[str]:
+    if parent is None:
+        return []
+    return [_local_name(child) for child in parent]
+
+
+def _child_order_text(parent) -> str:
+    order = _child_order(parent)
+    return ",".join(order) if order else "none"
+
+
+def _is_known_child_order_valid(parent, order: tuple[str, ...]) -> bool:
+    if parent is None:
+        return True
+    ranks = {tag: index for index, tag in enumerate(order)}
+    previous_rank = -1
+    for child in parent:
+        rank = ranks.get(_local_name(child))
+        if rank is None:
+            continue
+        if rank < previous_rank:
+            return False
+        previous_rank = rank
+    return True
+
+
+def _is_child_at_schema_position(parent, tag: str, order: tuple[str, ...]) -> bool:
+    if parent is None:
+        return False
+    ranks = {name: index for index, name in enumerate(order)}
+    target_rank = ranks[tag]
+    seen_target = False
+    for child in parent:
+        child_tag = _local_name(child)
+        if child_tag == tag:
+            seen_target = True
+            continue
+        child_rank = ranks.get(child_tag)
+        if child_rank is None:
+            continue
+        if not seen_target and child_rank > target_rank:
+            return False
+        if seen_target and child_rank < target_rank:
+            return False
+    return seen_target
+
+
+def _get_or_add_child_in_schema_order(parent, tag: str, order: tuple[str, ...]):
+    child = parent.find(f"w:{tag}", NS)
+    if child is None:
+        child = etree.Element(qn(tag))
+    else:
+        parent.remove(child)
+
+    ranks = {name: index for index, name in enumerate(order)}
+    target_rank = ranks[tag]
+    insert_at = len(parent)
+    for index, sibling in enumerate(parent):
+        sibling_rank = ranks.get(_local_name(sibling))
+        if sibling_rank is not None and sibling_rank > target_rank:
+            insert_at = index
+            break
+    parent.insert(insert_at, child)
+    return child
+
+
+def _get_or_add_tbl_borders_in_schema_order(tbl):
+    tblPr = get_or_add(tbl, "tblPr", first=True)
+    return _get_or_add_child_in_schema_order(tblPr, "tblBorders", _TBL_PR_CHILD_ORDER)
+
+
+def _get_or_add_tc_borders_in_schema_order(tc):
+    tcPr = get_or_add(tc, "tcPr", first=True)
+    return _get_or_add_child_in_schema_order(tcPr, "tcBorders", _TC_PR_CHILD_ORDER)
+
 
 def _get_or_add_border(borders, side: str):
     """Find (or create in schema order) a single border child of a w:tblBorders
@@ -151,13 +275,11 @@ def set_border_nil(borders, side: str) -> None:
 
 
 def _get_or_add_tbl_borders(tbl):
-    tblPr = get_or_add(tbl, "tblPr", first=True)
-    return get_or_add(tblPr, "tblBorders")
+    return _get_or_add_tbl_borders_in_schema_order(tbl)
 
 
 def _get_or_add_tc_borders(tc):
-    tcPr = get_or_add(tc, "tcPr", first=True)
-    return get_or_add(tcPr, "tcBorders")
+    return _get_or_add_tc_borders_in_schema_order(tc)
 
 
 def apply_double_black_table_borders(tbl) -> None:
@@ -172,7 +294,9 @@ def apply_double_black_table_borders(tbl) -> None:
     tbl_borders = tblPr.find("w:tblBorders", NS)
     if tbl_borders is not None:
         tblPr.remove(tbl_borders)
-    tbl_borders = etree.SubElement(tblPr, qn("tblBorders"))
+    tbl_borders = _get_or_add_tbl_borders_in_schema_order(tbl)
+    for child in list(tbl_borders):
+        tbl_borders.remove(child)
 
     for tag in TABLE_BORDER_TAGS:
         _configure_double_black_border(etree.SubElement(tbl_borders, qn(tag)))
@@ -415,9 +539,10 @@ def process_table(
 #          line between consecutive 註1/註2/註3 rows);
 #        - matched cells in every footer row -> 10 pt, aligned, left/right/bottom
 #          no border.
-#   5. final rendered bottom edge: every physical cell in the last row gets a
-#      black double bottom border, so direct cell borders cannot hide the
-#      table-level bottom border in Word.
+#   5. final bottom edge decision:
+#      - no bottom footer rows -> visible data edge is black double;
+#      - bottom footer rows -> table/terminal footer bottom is nil, while the
+#        separator above the footer block remains black double.
 # All border updates are local (one side at a time), so other cells keep any
 # borders they already had. This never moves, deletes or adds any cell, row or
 # paragraph; it only formats the matching footer cells (plus the separator).
@@ -511,20 +636,124 @@ def _unique_row_cells(tr) -> list:
     return cells
 
 
-def _apply_rendered_bottom_double_black_border(tbl) -> int:
-    """Force the last physical row's cell bottoms to render as black double.
+def _cell_vmerge_state(tc) -> str:
+    v_merge = tc.find("w:tcPr/w:vMerge", NS)
+    if v_merge is None:
+        return "none"
+    value = v_merge.get(qn("val"))
+    if value in (None, "", "continue"):
+        return "continue"
+    return str(value)
 
-    Word may let direct ``w:tcBorders/w:bottom`` values override the table-level
-    bottom border, so the visible bottom edge must be present on the last row's
-    cells as well. Only the bottom side is touched.
-    """
+
+def _row_cell_infos(tr) -> list[dict[str, object]]:
+    cursor = 0
+    infos: list[dict[str, object]] = []
+    for cell_index, tc in enumerate(_unique_row_cells(tr)):
+        grid_span = _cell_grid_span(tc)
+        infos.append(
+            {
+                "tc": tc,
+                "cell_index": cell_index,
+                "start_col": cursor,
+                "end_col": cursor + grid_span,
+                "grid_span": grid_span,
+                "vmerge_state": _cell_vmerge_state(tc),
+            }
+        )
+        cursor += grid_span
+    return infos
+
+
+def _find_vmerge_restart_owner(rows: list, target_info: dict[str, object]):
+    target_start = int(target_info["start_col"])
+    target_end = int(target_info["end_col"])
+    for tr in reversed(rows[:-1]):
+        for info in _row_cell_infos(tr):
+            if int(info["start_col"]) != target_start or int(info["end_col"]) != target_end:
+                continue
+            state = str(info["vmerge_state"])
+            if state == "restart":
+                return info["tc"]
+            if state == "none":
+                return None
+            break
+    return None
+
+
+def _last_row_bottom_edge_target_cells(tbl) -> list:
     rows = tbl.findall("w:tr", NS)
     if not rows:
+        return []
+
+    targets = []
+    seen: set[int] = set()
+    last_row_infos = _row_cell_infos(rows[-1])
+    for info in last_row_infos:
+        tc = info["tc"]
+        if id(tc) not in seen:
+            seen.add(id(tc))
+            targets.append(tc)
+        if str(info["vmerge_state"]) == "continue":
+            owner = _find_vmerge_restart_owner(rows, info)
+            if owner is not None and id(owner) not in seen:
+                seen.add(id(owner))
+                targets.append(owner)
+    return targets
+
+
+def _last_row_diagnostics(tbl) -> dict[str, object]:
+    rows = tbl.findall("w:tr", NS)
+    if not rows:
+        return {
+            "last_row_physical_cell_count": 0,
+            "last_row_grid_span_sum": 0,
+            "last_row_vmerge_states": "none",
+            "last_row_bottom_edge_target_count": 0,
+        }
+
+    last_row_infos = _row_cell_infos(rows[-1])
+    targets = _last_row_bottom_edge_target_cells(tbl)
+    vmerge_states = [str(info["vmerge_state"]) for info in last_row_infos]
+    return {
+        "last_row_physical_cell_count": len(last_row_infos),
+        "last_row_grid_span_sum": sum(int(info["grid_span"]) for info in last_row_infos),
+        "last_row_vmerge_states": "|".join(vmerge_states) if vmerge_states else "none",
+        "last_row_bottom_edge_target_count": len(targets),
+    }
+
+
+def _apply_rendered_bottom_double_black_border(tbl) -> int:
+    """Force the last visual data edge's cell bottoms to render black double.
+
+    Word may let direct ``w:tcBorders/w:bottom`` values override the table-level
+    bottom border. For plain and gridSpan rows, the physical last-row cells own
+    the visible edge. When the last row continues a vertical merge, the restart
+    owner is also touched so Word has a bottom value on both the visible
+    continuation and the merge owner. Only the bottom side is touched.
+    """
+    applied = 0
+    for tc in _last_row_bottom_edge_target_cells(tbl):
+        set_border_double_black(_get_or_add_tc_borders(tc), "bottom")
+        applied += 1
+    return applied
+
+
+def _apply_footer_terminal_bottom_none(tbl, footer_rows: list) -> int:
+    """Clear the visible bottom under a bottom footer block.
+
+    The data/footer separator lives on the top footer row. Once a footer exists,
+    the table must not end with a visible bottom border under the explanation
+    text, so both table-level bottom and every physical cell in the terminal
+    footer row are set to nil.
+    """
+    if not footer_rows:
         return 0
 
+    set_border_nil(_get_or_add_tbl_borders(tbl), "bottom")
     applied = 0
-    for tc in _unique_row_cells(rows[-1]):
-        set_border_double_black(_get_or_add_tc_borders(tc), "bottom")
+    for tc in footer_rows[-1].cells:
+        set_border_nil(_get_or_add_tc_borders(tc), "bottom")
         applied += 1
     return applied
 
@@ -541,6 +770,10 @@ def _border_signature(border) -> str:
     )
 
 
+def _is_nil_border(border) -> bool:
+    return border is not None and border.get(qn("val")) == "nil"
+
+
 def _is_double_black_border(border) -> bool:
     return (
         border is not None
@@ -550,22 +783,131 @@ def _is_double_black_border(border) -> bool:
     )
 
 
-def _verify_rendered_bottom_double_black_border(tbl) -> tuple[bool, str]:
+def _schema_order_summary(tbl, cells: list) -> dict[str, object]:
+    tbl_pr = tbl.find("w:tblPr", NS)
+    tbl_borders = tbl.find("w:tblPr/w:tblBorders", NS)
+    tc_pr_orders = []
+    valid = _is_child_at_schema_position(tbl_pr, "tblBorders", _TBL_PR_CHILD_ORDER)
+    valid = valid and _is_known_child_order_valid(tbl_borders, _BORDER_SIDE_ORDER)
+
+    for tc in cells:
+        tc_pr = tc.find("w:tcPr", NS)
+        tc_borders = tc.find("w:tcPr/w:tcBorders", NS)
+        tc_pr_orders.append(_child_order_text(tc_pr))
+        valid = valid and _is_child_at_schema_position(tc_pr, "tcBorders", _TC_PR_CHILD_ORDER)
+        valid = valid and _is_known_child_order_valid(tc_borders, _BORDER_SIDE_ORDER)
+
+    return {
+        "table_border_schema_order_valid": valid,
+        "tblPr_child_order": _child_order_text(tbl_pr),
+        "last_row_tcPr_child_orders": tc_pr_orders,
+    }
+
+
+def _format_bottom_border_verify_detail(
+    *,
+    tbl,
+    cells: list,
+    diagnostics: dict[str, object],
+    schema_summary: dict[str, object],
+    extra_parts: list[str] | None = None,
+) -> str:
     tbl_bottom = tbl.find("w:tblPr/w:tblBorders/w:bottom", NS)
-    rows = tbl.findall("w:tr", NS)
-    last_row_cells = _unique_row_cells(rows[-1]) if rows else []
-    last_row_bottoms = [
-        tc.find("w:tcPr/w:tcBorders/w:bottom", NS) for tc in last_row_cells
-    ]
-    verified = bool(last_row_cells) and _is_double_black_border(tbl_bottom) and all(
-        _is_double_black_border(bottom) for bottom in last_row_bottoms
-    )
-    detail = (
+    last_row_bottoms = [tc.find("w:tcPr/w:tcBorders/w:bottom", NS) for tc in cells]
+    parts = [
         f"tbl_bottom={_border_signature(tbl_bottom)};"
-        "last_row_tc_bottoms="
-        + ("|".join(_border_signature(bottom) for bottom in last_row_bottoms) or "none")
+        + "last_row_tc_bottoms="
+        + ("|".join(_border_signature(bottom) for bottom in last_row_bottoms) or "none"),
+        "table_border_schema_order_valid="
+        + ("true" if schema_summary["table_border_schema_order_valid"] else "false"),
+        f"tblPr_child_order={schema_summary['tblPr_child_order']}",
+        "last_row_tcPr_child_orders="
+        + ("|".join(schema_summary["last_row_tcPr_child_orders"]) or "none"),
+        f"last_row_physical_cell_count={diagnostics['last_row_physical_cell_count']}",
+        f"last_row_grid_span_sum={diagnostics['last_row_grid_span_sum']}",
+        f"last_row_vmerge_states={diagnostics['last_row_vmerge_states']}",
+        f"last_row_bottom_edge_target_count={diagnostics['last_row_bottom_edge_target_count']}",
+    ]
+    if extra_parts:
+        parts.extend(extra_parts)
+    return ";".join(parts)
+
+
+def _verify_data_bottom_double_black_border(tbl) -> tuple[bool, str, dict[str, object]]:
+    target_cells = _last_row_bottom_edge_target_cells(tbl)
+    diagnostics = _last_row_diagnostics(tbl)
+    schema_summary = _schema_order_summary(tbl, target_cells)
+    tbl_bottom = tbl.find("w:tblPr/w:tblBorders/w:bottom", NS)
+    target_bottoms = [
+        tc.find("w:tcPr/w:tcBorders/w:bottom", NS) for tc in target_cells
+    ]
+    verified = (
+        bool(target_cells)
+        and _is_double_black_border(tbl_bottom)
+        and all(_is_double_black_border(bottom) for bottom in target_bottoms)
+        and bool(schema_summary["table_border_schema_order_valid"])
     )
-    return verified, detail
+    detail = _format_bottom_border_verify_detail(
+        tbl=tbl,
+        cells=target_cells,
+        diagnostics=diagnostics,
+        schema_summary=schema_summary,
+    )
+    return verified, detail, {**diagnostics, **schema_summary}
+
+
+def _verify_footer_terminal_bottom_none(
+    tbl,
+    footer_rows: list,
+) -> tuple[bool, str, dict[str, object]]:
+    last_footer_cells = list(footer_rows[-1].cells) if footer_rows else []
+    all_footer_cells = []
+    seen: set[int] = set()
+    for footer_row in footer_rows:
+        for tc in footer_row.cells:
+            if id(tc) not in seen:
+                seen.add(id(tc))
+                all_footer_cells.append(tc)
+
+    diagnostics = _last_row_diagnostics(tbl)
+    all_footer_schema_summary = _schema_order_summary(tbl, all_footer_cells)
+    schema_summary = _schema_order_summary(tbl, last_footer_cells)
+    schema_summary["table_border_schema_order_valid"] = all_footer_schema_summary[
+        "table_border_schema_order_valid"
+    ]
+    tbl_bottom = tbl.find("w:tblPr/w:tblBorders/w:bottom", NS)
+    last_footer_bottoms = [
+        tc.find("w:tcPr/w:tcBorders/w:bottom", NS) for tc in last_footer_cells
+    ]
+    top_footer_tops = [
+        tc.find("w:tcPr/w:tcBorders/w:top", NS) for tc in footer_rows[0].cells
+    ] if footer_rows else []
+    internal_footer_tops = [
+        tc.find("w:tcPr/w:tcBorders/w:top", NS)
+        for footer_row in footer_rows[1:]
+        for tc in footer_row.cells
+    ]
+    verified = (
+        bool(last_footer_cells)
+        and _is_nil_border(tbl_bottom)
+        and all(_is_nil_border(bottom) for bottom in last_footer_bottoms)
+        and all(_is_double_black_border(top) for top in top_footer_tops)
+        and all(_is_nil_border(top) for top in internal_footer_tops)
+        and bool(schema_summary["table_border_schema_order_valid"])
+    )
+    detail = _format_bottom_border_verify_detail(
+        tbl=tbl,
+        cells=last_footer_cells,
+        diagnostics=diagnostics,
+        schema_summary=schema_summary,
+        extra_parts=[
+            "footer_top_tc_tops="
+            + ("|".join(_border_signature(top) for top in top_footer_tops) or "none"),
+            "footer_internal_top_tc_tops="
+            + ("|".join(_border_signature(top) for top in internal_footer_tops) or "none"),
+        ],
+    )
+    return verified, detail, {**diagnostics, **schema_summary}
 
 
 def collect_consecutive_footer_rows_from_bottom(
@@ -603,8 +945,8 @@ def apply_footer_block_format(footer_rows: list) -> dict[str, object]:
     The TOP footer row gets a black double top border across every cell (the one
     data/footer separator). Every other footer row has its top border cleared so
     no line appears between consecutive footer rows. Matched cells get 10 pt,
-    their alignment, and no left/right/bottom border; the final bottom-edge pass
-    restores bottom double on the table's last row.
+    their alignment, and no left/right/bottom border. The caller makes the
+    final footer/data bottom-edge decision after the footer block is known.
     """
     stats: dict[str, object] = {
         "footer_block_top_border_applied": False,
@@ -672,10 +1014,23 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         "footer_source_cells_adjusted": 0,
         "footer_note_cell_matches": [],
         "footer_note_cell_debug": [],
+        "table_bottom_border_mode": "not_applied",
+        "table_bottom_border_cell_count": 0,
+        "table_bottom_border_xml_verified": False,
+        "table_bottom_border_verify_detail": "",
         "table_bottom_double_border_applied": False,
         "table_bottom_double_border_cell_count": 0,
         "table_bottom_double_border_xml_verified": False,
         "table_bottom_double_border_verify_detail": "",
+        "footer_terminal_bottom_none_applied": False,
+        "footer_terminal_bottom_none_cell_count": 0,
+        "last_row_physical_cell_count": 0,
+        "last_row_grid_span_sum": 0,
+        "last_row_vmerge_states": "none",
+        "last_row_bottom_edge_target_count": 0,
+        "table_border_schema_order_valid": False,
+        "tblPr_child_order": "",
+        "last_row_tcPr_child_orders": [],
     }
 
     if stop:
@@ -707,15 +1062,37 @@ def apply_table_footer_source_format(tbl, stop: StopController | None = None) ->
         result["footer_row_count"] = len(footer_rows)
         result["footer_top_row_index"] = footer_rows[0].row_index
         result.update(apply_footer_block_format(footer_rows))
-
-    # 5. Final visible bottom edge: run after footer formatting so footer cells
-    # may keep their left/right nil borders while the table still ends in a
-    # rendered black double bottom border.
-    bottom_cell_count = _apply_rendered_bottom_double_black_border(tbl)
-    bottom_verified, bottom_detail = _verify_rendered_bottom_double_black_border(tbl)
-    result["table_bottom_double_border_applied"] = bottom_cell_count > 0
-    result["table_bottom_double_border_cell_count"] = bottom_cell_count
-    result["table_bottom_double_border_xml_verified"] = bottom_verified
-    result["table_bottom_double_border_verify_detail"] = bottom_detail
+        none_cell_count = _apply_footer_terminal_bottom_none(tbl, footer_rows)
+        verified, detail, diagnostics = _verify_footer_terminal_bottom_none(
+            tbl,
+            footer_rows,
+        )
+        detail = f"table_bottom_border_mode=footer_none;{detail}"
+        result.update(diagnostics)
+        result["table_bottom_border_mode"] = "footer_none"
+        result["table_bottom_border_cell_count"] = none_cell_count
+        result["table_bottom_border_xml_verified"] = verified
+        result["table_bottom_border_verify_detail"] = detail
+        result["footer_terminal_bottom_none_applied"] = none_cell_count > 0
+        result["footer_terminal_bottom_none_cell_count"] = none_cell_count
+        result["table_bottom_double_border_applied"] = False
+        result["table_bottom_double_border_cell_count"] = 0
+        result["table_bottom_double_border_xml_verified"] = False
+        result["table_bottom_double_border_verify_detail"] = detail
+    else:
+        bottom_cell_count = _apply_rendered_bottom_double_black_border(tbl)
+        verified, detail, diagnostics = _verify_data_bottom_double_black_border(tbl)
+        detail = f"table_bottom_border_mode=data_double;{detail}"
+        result.update(diagnostics)
+        result["table_bottom_border_mode"] = (
+            "data_double" if bottom_cell_count > 0 else "not_applied"
+        )
+        result["table_bottom_border_cell_count"] = bottom_cell_count
+        result["table_bottom_border_xml_verified"] = verified
+        result["table_bottom_border_verify_detail"] = detail
+        result["table_bottom_double_border_applied"] = bottom_cell_count > 0
+        result["table_bottom_double_border_cell_count"] = bottom_cell_count
+        result["table_bottom_double_border_xml_verified"] = verified
+        result["table_bottom_double_border_verify_detail"] = detail
 
     return result

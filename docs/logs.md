@@ -70,10 +70,18 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 - `table_footer_note_source_format_should_apply`：XML pipeline 判定該表需要 footer 格式化（已記錄、待最後 post-process 套用）。
 - `table_footer_note_source_format_applied`：最後 post-process 是否實際套用「表格最後一列說明格式化」（在 Word COM AutoFit／fallback 之後執行）。
 - `outer_double_border_applied_by_footer_source_format`：本功能是否套用外圍黑色雙線。
-- `table_bottom_double_border_applied`：是否已對最後一列實體 cell 套用 bottom 黑色雙線。
-- `table_bottom_double_border_cell_count`：最後一列實際套用 bottom 黑色雙線的實體 cell 數。
-- `table_bottom_double_border_xml_verified`：XML 是否確認 `w:tblBorders/w:bottom` 與最後一列所有 `w:tcBorders/w:bottom` 均為 `double/4/000000`。這只表示 XML 條件通過，不代表已做 Word 畫面像素驗證。
-- `table_bottom_double_border_verify_detail`：XML 驗證摘要，例如 `tbl_bottom=double/4/000000;last_row_tc_bottoms=double/4/000000|double/4/000000`。
+- `table_bottom_border_mode`：最後底邊決策。`data_double` 表示一般資料表底部套黑色雙線；`footer_none` 表示 footer 說明區底部清為無線；`not_applied` 表示未套用。
+- `table_bottom_border_cell_count`：本次 mode 實際處理的底邊 cell 數。
+- `table_bottom_border_xml_verified`：XML 是否符合該 mode 的預期。這只表示最終 DOCX XML 條件通過，不代表已做 Word 畫面或像素級驗證。
+- `table_bottom_border_verify_detail`：XML 驗證摘要，例如 `table_bottom_border_mode=data_double;tbl_bottom=double/4/000000;last_row_tc_bottoms=...;table_border_schema_order_valid=true;tblPr_child_order=...;last_row_tcPr_child_orders=...;last_row_grid_span_sum=...;last_row_vmerge_states=...`。
+- `table_bottom_double_border_applied`：舊相容欄位，只有 `data_double` mode 時才會是 `true`；`footer_none` mode 必須為 `false`。
+- `table_bottom_double_border_cell_count`：舊相容欄位，`data_double` mode 的底邊 cell 數；`footer_none` 為 `0`。
+- `table_bottom_double_border_xml_verified`：舊相容欄位，僅驗證 `data_double`；`footer_none` 為 `false`，不可把 footer 下方無線視為錯誤。
+- `table_bottom_double_border_verify_detail`：舊相容欄位，保留 XML 摘要。
+- `footer_terminal_bottom_none_applied`：footer mode 是否已清除 footer 最末列下方底線。
+- `footer_terminal_bottom_none_cell_count`：footer 最末列實際清除 bottom 的實體 cell 數。
+- `last_row_physical_cell_count`、`last_row_grid_span_sum`、`last_row_vmerge_states`、`last_row_bottom_edge_target_count`：最後列實體 cell、邏輯欄寬、垂直合併與底邊目標診斷。
+- `table_border_schema_order_valid`、`tblPr_child_order`、`last_row_tcPr_child_orders`：`tblBorders`/`tcBorders` 是否位於合法 OOXML schema 位置，以及實際 child order 摘要。若 `tblBorders` 在 `tblLayout` 後或 `tcBorders` 在 `vAlign` 後，Word 可能保留 XML 但不照預期顯示。
 - `first_row_single_cell_border_adjusted`：第一列單 cell 是否被本功能調整。
 - `footer_row_count`：從表格底部往上連續處理的 footer 列數（中斷於第一個無命中的列）。
 - `footer_cell_matches`：每列命中的類型（由上往下），例如 `note | base_period,source`。

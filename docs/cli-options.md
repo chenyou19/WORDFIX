@@ -76,7 +76,7 @@ CLI 與 GUI 的參章縮排預設不同：CLI 的 `--skip-chapter-three-indents`
 
 | 參數 | 狀態 | 預設 | 說明 |
 | --- | --- | --- | --- |
-| `--enable-table-footer-source-format` | 目前參數 | 關閉 | 「表格最後一列說明格式化」：對符合 footer eligibility 的表格，依序套用全表 11pt、外圍黑色雙線、第一列單 cell 標題線、底部連續說明列格式（「基期：」「資料來源：」以及符合 `^註(?:\d+)?[：:]` 的註記），最後強制最後一列 cell bottom 為黑色雙線（`enable_table_footer_source_format`）。獨立功能，不依賴註記搬移或黑色雙線外框，也不混入顏色處理，且不搬移／刪除／新增任何 cell。 |
+| `--enable-table-footer-source-format` | 目前參數 | 關閉 | 「表格最後一列說明格式化」：對符合 footer eligibility 的表格，依序套用全表 11pt、外圍黑色雙線、第一列單 cell 標題線、底部連續說明列格式（「基期：」「資料來源：」以及符合 `^註(?:\d+)?[：:]` 的註記），最後依底部是否為 footer 分流：一般資料表底部為黑色雙線，footer 說明區底部為無線。獨立功能，不依賴註記搬移或黑色雙線外框，也不混入顏色處理，且不搬移／刪除／新增任何 cell。 |
 | `--table-footer-source-format` | 別名 | | 與 `--enable-table-footer-source-format` 相同。 |
 | `--no-enable-table-footer-source-format` | 目前參數 | | 不套用此格式（別名 `--no-table-footer-source-format`）。 |
 
