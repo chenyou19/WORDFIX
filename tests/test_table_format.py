@@ -78,6 +78,15 @@ def cell_fill(tbl, row_index: int, cell_index: int) -> str | None:
     return shd.get(qn("fill"))
 
 
+def table_layout_signature(tbl) -> list[bytes]:
+    layout_nodes = tbl.xpath(
+        ".//w:tblPr | .//w:tblGrid | .//w:trPr | "
+        ".//w:tcPr/w:tcW | .//w:tcPr/w:vAlign | .//w:pPr | .//w:rPr",
+        namespaces=NS,
+    )
+    return [etree.tostring(node) for node in layout_nodes]
+
+
 def make_nested_table_document():
     document = etree.Element(qn("document"), nsmap={"w": W_NS})
     body = etree.SubElement(document, qn("body"))
@@ -86,6 +95,7 @@ def make_nested_table_document():
     body.append(make_paragraph("nested table"))
 
     outer = make_table([3, 3])
+    set_cell_shading(outer, 0, 0, "BFBFBF")
     inner = make_shaded_table([3, 3], fill="FF0000")
     first_tc = outer.find("w:tr/w:tc", NS)
     first_tc.append(inner)
@@ -1071,8 +1081,11 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(table_setting(tables[2], "tblW", "type"), "pct")
             self.assertEqual(table_setting(tables[2], "tblW", "w"), "5000")
 
-    def test_processor_skips_nested_tables_when_protection_is_enabled(self):
+    def test_processor_applies_nested_table_color_only_when_protection_is_enabled(self):
         document = make_nested_table_document()
+        before_tables = document.xpath(".//w:tbl", namespaces=NS)
+        before_outer_layout = table_layout_signature(before_tables[1])
+        before_inner_layout = table_layout_signature(before_tables[2])
 
         with tempfile.TemporaryDirectory() as tmp:
             input_docx = Path(tmp) / "input.docx"
@@ -1099,14 +1112,24 @@ class TableFormatTests(unittest.TestCase):
 
             self.assertEqual(summary.tables, 3)
             self.assertEqual(summary.skipped_first_page_tables, 1)
-            self.assertEqual(summary.skipped_nested_tables, 2)
+            self.assertEqual(summary.skipped_nested_tables, 0)
+            self.assertEqual(summary.nested_table_color_only_tables, 2)
+            self.assertEqual(summary.changed_to_gray, 1)
+            self.assertEqual(summary.cleared_colors, 1)
             nested_records = [
                 record
                 for record in summary.table_log_records
-                if record["table_type"] == "skipped_nested_table"
+                if record["table_type"] == "nested_table_color_only"
             ]
             self.assertEqual(len(nested_records), 2)
-            self.assertTrue(all(record["action"] == "skipped" for record in nested_records))
+            self.assertTrue(
+                all(record["action"] == "apply_nested_table_color_only" for record in nested_records)
+            )
+            self.assertTrue(all(not record["layout_fixed"] for record in nested_records))
+            self.assertTrue(all(record["color_fixed"] for record in nested_records))
+            self.assertEqual([record["changed_to_gray"] for record in nested_records], [1, 0])
+            self.assertEqual([record["cleared_colors"] for record in nested_records], [0, 1])
+            self.assertTrue(all(record["shading_debug"] for record in nested_records))
 
             with ZipFile(output_docx) as zin:
                 root = etree.fromstring(zin.read("word/document.xml"))
@@ -1114,6 +1137,8 @@ class TableFormatTests(unittest.TestCase):
             outer = tables[1]
             inner = tables[2]
 
+            self.assertEqual(table_layout_signature(outer), before_outer_layout)
+            self.assertEqual(table_layout_signature(inner), before_inner_layout)
             for tbl in (outer, inner):
                 self.assertIsNone(table_pr_element(tbl, "jc"))
                 self.assertIsNone(table_pr_element(tbl, "tblW"))
@@ -1124,7 +1149,63 @@ class TableFormatTests(unittest.TestCase):
                 if r_pr is not None:
                     self.assertIsNone(r_pr.find("w:sz", NS))
                     self.assertIsNone(r_pr.find("w:szCs", NS))
-            self.assertEqual(first_table_fill(inner), "FF0000")
+            self.assertEqual(cell_fill(outer, 0, 0), "D9D9D9")
+            self.assertEqual(cell_fill(inner, 0, 0), "auto")
+
+    def test_processor_fully_skips_nested_tables_when_fix_color_is_disabled(self):
+        document = make_nested_table_document()
+        before_tables = document.xpath(".//w:tbl", namespaces=NS)
+        before_outer_layout = table_layout_signature(before_tables[1])
+        before_inner_layout = table_layout_signature(before_tables[2])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=True,
+                    fix_color=False,
+                    fix_paragraph=False,
+                    normalize_with_word_com=False,
+                    skip_nested_tables=True,
+                    skip_special_color_tables=True,
+                    special_color_skip_colors=("FF0000",),
+                    clear_special_colors_after_skip=True,
+                ),
+            )
+
+            self.assertEqual(summary.skipped_nested_tables, 2)
+            self.assertEqual(summary.nested_table_color_only_tables, 0)
+            self.assertEqual(summary.special_color_skipped_tables, 0)
+            self.assertEqual(summary.changed_to_gray, 0)
+            self.assertEqual(summary.cleared_colors, 0)
+            self.assertEqual(
+                [record["table_type"] for record in summary.table_log_records],
+                ["skipped_first_table", "skipped_nested_table", "skipped_nested_table"],
+            )
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            outer = tables[1]
+            inner = tables[2]
+            self.assertEqual(table_layout_signature(outer), before_outer_layout)
+            self.assertEqual(table_layout_signature(inner), before_inner_layout)
+            self.assertEqual(cell_fill(outer, 0, 0), "BFBFBF")
+            self.assertEqual(cell_fill(inner, 0, 0), "FF0000")
 
     def test_nested_tables_are_not_queued_for_word_com_autofit_when_protected(self):
         document = make_nested_table_document()
@@ -1160,7 +1241,7 @@ class TableFormatTests(unittest.TestCase):
         self.assertEqual(summary.word_com_table_autofit_records, [])
         self.assertEqual(
             [record["table_type"] for record in summary.table_log_records],
-            ["skipped_first_table", "skipped_nested_table", "skipped_nested_table"],
+            ["skipped_first_table", "nested_table_color_only", "nested_table_color_only"],
         )
         self.assertTrue(
             all(not record["word_com_autofit_applied"] for record in summary.table_log_records)
@@ -1354,6 +1435,63 @@ class TableFormatTests(unittest.TestCase):
             tables = root.xpath(".//w:tbl", namespaces=NS)
             self.assertEqual(table_setting(tables[1], "jc"), "right")
             self.assertEqual(first_table_fill(tables[1]), "808080")
+
+    def test_chapter_three_color_skip_blocks_nested_table_color_only(self):
+        document = etree.Element(qn("document"), nsmap={"w": W_NS})
+        body = etree.SubElement(document, qn("body"))
+        body.append(make_paragraph("\u58f9\u3001\u5e8f\u8a00"))
+        body.append(make_table([5, 5]))
+        body.append(make_paragraph("\u53c3\u3001\u50f9\u683c\u5f62\u6210\u4e4b\u4e3b\u8981\u56e0\u7d20\u5206\u6790"))
+        outer = make_table([3, 3])
+        set_cell_shading(outer, 0, 0, "BFBFBF")
+        inner = make_shaded_table([3, 3], fill="FF0000")
+        outer.find("w:tr/w:tc", NS).append(inner)
+        body.append(outer)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_docx = Path(tmp) / "input.docx"
+            output_docx = Path(tmp) / "output.docx"
+            with ZipFile(input_docx, "w", ZIP_DEFLATED) as zout:
+                zout.writestr(
+                    "word/document.xml",
+                    etree.tostring(
+                        document,
+                        xml_declaration=True,
+                        encoding="UTF-8",
+                        standalone=True,
+                    ),
+                )
+
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=True,
+                    fix_color=True,
+                    fix_paragraph=False,
+                    normalize_with_word_com=False,
+                    skip_nested_tables=True,
+                    skip_chapter_three_table_color=True,
+                ),
+            )
+
+            self.assertEqual(summary.skipped_nested_tables, 2)
+            self.assertEqual(summary.nested_table_color_only_tables, 0)
+            self.assertEqual(summary.changed_to_gray, 0)
+            self.assertEqual(summary.cleared_colors, 0)
+            self.assertEqual(
+                [record["table_type"] for record in summary.table_log_records],
+                ["skipped_first_table", "skipped_nested_table", "skipped_nested_table"],
+            )
+            for record in summary.table_log_records[1:]:
+                self.assertTrue(record["chapter_three_table_color_skipped"])
+                self.assertFalse(record["color_fixed"])
+
+            with ZipFile(output_docx) as zin:
+                root = etree.fromstring(zin.read("word/document.xml"))
+            tables = root.xpath(".//w:tbl", namespaces=NS)
+            self.assertEqual(cell_fill(tables[1], 0, 0), "BFBFBF")
+            self.assertEqual(cell_fill(tables[2], 0, 0), "FF0000")
 
     def test_processor_does_not_skip_other_chapter_three_titles(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
@@ -1801,7 +1939,7 @@ class TableFormatTests(unittest.TestCase):
             self.assertEqual(cell_fill(tables[0], 0, 0), "FFFF00")
             self.assertIsNone(tables[0].find("w:tblPr", NS))
 
-    def test_special_color_skip_does_not_affect_nested_table_skip(self):
+    def test_special_color_skip_blocks_nested_table_color_only(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
         body = etree.SubElement(document, qn("body"))
         body.append(make_paragraph("第一張表格"))
@@ -1834,16 +1972,19 @@ class TableFormatTests(unittest.TestCase):
                 skip_nested_tables=True,
                 skip_special_color_tables=True,
                 special_color_skip_colors=("FFFF00",),
-                clear_special_colors_after_skip=True,
+                clear_special_colors_after_skip=False,
             )
             summary = fix_docx_fast(input_docx, output_docx, options)
 
             self.assertEqual(
                 [record["table_type"] for record in summary.table_log_records],
-                ["skipped_first_table", "skipped_nested_table", "skipped_nested_table"],
+                ["skipped_first_table", "nested_table_color_only", "special_color_skipped_table"],
             )
-            self.assertEqual(summary.special_color_skipped_tables, 0)
-            self.assertEqual(summary.skipped_nested_tables, 2)
+            self.assertEqual(summary.special_color_skipped_tables, 1)
+            self.assertEqual(summary.skipped_nested_tables, 0)
+            self.assertEqual(summary.nested_table_color_only_tables, 1)
+            self.assertEqual(summary.changed_to_gray, 0)
+            self.assertEqual(summary.cleared_colors, 0)
 
             with ZipFile(output_docx) as zin:
                 root = etree.fromstring(zin.read("word/document.xml"))

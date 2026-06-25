@@ -7,7 +7,7 @@
 - [GUI 選項](gui-options.md)：說明 GUI 第一頁勾選項目、內建預設值與保存預設方案。
 - [CLI 參數](cli-options.md)：說明命令列參數、預設行為、新版參數與相容舊名稱。
 - [表格處理規則](table-rules.md)：說明表格跳過條件、一般表格、特殊表格、顏色與 Word COM AutoFit。
-- [巢狀表格處理](nested-tables.md)：說明「表格中有表格不調整」的判斷、預設值與 log。
+- [巢狀表格處理](nested-tables.md)：說明巢狀表格版面保護、顏色仍處理的判斷、預設值與 log。
 - [參章保護邏輯](chapter-three-protection.md)：說明「參、價格形成之主要因素分析」的偵測與分項保護。
 - [段落、大綱與縮排規則](paragraph-indent-rules.md)：說明本文、序言、TOC、編號與內文縮排處理。
 - [預設設定檔](default-settings.md)：說明 `indent_defaults.json` 的位置、內容與載入規則。

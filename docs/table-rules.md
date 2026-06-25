@@ -11,7 +11,7 @@
 每張表格會依下列順序判斷：
 
 1. `word/document.xml` 的第一張表格會跳過，`table_type = skipped_first_table`，原因是 `first table in word/document.xml`。
-2. 若 `skip_nested_tables=True`，表格本身在另一張表格內，或表格內含另一張表格，會跳過。
+2. 若 `skip_nested_tables=True`，表格本身在另一張表格內，或表格內含另一張表格，會先進入巢狀保護：版面完整保留；若全域 `fix_color=True`，仍只處理直屬 cell 的表格底色。
 3. 若表格位在參章保護範圍，且版面與底色兩者都因選項被停用，會跳過。
 4. 若啟用「將表格內註記儲存格移至表格下方」，先搬移註記並刪除 cell / row（受保護的參、表格不會到這步）。
 5. 搬移後重新計算 `cell_count`、`column_count` 與一般 / 特殊表格類型。
@@ -28,7 +28,7 @@
 - `is_nested_table(tbl)`：表格本身有 `ancestor::w:tbl`，代表位於另一張表格內。
 - `contains_nested_table(tbl)`：表格內部有 `.//w:tc//w:tbl`，代表表格中含有另一張表格。
 
-預設會跳過這兩種表格。詳細說明見 [巢狀表格處理](nested-tables.md)。
+預設會保護這兩種表格的版面，但在 `fix_color=True` 時仍套用既有表格底色規則。外表格只處理自己的 `./w:tr/w:tc`，內表格在自己的迴圈中處理，避免重複統計與重複 log。詳細說明見 [巢狀表格處理](nested-tables.md)。
 
 ## 特殊表格與一般表格
 
@@ -142,7 +142,7 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 啟用「跳過特殊顏色表格」（`skip_special_color_tables`）並設定指定顏色清單（`special_color_skip_colors`）後，只要表格中任一格底色命中清單，整張表就跳過：
 
-- 判斷順序：第一張表格 → 巢狀表格保護 → 參章保護 → **特殊顏色表格** → 小表格（cell_count <= 4）→ 特殊/一般表格。
+- 判斷順序：第一張表格 → 參章/特殊色保護 → 巢狀表格 color-only 或完整跳過 → 小表格（cell_count <= 4）→ 特殊/一般表格。
 - 命中時不做任何版面調整、不套用一般底色規則、不加入 Word COM AutoFit 清單。
 - `table_type = special_color_skipped_table`、`action = skipped_special_color_table`、`reason = matched special color skip list`。
 - 若勾選「跳過後將指定顏色改回無色彩」（`clear_special_colors_after_skip`），只把命中指定清單的儲存格底色清成無色，其他顏色完全不動；清除格數記在 `special_color_cleared_count`。
@@ -171,7 +171,7 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 - **預設關閉時**：不新增或改寫 `w:tblBorders`；`table_log` 的 `double_border_applied` 為 `false`、`double_border_tables` 為 `0`。不會因為表格註記搬移、表格版面或表格顏色而自動套外框。
 - **隱藏選項為 True 時**：一般表格與特殊表格在套完版面／字體／顏色後才套用，發生在註記搬移與 cell / row 刪除「之後」，避免刪除後新邊界沒有雙線。只對實際走過版面／顏色處理的表格套用。
-- 受參、保護的表格不套外框（保留原框線）。第一張表格、巢狀表格、小表格、特殊顏色跳過表格不在此處理。
+- 受參、保護的表格不套外框（保留原框線）。第一張表格、巢狀表格 color-only、小表格、特殊顏色跳過表格不在此處理。
 - 黑色雙線外框只由 `enable_double_black_table_borders` 控制，與「將表格內註記儲存格移至表格下方」「參、不要表格註記搬移」完全獨立，互不耦合。
 - `table_log` 以 `double_border_enabled`（隱藏選項是否啟用）與 `double_border_applied`（該表是否實際套用）記錄，摘要以 `套用黑色雙線外框的表格數` 統計。
 
@@ -218,7 +218,7 @@ CLI 會輸出 `word_com_table_autofit_applied_count`、`word_com_table_autofit_f
 
 本功能仍以「有要求表格版面處理」作為安全前提，但參、表格的版面／顏色保護不得阻擋它：
 
-- 第一張表格、巢狀表格、小表格（cell_count ≤ 4）、特殊顏色跳過表格：在到達本步驟前就已跳過，本功能不執行。
+- 第一張表格、巢狀表格 color-only 或完整跳過、小表格（cell_count ≤ 4）、特殊顏色跳過表格：在到達本步驟前就已被排除，本功能不執行。
 - 全域 `fix_table_layout=False`：不會因為本功能啟用而自動套 footer（`table_footer_note_source_format_skipped_reason = layout not adjusted for this table`）。
 - 一般表格：`effective_fix_table_layout=True` 時才記錄並在 final post-process 套用。
 - 參、表格：若全域 `fix_table_layout=True`，即使 `skip_chapter_three_table_layout=True` 使 `effective_fix_table_layout=False`，仍會記錄並在 final post-process 套用；`skip_chapter_three_table_color=True` 也不會阻擋。這只套 footer 格式，不會呼叫一般 `process_table()`，因此參、表格的 width、layout、欄寬與顏色保護仍維持。

@@ -62,6 +62,7 @@ class ProcessSummary:
     skipped_first_page_tables: int = 0
     skipped_small_tables: int = 0
     skipped_nested_tables: int = 0
+    nested_table_color_only_tables: int = 0
     special_color_skipped_tables: int = 0
     section_three_protected_tables: int = 0
     double_border_tables: int = 0

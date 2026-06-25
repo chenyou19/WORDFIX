@@ -17,7 +17,7 @@ GUI 由 `main.py` 在沒有輸入、輸出檔參數時啟動，主要介面在 `
 | 階層 1、2 標題下方普通內文首行縮排兩個中文字 | `level1_level2_body_first_line_indent` | 勾選 |
 | XML 判斷非 14pt 時使用 Word COM 確認內文字號 | `word_com_check_body_font` | 不勾選 |
 | 不要輸出 log 檔 | `skip_log_output` | 勾選 |
-| 表格中有表格不調整 | `skip_nested_tables` | 勾選 |
+| 巢狀表格不調整版面（仍調整顏色） | `skip_nested_tables` | 勾選 |
 | 參、價格形成之主要因素分析：表格版面不調整 | `skip_chapter_three_table_layout` | 勾選 |
 | 參、價格形成之主要因素分析：表格顏色不調整 | `skip_chapter_three_table_color` | 勾選 |
 | 參、價格形成之主要因素分析：縮排不調整 | `skip_chapter_three_indents` | 不勾選 |
@@ -54,7 +54,7 @@ GUI 由 `main.py` 在沒有輸入、輸出檔參數時啟動，主要介面在 `
 
 ## 保護選項
 
-- **表格中有表格不調整**：預設勾選，對應 `skip_nested_tables=True`。表格本身在另一張表格內，或表格內含另一張表格，都會跳過。
+- **巢狀表格不調整版面（仍調整顏色）**：預設勾選，對應 `skip_nested_tables=True`。表格本身在另一張表格內，或表格內含另一張表格時，版面不調整；若全域啟用表格顏色修正，仍會只處理各表格自己的直屬 cell 底色。
 - **參、價格形成之主要因素分析：表格版面不調整**：只停用該章內表格版面處理，不影響底色。
 - **參、價格形成之主要因素分析：表格顏色不調整**：只停用該章內表格底色處理，不影響版面。
 - **參、價格形成之主要因素分析：縮排不調整**：只停用該章內段落縮排、firstLine、hanging、tabs、字元縮排清理與 Word COM 內文縮排補救；真正標題的 outline level 仍會恢復。

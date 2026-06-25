@@ -26,7 +26,7 @@
 
 ## 表格與顏色
 
-- `docx_fixer/table_pipeline.py`：逐張表格處理順序、第一張表格跳過、巢狀表格跳過、參章表格保護、特殊/一般表格判斷、table log record。
+- `docx_fixer/table_pipeline.py`：逐張表格處理順序、第一張表格跳過、巢狀表格版面保護與 color-only 分支、參章表格保護、特殊/一般表格判斷、table log record。
 - `docx_fixer/table_format.py`：一般表格格式、特殊表格格式、右對齊 autofit 格式、表格內文字與列高格式、底色處理呼叫。
 - `docx_fixer/table_word_com.py`：一般表格的 Word COM AutoFit 流程，順序是 `AutoFitContent` 再 `AutoFitWindow`。
 - `docx_fixer/shading.py`：底色判斷，包含預設灰、無色、灰色深淺、theme 色彩與非灰色清除。

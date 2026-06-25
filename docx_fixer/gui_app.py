@@ -286,7 +286,7 @@ class DocxFixerApp:
 
         ttk.Checkbutton(
             advanced_option_frame,
-            text="表格中有表格不調整",
+            text="巢狀表格不調整版面（仍調整顏色）",
             variable=self.skip_nested_tables_var,
         ).grid(row=1, column=0, pady=4, sticky="w")
 

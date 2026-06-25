@@ -7,6 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 
 from docx_fixer.constants import (
+    BUILTIN_PREFACE_OUTLINE_INDENTS,
+    BUILTIN_TEMPLATE_OUTLINE_INDENTS,
     DEFAULT_HEADING_TEXT_START_OFFSET_CM,
     PREFACE_OUTLINE_INDENTS,
     TEMPLATE_OUTLINE_INDENTS,
@@ -21,6 +23,14 @@ from docx_fixer.indent_settings import (
     spec_to_cm_values,
     twips_to_cm,
 )
+
+
+def assert_settings_row_matches_spec(test_case: unittest.TestCase, row: dict, spec: dict[str, str]) -> None:
+    number_start_cm, hanging_cm, heading_text_start_cm, body_left_cm = spec_to_cm_values(spec)
+    test_case.assertAlmostEqual(float(row["number_start_cm"]), number_start_cm, places=2)
+    test_case.assertAlmostEqual(float(row["hanging_cm"]), hanging_cm, places=2)
+    test_case.assertAlmostEqual(float(row["heading_text_start_cm"]), heading_text_start_cm, places=2)
+    test_case.assertAlmostEqual(float(row["body_left_cm"]), body_left_cm, places=2)
 
 
 class IndentSettingsTests(unittest.TestCase):
@@ -77,64 +87,42 @@ class IndentSettingsTests(unittest.TestCase):
         self.assertAlmostEqual(body_left_cm, 9.25, places=2)
         self.assertAlmostEqual(number_start_cm + hanging_cm, 3.75, places=2)
 
-    def test_current_settings_expose_new_body_indent_defaults_for_gui(self):
+    def test_current_settings_expose_current_body_indent_defaults_for_gui(self):
         settings = current_indent_settings()
-        expected = [
-            (-0.04, 1.27, 1.23),
-            (0.73, 1.13, 1.86),
-            (1.51, 1.48, 2.99),
-            (3.49, 0.50, 3.99),
-            (3.74, 1.23, 4.96),
-            (5.45, 0.50, 5.95),
-            (4.70, 1.23, 5.94),
-            (5.94, 0.49, 6.85),
-            (7.72, 1.24, 8.96),
-        ]
 
-        for row, (number_start_cm, hanging_cm, body_left_cm) in zip(settings["body"], expected):
+        for row in settings["body"]:
             with self.subTest(level=row["level"]):
-                self.assertAlmostEqual(float(row["number_start_cm"]), number_start_cm, places=2)
-                self.assertAlmostEqual(float(row["hanging_cm"]), hanging_cm, places=2)
-                self.assertAlmostEqual(
-                    float(row["heading_text_start_cm"]),
-                    body_left_cm + DEFAULT_HEADING_TEXT_START_OFFSET_CM,
-                    places=2,
-                )
-                self.assertAlmostEqual(float(row["body_left_cm"]), body_left_cm, places=2)
+                assert_settings_row_matches_spec(self, row, TEMPLATE_OUTLINE_INDENTS[int(row["level"])])
 
-    def test_built_in_body_and_preface_heading_text_start_defaults_from_body_left(self):
+    def test_built_in_body_and_preface_settings_match_builtin_specs(self):
         settings = built_in_indent_settings()
 
-        for section in ("body", "preface"):
-            for row in settings[section]:
-                with self.subTest(section=section, level=row["level"]):
-                    self.assertAlmostEqual(
-                        float(row["heading_text_start_cm"]),
-                        float(row["body_left_cm"]) + DEFAULT_HEADING_TEXT_START_OFFSET_CM,
-                        places=2,
-                    )
+        for row in settings["body"]:
+            with self.subTest(section="body", level=row["level"]):
+                assert_settings_row_matches_spec(self, row, BUILTIN_TEMPLATE_OUTLINE_INDENTS[int(row["level"])])
+
+        for row in settings["preface"]:
+            level = int(row["level"])
+            spec = BUILTIN_PREFACE_OUTLINE_INDENTS.get(level, BUILTIN_TEMPLATE_OUTLINE_INDENTS[level])
+            with self.subTest(section="preface", level=row["level"]):
+                assert_settings_row_matches_spec(self, row, spec)
 
     def test_body_left_is_independent_from_heading_left(self):
         settings = current_indent_settings()
-        level_8 = settings["body"][7]
+        row = settings["body"][4]
+        spec = TEMPLATE_OUTLINE_INDENTS[4]
 
-        heading_left = float(level_8["number_start_cm"]) + float(level_8["hanging_cm"])
-        self.assertAlmostEqual(heading_left, 6.43, places=2)
-        self.assertAlmostEqual(float(level_8["body_left_cm"]), 6.85, places=2)
-        self.assertNotAlmostEqual(float(level_8["body_left_cm"]), heading_left, places=2)
+        heading_left = float(row["number_start_cm"]) + float(row["hanging_cm"])
+        self.assertAlmostEqual(heading_left, twips_to_cm(spec["left"]), places=2)
+        self.assertAlmostEqual(float(row["body_left_cm"]), twips_to_cm(spec["body_left"]), places=2)
+        self.assertNotAlmostEqual(float(row["body_left_cm"]), heading_left, places=2)
 
     def test_heading_left_is_computed_from_number_start_and_hanging(self):
-        expected = {
-            3: 3.49 + 0.50,
-            5: 5.45 + 0.50,
-            7: 5.94 + 0.49,
-        }
-
-        for level, heading_left_cm in expected.items():
+        for level in (3, 5, 7):
             with self.subTest(level=level):
                 spec = TEMPLATE_OUTLINE_INDENTS[level]
                 number_start_cm, hanging_cm, _heading_text_start_cm, _body_left_cm = spec_to_cm_values(spec)
-                self.assertAlmostEqual(number_start_cm + hanging_cm, heading_left_cm, delta=0.01)
+                self.assertAlmostEqual(number_start_cm + hanging_cm, twips_to_cm(spec["left"]), delta=0.01)
 
     def test_built_in_settings_ignore_loaded_or_applied_overrides(self):
         settings = current_indent_settings()
@@ -145,15 +133,9 @@ class IndentSettingsTests(unittest.TestCase):
         apply_indent_settings(settings)
 
         builtin_level_four = built_in_indent_settings()["body"][3]
+        builtin_spec = BUILTIN_TEMPLATE_OUTLINE_INDENTS[3]
 
-        self.assertAlmostEqual(float(builtin_level_four["number_start_cm"]), 3.49, places=2)
-        self.assertAlmostEqual(float(builtin_level_four["hanging_cm"]), 0.50, places=2)
-        self.assertAlmostEqual(
-            float(builtin_level_four["heading_text_start_cm"]),
-            float(builtin_level_four["body_left_cm"]) + DEFAULT_HEADING_TEXT_START_OFFSET_CM,
-            places=2,
-        )
-        self.assertAlmostEqual(float(builtin_level_four["body_left_cm"]), 3.99, places=2)
+        assert_settings_row_matches_spec(self, builtin_level_four, builtin_spec)
 
     def test_save_and_load_settings_round_trips_preface_values(self):
         settings = current_indent_settings()

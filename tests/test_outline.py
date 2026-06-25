@@ -15,14 +15,14 @@ from docx_fixer.constants import (
 )
 from docx_fixer.models import ProcessSummary
 from docx_fixer.numbering import (
-    TAB_SUFFIX_OUTLINE_LEVELS,
+    SPACE_SUFFIX_OUTLINE_LEVELS,
     apply_numbering_outline_format,
     apply_styles_outline_format_to_root,
     build_numbering_format_lookup,
     build_numbering_level_lookup,
     detect_valid_auto_heading_level,
     force_clean_numbering_suffix_tabs,
-    uses_tab_suffix,
+    numbering_suffix_for_level,
 )
 from docx_fixer.style_resolver import build_style_font_size_lookup
 from docx_fixer.indent_settings import twips_to_cm
@@ -340,7 +340,7 @@ def build_recognizable_nine_level_numbering(*, pollute: bool = False):
         text_el.set(qn("val"), lvl_text + (" \t　" if pollute else ""))
         if pollute:
             suff = etree.SubElement(lvl, qn("suff"))
-            suff.set(qn("val"), "space")  # deliberately wrong for every level
+            suff.set(qn("val"), "tab")  # deliberately wrong for every level
             pPr = etree.SubElement(lvl, qn("pPr"))
             tabs = etree.SubElement(pPr, qn("tabs"))
             for pos in ("111", "222"):  # wrong type, wrong position, duplicated
@@ -355,19 +355,11 @@ def build_recognizable_nine_level_numbering(*, pollute: bool = False):
 
 
 def assert_level_suffix_rule(testcase, lvl, level):
-    """Assert one numbering w:lvl matches the central tab-suffix rule."""
+    """Assert one numbering w:lvl matches the central suffix rule."""
     suff = lvl.find("./w:suff", NS)
     tabs = lvl.find("./w:pPr/w:tabs", NS)
-    if uses_tab_suffix(level):
-        testcase.assertEqual(suff.get(qn("val")), "tab")
-        testcase.assertIsNotNone(tabs)
-        tab_list = tabs.findall("./w:tab", NS)
-        testcase.assertEqual(len(tab_list), 1)
-        testcase.assertEqual(tab_list[0].get(qn("val")), "left")
-        testcase.assertEqual(tab_list[0].get(qn("pos")), TEMPLATE_OUTLINE_INDENTS[level]["heading_text_start"])
-    else:
-        testcase.assertEqual(suff.get(qn("val")), "nothing")
-        testcase.assertIsNone(tabs)
+    testcase.assertEqual(suff.get(qn("val")), numbering_suffix_for_level(level))
+    testcase.assertIsNone(tabs)
     lvl_text = lvl.find("./w:lvlText", NS)
     if lvl_text is not None and lvl_text.get(qn("val")) is not None:
         testcase.assertFalse(lvl_text.get(qn("val")).endswith((" ", "\t", "　")))
@@ -417,20 +409,26 @@ class OutlineFixTests(unittest.TestCase):
     def test_template_indents_match_requested_number_start(self):
         self.assertTrue(validate_template_outline_indents())
 
-    def test_template_indents_match_requested_cm_values(self):
+    def test_template_indents_match_current_cm_values(self):
         expected = {
-            0: (1.23, -0.04, 1.27, 1.23),
-            1: (1.86, 0.73, 1.13, 1.86),
-            2: (2.99, 1.51, 1.48, 2.99),
-            3: (3.99, 3.49, 0.50, 3.99),
-            4: (4.97, 3.74, 1.23, 4.96),
-            5: (5.95, 5.45, 0.50, 5.95),
-            6: (5.93, 4.70, 1.23, 5.94),
-            7: (6.43, 5.94, 0.49, 6.85),
-            8: (8.96, 7.72, 1.24, 8.96),
+            0: (1.23, -0.04, 1.27, 1.23, 2.08),
+            1: (1.86, 0.73, 1.13, 1.86, 2.71),
+            2: (2.99, 1.51, 1.48, 2.99, 3.84),
+            3: (3.98, 3.11, 0.87, 3.98, 4.84),
+            4: (4.96, 3.74, 1.22, 4.98, 5.81),
+            5: (5.97, 5.16, 0.81, 5.97, 6.80),
+            6: (6.96, 5.93, 1.03, 6.96, 8.60),
+            7: (8.10, 7.04, 1.06, 8.10, 8.72),
+            8: (8.60, 7.72, 0.88, 8.60, 9.81),
         }
 
-        for level, (left_cm, number_start_cm, hanging_cm, body_left_cm) in expected.items():
+        for level, (
+            left_cm,
+            number_start_cm,
+            hanging_cm,
+            body_left_cm,
+            heading_text_start_cm,
+        ) in expected.items():
             with self.subTest(level=level):
                 spec = TEMPLATE_OUTLINE_INDENTS[level]
                 self.assertAlmostEqual(twips_to_cm(spec["left"]), left_cm, places=2)
@@ -438,7 +436,7 @@ class OutlineFixTests(unittest.TestCase):
                 self.assertAlmostEqual(twips_to_cm(spec["hanging"]), hanging_cm, places=2)
                 self.assertAlmostEqual(
                     twips_to_cm(spec["heading_text_start"]),
-                    body_left_cm + 0.85,
+                    heading_text_start_cm,
                     places=2,
                 )
                 self.assertAlmostEqual(twips_to_cm(spec["body_left"]), body_left_cm, places=2)
@@ -1518,10 +1516,11 @@ class OutlineFixTests(unittest.TestCase):
 
         expected_left = TEMPLATE_OUTLINE_INDENTS[3]["body_left"]
         assert_body_indent_hard_override(self, body, expected_left)
-        self.assertAlmostEqual(twips_to_cm(expected_left), 3.99, places=2)
+        expected_left_cm = twips_to_cm(expected_left)
+        self.assertAlmostEqual(expected_left_cm, 3.98, places=2)
         debug = "\n".join(summary.body_indent_debug_logs)
         self.assertIn("heading_level=3", debug)
-        self.assertIn("spec_body_left_cm=3.99", debug)
+        self.assertIn(f"spec_body_left_cm={expected_left_cm:.2f}", debug)
         self.assertIn("spec_firstLine_twips=None", debug)
         self.assertIn(f"written_left_twips={expected_left}", debug)
         self.assertIn("tab_pos=None", debug)
@@ -2300,7 +2299,7 @@ class OutlineFixTests(unittest.TestCase):
             (decimal_ind.get(qn("left")), decimal_ind.get(qn("hanging"))),
             expected_indent(3),
         )
-        # decimal "%1." is outline level 3, a tab-suffix level.
+        # decimal "%1." is outline level 3, a space-suffix level.
         assert_level_suffix_rule(self, decimal_lvl, 3)
         self.assertEqual(decimal_lvl_jc.get(qn("val")), "left")
 
@@ -2449,7 +2448,7 @@ class OutlineFixTests(unittest.TestCase):
         updated_root = etree.fromstring(updated)
         updated_override_lvl = updated_root.xpath("./w:num/w:lvlOverride/w:lvl", namespaces=NS)[0]
 
-        # The override's own decimal "%1." is outline level 3, a tab-suffix level.
+        # The override's own decimal "%1." is outline level 3, a space-suffix level.
         assert_level_suffix_rule(self, updated_override_lvl, 3)
 
     def test_force_clean_numbering_suffix_tabs_cleans_all_levels(self):
@@ -2508,8 +2507,8 @@ class OutlineFixTests(unittest.TestCase):
         # Every level here resolves to outline 0/1/2 (no numFmt -> ilvl fallback),
         # so all are nothing-suffix and all four list tabs are removed.
         self.assertTrue(any("suffixes_set_to_nothing=4" in log for log in logs))
-        self.assertTrue(any("suffixes_set_to_tab=0" in log for log in logs))
-        self.assertTrue(any("tab_stops_rebuilt=0" in log for log in logs))
+        self.assertTrue(any("suffixes_set_to_space=0" in log for log in logs))
+        self.assertFalse(any("tab_stops_rebuilt" in log for log in logs))
         self.assertTrue(any("tab_stops_removed=4" in log for log in logs))
         self.assertTrue(any("lvl_text_trimmed=4" in log for log in logs))
 
@@ -2644,7 +2643,8 @@ class OutlineFixTests(unittest.TestCase):
 
     def test_numbering_xml_suffix_and_tabs_follow_outline_level_rule(self):
         # A. Build recognizable 0-8 numbering with trailing lvlText whitespace and
-        # verify the normal numbering.xml format pass applies the tab-suffix rule.
+        # verify the normal numbering.xml format pass applies the suffix rule.
+        self.assertEqual(SPACE_SUFFIX_OUTLINE_LEVELS, frozenset({3, 5, 7}))
         root = build_recognizable_nine_level_numbering()
         for lvl in root.xpath("./w:abstractNum/w:lvl", namespaces=NS):
             lvl_text = lvl.find("w:lvlText", NS)
@@ -2693,7 +2693,7 @@ class OutlineFixTests(unittest.TestCase):
         updated = apply_numbering_outline_format(etree.tostring(root))
         updated_root = etree.fromstring(updated)
 
-        # Base formats A.(level 5), a.(level 7), 1.(level 3) are all tab-suffix.
+        # Base formats A.(level 5), a.(level 7), 1.(level 3) are all space-suffix.
         expected_levels = {0: 5, 1: 7, 2: 3}
         for ilvl, level in expected_levels.items():
             with self.subTest(ilvl=ilvl):
@@ -2705,8 +2705,8 @@ class OutlineFixTests(unittest.TestCase):
 
     def test_force_clean_numbering_suffix_tabs_applies_nine_level_rule(self):
         # C. Pollute every recognizable level (wrong suffix, wrong/duplicated
-        # tabs, trailing lvlText whitespace); the final hard clean must rebuild
-        # the exact nine-level rule.
+        # tabs, trailing lvlText whitespace); the final hard clean must restore
+        # the exact nine-level rule without rebuilding any tab stops.
         root = build_recognizable_nine_level_numbering(pollute=True)
         logs: list[str] = []
         updated = force_clean_numbering_suffix_tabs(etree.tostring(root), logs=logs)
@@ -2717,11 +2717,11 @@ class OutlineFixTests(unittest.TestCase):
                 lvl = updated_root.xpath(f"./w:abstractNum/w:lvl[@w:ilvl='{level}']", namespaces=NS)[0]
                 assert_level_suffix_rule(self, lvl, level)
 
-        # Five tab-suffix levels (3/5/6/7/8) and four nothing-suffix levels.
-        self.assertTrue(any("suffixes_set_to_tab=5" in log for log in logs))
-        self.assertTrue(any("suffixes_set_to_nothing=4" in log for log in logs))
-        self.assertTrue(any("tab_stops_rebuilt=5" in log for log in logs))
-        self.assertTrue(any("tab_stops_removed=4" in log for log in logs))
+        # Three space-suffix levels (3/5/7) and six nothing-suffix levels.
+        self.assertTrue(any("suffixes_set_to_space=3" in log for log in logs))
+        self.assertTrue(any("suffixes_set_to_nothing=6" in log for log in logs))
+        self.assertFalse(any("tab_stops_rebuilt" in log for log in logs))
+        self.assertTrue(any("tab_stops_removed=9" in log for log in logs))
         self.assertTrue(any("lvl_text_trimmed=9" in log for log in logs))
 
 

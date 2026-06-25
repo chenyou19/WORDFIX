@@ -148,6 +148,7 @@ def run_cli(args) -> int:
     print(f"skipped_first_page_tables={summary.skipped_first_page_tables}")
     print(f"skipped_small_tables={summary.skipped_small_tables}")
     print(f"skipped_nested_tables={summary.skipped_nested_tables}")
+    print(f"nested_table_color_only_tables={summary.nested_table_color_only_tables}")
     print(f"special_color_skipped_tables={summary.special_color_skipped_tables}")
     print(f"cross_page_tables={summary.cross_page_tables}")
     print(f"cross_page_resolved_tables={summary.cross_page_resolved_tables}")
@@ -398,13 +399,13 @@ def parse_args(argv: list[str]):
         action="store_true",
         default=True,
         dest="skip_nested_tables",
-        help="Do not modify tables that contain another table or are inside another table",
+        help="Protect nested table layout; still apply table color rules when --fix-color is enabled",
     )
     parser.add_argument(
         "--no-skip-nested-tables",
         action="store_false",
         dest="skip_nested_tables",
-        help="Allow changes to nested tables and tables that contain nested tables",
+        help="Allow full table changes to nested tables and tables that contain nested tables",
     )
     parser.add_argument(
         "--skip-all-under-chapter-three",

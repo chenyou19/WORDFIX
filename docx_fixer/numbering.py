@@ -13,20 +13,18 @@ PAREN_PAIRS = {
 
 
 # Single source of truth for the number-suffix rule. Logical outline levels in
-# this set render their number with a trailing tab stop (w:suff="tab"); every
-# other recognized level - and any unrecognized numbering - uses no separator
-# (w:suff="nothing"). No other code may hard-code this set or pick
-# "tab"/"nothing" directly; everything routes through uses_tab_suffix() /
-# numbering_suffix_for_level().
-TAB_SUFFIX_OUTLINE_LEVELS = frozenset({3, 5, 6, 7, 8})
+# this set render their number with a suffix space (w:suff="space"); every other
+# recognized level - and any unrecognized numbering - uses no separator
+# (w:suff="nothing"). No numbering level keeps or creates w:pPr/w:tabs.
+SPACE_SUFFIX_OUTLINE_LEVELS = frozenset({3, 5, 7})
 
 
-def uses_tab_suffix(level: int | None) -> bool:
-    return level in TAB_SUFFIX_OUTLINE_LEVELS
+def uses_space_suffix(level: int | None) -> bool:
+    return level in SPACE_SUFFIX_OUTLINE_LEVELS
 
 
 def numbering_suffix_for_level(level: int | None) -> str:
-    return "tab" if uses_tab_suffix(level) else "nothing"
+    return "space" if uses_space_suffix(level) else "nothing"
 
 
 def _heading_text_start_twips(spec: dict[str, str]) -> str:
@@ -45,25 +43,6 @@ def _set_level_suffix(lvl, desired: str) -> bool:
     return False
 
 
-def _rebuild_single_left_tab(pPr, pos_twips: str) -> bool:
-    """Ensure pPr holds exactly one left tab stop at pos_twips. Returns changed."""
-    tabs = pPr.find("w:tabs", NS)
-    if tabs is not None:
-        tab_list = tabs.findall("w:tab", NS)
-        if (
-            len(tab_list) == 1
-            and tab_list[0].get(qn("val")) == "left"
-            and tab_list[0].get(qn("pos")) == pos_twips
-        ):
-            return False
-        pPr.remove(tabs)
-    tabs = etree.SubElement(pPr, qn("tabs"))
-    tab = etree.SubElement(tabs, qn("tab"))
-    tab.set(qn("val"), "left")
-    tab.set(qn("pos"), pos_twips)
-    return True
-
-
 def _remove_level_tabs(pPr) -> bool:
     if pPr is None:
         return False
@@ -77,30 +56,19 @@ def _remove_level_tabs(pPr) -> bool:
 def normalize_level_suffix_and_tabs(lvl, outline_level: int | None) -> dict[str, object]:
     """Apply the central number-suffix rule to one numbering level.
 
-    Tab-suffix levels (TAB_SUFFIX_OUTLINE_LEVELS) get w:suff="tab" plus a single
-    left tab stop at TEMPLATE_OUTLINE_INDENTS[level]["heading_text_start"].
-    Every other level - including unrecognized numbering
-    (outline_level=None) - gets w:suff="nothing" and no tab stops. Indentation
-    values and numbering text are left untouched. Returns a dict describing the
-    final suffix and which structural changes happened, for logging.
+    Space-suffix levels (SPACE_SUFFIX_OUTLINE_LEVELS) get w:suff="space".
+    Every other level - including unrecognized numbering (outline_level=None) -
+    gets w:suff="nothing". All levels drop w:pPr/w:tabs. Indentation values and
+    numbering text are left untouched. Returns a dict describing the final
+    suffix and which structural changes happened, for logging.
     """
     result: dict[str, object] = {
-        "suffix": "nothing",
+        "suffix": numbering_suffix_for_level(outline_level),
         "suffix_changed": False,
-        "tab_rebuilt": False,
         "tab_removed": False,
     }
 
-    spec = TEMPLATE_OUTLINE_INDENTS.get(outline_level) if uses_tab_suffix(outline_level) else None
-    if spec is not None:
-        result["suffix"] = "tab"
-        result["suffix_changed"] = _set_level_suffix(lvl, "tab")
-        pPr = get_or_add(lvl, "pPr")
-        result["tab_rebuilt"] = _rebuild_single_left_tab(pPr, _heading_text_start_twips(spec))
-        return result
-
-    result["suffix"] = "nothing"
-    result["suffix_changed"] = _set_level_suffix(lvl, "nothing")
+    result["suffix_changed"] = _set_level_suffix(lvl, result["suffix"])
     result["tab_removed"] = _remove_level_tabs(lvl.find("w:pPr", NS))
     return result
 
@@ -108,14 +76,14 @@ def normalize_level_suffix_and_tabs(lvl, outline_level: int | None) -> dict[str,
 def sanitize_numbering_level_suffix_tabs_and_text(lvl, outline_level: int | None = None) -> bool:
     """Normalize one numbering level's suffix, tab stop, and lvlText whitespace.
 
-    The number suffix follows the central tab-suffix rule via
-    normalize_level_suffix_and_tabs(): tab-suffix levels keep a single left tab
-    stop, all other levels (and unrecognized numbering) drop tabs. Trailing
-    spaces / tabs / ideographic spaces in w:lvlText are always stripped, so a tab
-    is realized only by w:suff="tab" and never baked into the numbering text.
+    The number suffix follows the central space-suffix rule via
+    normalize_level_suffix_and_tabs(): levels 3/5/7 use w:suff="space", all other
+    levels (and unrecognized numbering) use w:suff="nothing", and all levels
+    drop tabs. Trailing spaces / tabs / ideographic spaces in w:lvlText are
+    always stripped so spacing is realized only by w:suff.
     """
     result = normalize_level_suffix_and_tabs(lvl, outline_level)
-    changed = bool(result["suffix_changed"] or result["tab_rebuilt"] or result["tab_removed"])
+    changed = bool(result["suffix_changed"] or result["tab_removed"])
 
     lvl_text = lvl.find("w:lvlText", NS)
     if lvl_text is not None:
@@ -196,13 +164,13 @@ def force_clean_numbering_suffix_tabs(
 ) -> bytes | None:
     """Final hard clean of numbering suffixes and list tabs after Word COM.
 
-    Applies the central tab-suffix rule per logical outline level: tab-suffix
-    levels (3/5/6/7/8) keep w:suff="tab" plus a single left tab stop at
-    heading_text_start, while every other recognized level - and any unrecognized numbering -
-    gets w:suff="nothing" with no tab stops. Trailing whitespace in w:lvlText is
-    always stripped. Only w:suff, w:pPr/w:tabs, and trailing w:lvlText whitespace
-    are touched; indentation values are left intact. Excluded TOC or protected
-    chapter numbering definitions are left completely untouched.
+    Applies the central space-suffix rule per logical outline level: levels
+    3/5/7 get w:suff="space", while every other recognized level - and any
+    unrecognized numbering - gets w:suff="nothing". All w:pPr/w:tabs are removed.
+    Trailing whitespace in w:lvlText is always stripped. Only w:suff,
+    w:pPr/w:tabs, and trailing w:lvlText whitespace are touched; indentation
+    values are left intact. Excluded TOC or protected chapter numbering
+    definitions are left completely untouched.
     """
     if not numbering_xml:
         return numbering_xml
@@ -218,9 +186,8 @@ def force_clean_numbering_suffix_tabs(
     levels_total = 0
     levels_cleaned = 0
     levels_skipped_protected = 0
-    suffixes_set_to_tab = 0
+    suffixes_set_to_space = 0
     suffixes_set_to_nothing = 0
-    tab_stops_rebuilt = 0
     tab_stops_removed = 0
     lvl_text_trimmed = 0
     excluded_numbering_pairs = excluded_numbering_pairs or set()
@@ -294,7 +261,7 @@ def force_clean_numbering_suffix_tabs(
                     f"abstractNumId={abstract_id}; "
                     f"excluded_numIds={','.join(protected_num_ids) or 'none'}; "
                     f"body_heading_numIds={','.join(included_num_ids_for_abstract) or 'unknown'}; "
-                    "reason=body_heading_numbering_must_not_keep_w:suff=tab"
+                    "reason=body_heading_numbering_must_follow_suffix_rule"
                 )
 
     def should_skip_level(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
@@ -336,20 +303,16 @@ def force_clean_numbering_suffix_tabs(
         return resolve_level_outline_level(num_fmt, lvl_text, ilvl)
 
     def clean_level(lvl, outline_level: int | None) -> bool:
-        nonlocal changed, suffixes_set_to_tab, suffixes_set_to_nothing
-        nonlocal tab_stops_rebuilt, tab_stops_removed, lvl_text_trimmed
+        nonlocal changed, suffixes_set_to_space, suffixes_set_to_nothing
+        nonlocal tab_stops_removed, lvl_text_trimmed
         level_changed = False
 
         result = normalize_level_suffix_and_tabs(lvl, outline_level)
-        if result["suffix"] == "tab":
-            suffixes_set_to_tab += 1
+        if result["suffix"] == "space":
+            suffixes_set_to_space += 1
         else:
             suffixes_set_to_nothing += 1
         if result["suffix_changed"]:
-            changed = True
-            level_changed = True
-        if result["tab_rebuilt"]:
-            tab_stops_rebuilt += 1
             changed = True
             level_changed = True
         if result["tab_removed"]:
@@ -408,9 +371,8 @@ def force_clean_numbering_suffix_tabs(
             f"levels_total={levels_total}; "
             f"levels_cleaned={levels_cleaned}; "
             f"levels_skipped_protected={levels_skipped_protected}; "
-            f"suffixes_set_to_tab={suffixes_set_to_tab}; "
+            f"suffixes_set_to_space={suffixes_set_to_space}; "
             f"suffixes_set_to_nothing={suffixes_set_to_nothing}; "
-            f"tab_stops_rebuilt={tab_stops_rebuilt}; "
             f"tab_stops_removed={tab_stops_removed}; "
             f"lvl_text_trimmed={lvl_text_trimmed}; "
             f"changed={'true' if changed else 'false'}"
@@ -680,10 +642,9 @@ def build_style_numbering_lookup(styles_xml: bytes | None) -> dict[str, tuple[st
 def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str] | None = None) -> None:
     """Normalize a numbering level to the configured outline geometry.
 
-    The number suffix follows the central tab-suffix rule
-    (numbering_suffix_for_level): tab-suffix levels (3/5/6/7/8) use
-    w:suff="tab" with a single left tab stop at heading_text_start;
-    all other levels use w:suff="nothing" and have their tab stops removed so
+    The number suffix follows the central space-suffix rule
+    (numbering_suffix_for_level): levels 3/5/7 use w:suff="space";
+    all other levels use w:suff="nothing". All level tab stops are removed so
     Word cannot reopen the file and push the effective indent via a list tab.
     """
     from .indent_settings import twips_to_cm
@@ -716,7 +677,7 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
         pPr,
         spec,
         "heading_numbered",
-        use_tab_stop=uses_tab_suffix(level),
+        use_tab_stop=False,
     )
 
     if change_logs is not None:
@@ -727,7 +688,7 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
             if written.get("tab_pos") is not None
             else "None"
         )
-        expected_tab_pos_cm = f"{twips_to_cm(expected_heading_text_start):.2f}" if uses_tab_suffix(level) else "None"
+        expected_tab_pos_cm = "None"
         change_logs.append(
             "NUMBERING_XML_LEVEL_INDENT: "
             f"level={level}; "
@@ -1035,8 +996,8 @@ def apply_numbering_outline_format(
             changed = apply_numbering_level_body_text_format(lvl) or changed
             continue
 
-        # Resolve the logical outline level BEFORE sanitizing so the suffix/tab
-        # normalization keeps (not deletes) the tab for tab-suffix levels.
+        # Resolve the logical outline level BEFORE sanitizing so the suffix
+        # normalization can choose space vs. nothing from the central rule.
         outline_level = resolve_level_outline_level(num_fmt, lvl_text, ilvl)
         changed = sanitize_numbering_level_suffix_tabs_and_text(lvl, outline_level) or changed
 
@@ -1185,15 +1146,14 @@ def apply_styles_outline_format_to_root(
                 continue
             if pPr is None:
                 pPr = get_or_add(style, "pPr")
-            # w:suff lives on numbering.xml's w:lvl, not in styles.xml; here we
-            # only mirror the matching paragraph tab-stop geometry so the style's
-            # number aligns with the level's text start. suffix is for logging.
+            # w:suff lives on numbering.xml's w:lvl, not in styles.xml. The
+            # suffix is kept here only for logging; style tabs are also removed.
             suffix = numbering_suffix_for_level(level)
             written = apply_indent_spec_to_pPr(
                 pPr,
                 spec,
                 "heading_numbered",
-                use_tab_stop=uses_tab_suffix(level),
+                use_tab_stop=False,
             )
             changed = True
             if change_logs is not None:
@@ -1203,9 +1163,7 @@ def apply_styles_outline_format_to_root(
                     else "None"
                 )
                 expected_heading_text_start = _heading_text_start_twips(spec)
-                expected_tab_pos_cm = (
-                    f"{twips_to_cm(expected_heading_text_start):.2f}" if uses_tab_suffix(level) else "None"
-                )
+                expected_tab_pos_cm = "None"
                 change_logs.append(
                     "STYLES_XML_NUMBERED_STYLE_INDENT: "
                     f"styleId={style_id}; kind=auto(style); level={level}; "

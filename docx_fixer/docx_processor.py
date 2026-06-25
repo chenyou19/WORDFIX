@@ -23,7 +23,7 @@ from .numbering import (
     build_numbering_level_lookup,
     build_style_numbering_lookup,
     has_auto_numbering,
-    uses_tab_suffix,
+    numbering_suffix_for_level,
 )
 from .outline import (
     detect_manual_numbering_prefix,
@@ -252,7 +252,7 @@ def _auto_suffix_details(
         suffix = raw_suffix
     else:
         suffix = "other"
-    effective_suffix = "tab" if suffix == "missing" else suffix
+    effective_suffix = numbering_suffix_for_level(outline_level) if suffix == "missing" else suffix
 
     tab_pos = level_format.get("tab_pos")
     left = level_format.get("left")
@@ -263,11 +263,7 @@ def _auto_suffix_details(
     expected_heading_text_start = (
         spec.get("heading_text_start", spec["left"]) if spec is not None else None
     )
-    expected_tab_pos = (
-        expected_heading_text_start
-        if uses_tab_suffix(outline_level)
-        else None
-    )
+    expected_tab_pos = None
     lvl_text = level_format.get("lvlText")
     return {
         "suffix": suffix,

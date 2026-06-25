@@ -110,7 +110,7 @@ class GuiAppTests(unittest.TestCase):
         self.assertIn("skip_log_output_var", gui_source)
         self.assertIn("不要輸出 log 檔", gui_source)
         self.assertIn("skip_nested_tables_var", gui_source)
-        self.assertIn("表格中有表格不調整", gui_source)
+        self.assertIn("巢狀表格不調整版面（仍調整顏色）", gui_source)
 
     def test_table_note_move_options_are_hidden_and_forced_false_in_gui(self):
         gui_source = Path("docx_fixer/gui_app.py").read_text(encoding="utf-8")

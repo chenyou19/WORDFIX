@@ -476,34 +476,52 @@ def apply_autofit_contents_right_format(tbl, stop: StopController | None = None)
 def table_has_special_skip_color(
     tbl,
     special_color_skip_colors: tuple[str, ...] | list[str],
+    *,
+    direct_cells_only: bool = False,
 ) -> tuple[bool, list[str]]:
     targets = {color for color in special_color_skip_colors}
     if not targets:
         return False, []
 
     matched: list[str] = []
-    for shd in tbl.xpath(".//w:tc/w:tcPr/w:shd", namespaces=NS):
-        fill_hex = normalize_fill_hex(shd.get(qn("fill")))
-        if fill_hex is not None and fill_hex in targets and fill_hex not in matched:
-            matched.append(fill_hex)
+    for tc in _table_cells_for_color(tbl, direct_cells_only=direct_cells_only):
+        tcPr = tc.find("w:tcPr", NS)
+        if tcPr is None:
+            continue
+        for shd in tcPr.findall("w:shd", NS):
+            fill_hex = normalize_fill_hex(shd.get(qn("fill")))
+            if fill_hex is not None and fill_hex in targets and fill_hex not in matched:
+                matched.append(fill_hex)
     return bool(matched), matched
 
 
 def clear_matching_special_colors(
     tbl,
     special_color_skip_colors: tuple[str, ...] | list[str],
+    *,
+    direct_cells_only: bool = False,
 ) -> int:
     targets = {color for color in special_color_skip_colors}
     if not targets:
         return 0
 
     cleared = 0
-    for shd in tbl.xpath(".//w:tc/w:tcPr/w:shd", namespaces=NS):
-        fill_hex = normalize_fill_hex(shd.get(qn("fill")))
-        if fill_hex is not None and fill_hex in targets:
-            fix_shading_to_no_color(shd)
-            cleared += 1
+    for tc in _table_cells_for_color(tbl, direct_cells_only=direct_cells_only):
+        tcPr = tc.find("w:tcPr", NS)
+        if tcPr is None:
+            continue
+        for shd in tcPr.findall("w:shd", NS):
+            fill_hex = normalize_fill_hex(shd.get(qn("fill")))
+            if fill_hex is not None and fill_hex in targets:
+                fix_shading_to_no_color(shd)
+                cleared += 1
     return cleared
+
+
+def _table_cells_for_color(tbl, *, direct_cells_only: bool = False) -> list:
+    if direct_cells_only:
+        return tbl.xpath("./w:tr/w:tc", namespaces=NS)
+    return tbl.xpath(".//w:tc", namespaces=NS)
 
 
 def apply_table_color(
@@ -513,12 +531,13 @@ def apply_table_color(
     keep_colors: tuple[str, ...] | list[str] = (),
     gray_colors: tuple[str, ...] | list[str] = (),
     gray_target: str = DEFAULT_GRAY,
+    direct_cells_only: bool = False,
 ) -> tuple[int, int, list[str]]:
     changed_to_gray = 0
     cleared_colors = 0
     shading_debug_logs: list[str] = []
 
-    for tc in tbl.xpath(".//w:tc", namespaces=NS):
+    for tc in _table_cells_for_color(tbl, direct_cells_only=direct_cells_only):
         if stop:
             stop.check()
 

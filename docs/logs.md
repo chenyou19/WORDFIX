@@ -32,7 +32,7 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 
 `process_log` 記錄整體摘要與段落處理細節，包含：
 
-- 表格摘要，例如總表格數、跳過第一張表格數、跳過小表格數、跳過巢狀表格數。
+- 表格摘要，例如總表格數、跳過第一張表格數、跳過小表格數、完整跳過巢狀表格數、巢狀表格只調整顏色數。
 - 段落摘要，例如總段落數、跳過 TOC 段落數、跳過表格段落數、移除大綱階層數。
 - 縮排設定快照。
 - 編號縮排量測紀錄。
@@ -117,6 +117,7 @@ WORDFIX 目前有三種主要 log，由 `docx_fixer/process_log.py` 寫出。
 
 - `skipped_first_table`
 - `skipped_nested_table`
+- `nested_table_color_only`
 - `skipped_chapter_three_table`
 - `skipped_small_table`
 - `special_color_skipped_table`

@@ -43,14 +43,15 @@ class ProcessLogTests(unittest.TestCase):
         self.assertTrue(any("12" in line for line in lines))
 
     def test_process_log_writes_numbering_indent_section(self):
-        summary = ProcessSummary(skipped_nested_tables=2)
+        summary = ProcessSummary(skipped_nested_tables=2, nested_table_color_only_tables=3)
         with tempfile.TemporaryDirectory() as tmp:
             output_docx = Path(tmp) / "output.docx"
             log_path = write_process_log(output_docx, summary)
             content = log_path.read_text(encoding="utf-8")
 
         self.assertIn("output.docx", content)
-        self.assertIn("因表格中有表格而跳過的表格數：2", content)
+        self.assertIn("因巢狀表格保護而完整跳過的表格數：2", content)
+        self.assertIn("巢狀表格只調整顏色的表格數：3", content)
 
     def test_indent_settings_snapshot_includes_level_two_body_left(self):
         lines = format_indent_settings_log_lines()

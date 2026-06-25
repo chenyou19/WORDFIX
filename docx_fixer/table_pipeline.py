@@ -12,6 +12,7 @@ from .protected_region import (
 )
 from .table_format import (
     apply_double_black_table_borders,
+    apply_table_color,
     clear_matching_special_colors,
     process_table,
     table_cell_count,
@@ -730,10 +731,146 @@ def process_tables_in_part(
             summary.skipped_first_page_tables += 1
             continue
 
-        if getattr(options, "skip_nested_tables", True) and (
-            is_nested_table(tbl) or contains_nested_table(tbl)
-        ):
-            summary.skipped_nested_tables += 1
+        nested_protected = bool(
+            getattr(options, "skip_nested_tables", True)
+            and (is_nested_table(tbl) or contains_nested_table(tbl))
+        )
+        is_chapter_three_table = protected_context.is_table_protected(tbl, part_name)
+
+        # Compute protection gates before any table layout/color branch.
+        # Nested tables return before note-moving, footer formatting, layout
+        # fixes, or Word COM queuing; non-nested tables evaluate note movement
+        # after these protection booleans are known.
+        chapter_three_table_layout_skipped = bool(
+            is_chapter_three_table and getattr(options, "skip_chapter_three_table_layout", False)
+        )
+        chapter_three_table_color_skipped = bool(
+            is_chapter_three_table and getattr(options, "skip_chapter_three_table_color", False)
+        )
+        effective_fix_table_layout = bool(options.fix_table_layout)
+        effective_fix_color = bool(options.fix_color)
+        if chapter_three_table_layout_skipped:
+            effective_fix_table_layout = False
+        if chapter_three_table_color_skipped:
+            effective_fix_color = False
+        effective_options = replace(
+            options,
+            fix_table_layout=effective_fix_table_layout,
+            fix_color=effective_fix_color,
+        )
+        special_color_matched = False
+        matched_skip_colors: list[str] = []
+        if skip_special_color_tables and special_color_skip_colors:
+            special_color_matched, matched_skip_colors = table_has_special_skip_color(
+                tbl,
+                special_color_skip_colors,
+                direct_cells_only=nested_protected,
+            )
+
+        if nested_protected:
+            note_fields = _note_log_fields(
+                move_notes_enabled,
+                None,
+                skip_chapter_three_table_notes_enabled=skip_chapter_three_table_notes,
+            )
+
+            if not effective_fix_color:
+                if is_chapter_three_table and section_three_enabled:
+                    summary.section_three_protected_tables += 1
+                summary.skipped_nested_tables += 1
+                reason = "nested table protected; table contains or is inside another table"
+                if is_chapter_three_table and chapter_three_table_color_skipped:
+                    reason = _chapter_three_table_skip_reason(
+                        layout_skipped=chapter_three_table_layout_skipped,
+                        color_skipped=chapter_three_table_color_skipped,
+                    )
+                summary.table_log_records.append(
+                    build_table_log_record(
+                        part_name=part_name,
+                        table_index=table_index,
+                        global_table_index=global_table_index,
+                        table_name=table_name,
+                        first_level_heading=first_level_heading,
+                        cell_count=cell_count,
+                        column_count=column_count,
+                        table_type="skipped_nested_table",
+                        action="skipped",
+                        reason=reason,
+                        special_layout_used=False,
+                        layout_fixed=False,
+                        color_fixed=False,
+                        changed_to_gray=0,
+                        cleared_colors=0,
+                        chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
+                        chapter_three_table_color_skipped=chapter_three_table_color_skipped,
+                        shading_debug=[],
+                        **note_fields,
+                        **section_fields(
+                            in_protected=is_chapter_three_table,
+                            skipped_by_protection=bool(
+                                is_chapter_three_table and chapter_three_table_color_skipped
+                            ),
+                        ),
+                        **footer_fields(skipped_reason="nested table skipped"),
+                        **common_log_fields,
+                    )
+                )
+                continue
+
+            if skip_special_color_tables and special_color_skip_colors and special_color_matched:
+                special_color_cleared_count = 0
+                if clear_special_colors_after_skip:
+                    special_color_cleared_count = clear_matching_special_colors(
+                        tbl,
+                        special_color_skip_colors,
+                        direct_cells_only=True,
+                    )
+                summary.special_color_skipped_tables += 1
+                summary.table_log_records.append(
+                    build_table_log_record(
+                        part_name=part_name,
+                        table_index=table_index,
+                        global_table_index=global_table_index,
+                        table_name=table_name,
+                        first_level_heading=first_level_heading,
+                        cell_count=cell_count,
+                        column_count=column_count,
+                        table_type="special_color_skipped_table",
+                        action="skipped_special_color_table",
+                        reason="matched special color skip list",
+                        special_layout_used=False,
+                        layout_fixed=False,
+                        color_fixed=special_color_cleared_count > 0,
+                        changed_to_gray=0,
+                        cleared_colors=0,
+                        chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
+                        chapter_three_table_color_skipped=chapter_three_table_color_skipped,
+                        special_color_skip_matched=True,
+                        special_color_skip_colors=matched_skip_colors,
+                        special_color_cleared_count=special_color_cleared_count,
+                        shading_debug=[],
+                        **note_fields,
+                        **section_fields(
+                            in_protected=is_chapter_three_table,
+                            skipped_by_protection=False,
+                        ),
+                        **footer_fields(skipped_reason="special color table skipped"),
+                        **common_log_fields,
+                    )
+                )
+                continue
+
+            changed_to_gray, cleared_colors, shading_debug = apply_table_color(
+                tbl,
+                stop=stop,
+                keep_colors=tuple(getattr(options, "table_keep_colors", ()) or ()),
+                gray_colors=tuple(getattr(options, "table_gray_colors", ()) or ()),
+                gray_target=str(getattr(options, "table_gray_target", "D9D9D9") or "D9D9D9"),
+                direct_cells_only=True,
+            )
+            summary.changed_to_gray += changed_to_gray
+            summary.cleared_colors += cleared_colors
+            summary.nested_table_color_only_tables += 1
             summary.table_log_records.append(
                 build_table_log_record(
                     part_name=part_name,
@@ -743,34 +880,28 @@ def process_tables_in_part(
                     first_level_heading=first_level_heading,
                     cell_count=cell_count,
                     column_count=column_count,
-                    table_type="skipped_nested_table",
-                    action="skipped",
-                    reason="nested table protected; table contains or is inside another table",
+                    table_type="nested_table_color_only",
+                    action="apply_nested_table_color_only",
+                    reason="nested table layout protected; color rules applied to direct cells only",
                     special_layout_used=False,
                     layout_fixed=False,
-                    color_fixed=False,
-                    changed_to_gray=0,
-                    cleared_colors=0,
-                    shading_debug=[],
-                    **_note_log_fields(
-                        move_notes_enabled,
-                        None,
-                        skip_chapter_three_table_notes_enabled=skip_chapter_three_table_notes,
+                    color_fixed=True,
+                    changed_to_gray=changed_to_gray,
+                    cleared_colors=cleared_colors,
+                    chapter_three_table_layout_skipped=chapter_three_table_layout_skipped,
+                    chapter_three_table_color_skipped=chapter_three_table_color_skipped,
+                    shading_debug=shading_debug,
+                    **note_fields,
+                    **section_fields(
+                        in_protected=is_chapter_three_table,
+                        skipped_by_protection=False,
                     ),
-                    **section_fields(in_protected=False, skipped_by_protection=False),
-                    **footer_fields(skipped_reason="nested table skipped"),
+                    **footer_fields(skipped_reason="nested table layout protected"),
                     **common_log_fields,
                 )
             )
             continue
 
-        is_chapter_three_table = protected_context.is_table_protected(tbl, part_name)
-
-        # Move in-table note cells below the table BEFORE any chapter-three
-        # layout/color skip decision. This is an independent feature: the old
-        # 「參、表格版面/顏色不調整」 must not block note moving. Only the new
-        # 「參、不要表格註記搬移」 (skip_chapter_three_table_notes) can block it,
-        # and only for tables inside the generic body 參、 section.
         table_in_section_three_for_notes = (
             protected_context.is_table_in_section_three_for_notes(tbl, part_name)
         )
@@ -800,30 +931,6 @@ def process_tables_in_part(
             skip_chapter_three_table_notes_enabled=skip_chapter_three_table_notes,
             table_notes_skipped_by_chapter_three=skip_note_move_for_this_table,
         )
-        chapter_three_table_layout_skipped = bool(
-            is_chapter_three_table and getattr(options, "skip_chapter_three_table_layout", False)
-        )
-        chapter_three_table_color_skipped = bool(
-            is_chapter_three_table and getattr(options, "skip_chapter_three_table_color", False)
-        )
-        effective_fix_table_layout = bool(options.fix_table_layout)
-        effective_fix_color = bool(options.fix_color)
-        if chapter_three_table_layout_skipped:
-            effective_fix_table_layout = False
-        if chapter_three_table_color_skipped:
-            effective_fix_color = False
-        effective_options = replace(
-            options,
-            fix_table_layout=effective_fix_table_layout,
-            fix_color=effective_fix_color,
-        )
-        special_color_matched = False
-        matched_skip_colors: list[str] = []
-        if skip_special_color_tables and special_color_skip_colors:
-            special_color_matched, matched_skip_colors = table_has_special_skip_color(
-                tbl,
-                special_color_skip_colors,
-            )
 
         # 「表格最後一列說明格式化」 is an independent, opt-in final table
         # post-step. It normally follows tables whose layout is being adjusted,

@@ -41,7 +41,7 @@ def built_in_gui_defaults() -> dict[str, bool]:
         "skip_chapter_three_table_layout": True,
         "skip_chapter_three_table_color": True,
         "skip_chapter_three_indents": False,
-        "skip_chapter_three_numbering_suffix_cleanup": False,
+        "skip_chapter_three_numbering_suffix_cleanup": True,
         # Hidden + force-disabled (see FORCED_FALSE_GUI_DEFAULTS).
         "move_table_notes_below": False,
         "skip_chapter_three_table_notes": False,

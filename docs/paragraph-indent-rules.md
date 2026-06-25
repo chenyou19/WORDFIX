@@ -80,7 +80,24 @@ GUI 的縮排設定頁把每一階拆成四個欄位：
 
 - `number_start_cm + hanging_cm` 仍決定自動編號階層的 `w:ind/@w:left`。
 - `hanging_cm` 仍決定 `w:ind/@w:hanging`，因此標題折行續行仍維持既有 left/hanging 行為。
-- `heading_text_start_cm` 只在自動編號後綴為 `w:suff="tab"` 時，決定 `w:tabs/w:tab[@w:val="left"]/@w:pos`，也就是 Tab 後第一個標題文字跳到的位置。
+- `heading_text_start_cm` 保留為縮排幾何設定的一部分；目前自動編號後置字元不再使用 `w:suff="tab"`，也不建立 `w:pPr/w:tabs`。`1.` / `A.` / `a.` 的間距只由 `w:suff="space"` 表示。
+
+## 自動編號後置字元
+
+| 邏輯階層 | 標號 | `w:suff` |
+| --- | --- | --- |
+| 0 | `壹、` | `nothing` |
+| 1 | `一、` | `nothing` |
+| 2 | `（一）` | `nothing` |
+| 3 | `1.` | `space` |
+| 4 | `（1）` | `nothing` |
+| 5 | `A.` | `space` |
+| 6 | `（A）` | `nothing` |
+| 7 | `a.` | `space` |
+| 8 | `（a）` | `nothing` |
+| 未辨識 | 任意 | `nothing` |
+
+所有層級的 `w:pPr/w:tabs` 都會移除；`w:lvlText` 結尾的半形空白、tab、全形空白也會清除，避免 Word 產生雙重間距。
 - `body_left_cm` 只決定標題下方普通內文的起點，對應 body_plain 的 left/start 縮排。
 
 保存後會寫入 `indent_defaults.json` 的 `indent_settings` 區塊。載入後會覆寫執行中的 `TEMPLATE_OUTLINE_INDENTS` 與 `PREFACE_OUTLINE_INDENTS`。
