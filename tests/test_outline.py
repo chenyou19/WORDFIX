@@ -365,6 +365,17 @@ def assert_level_suffix_rule(testcase, lvl, level):
         testcase.assertFalse(lvl_text.get(qn("val")).endswith((" ", "\t", "　")))
 
 
+def level_child_names(lvl):
+    return [etree.QName(child).localname for child in lvl]
+
+
+def assert_suffix_before_lvl_text(testcase, lvl):
+    names = level_child_names(lvl)
+    testcase.assertIn("suff", names)
+    testcase.assertIn("lvlText", names)
+    testcase.assertLess(names.index("suff"), names.index("lvlText"))
+
+
 def make_styles_font_xml(
     *,
     doc_default_pt: float | None = None,
@@ -2451,6 +2462,125 @@ class OutlineFixTests(unittest.TestCase):
         # The override's own decimal "%1." is outline level 3, a space-suffix level.
         assert_level_suffix_rule(self, updated_override_lvl, 3)
 
+    def test_numbering_pair_protection_uses_concrete_override_without_abstract_bleed(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "10")
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1. ")
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "left")
+        tab.set(qn("pos"), "1560")
+        ind = etree.SubElement(pPr, qn("ind"))
+        ind.set(qn("left"), "999")
+        ind.set(qn("hanging"), "111")
+
+        for num_id in ("141", "85"):
+            num = etree.SubElement(root, qn("num"))
+            num.set(qn("numId"), num_id)
+            abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+            abstract_ref.set(qn("val"), "10")
+
+        logs: list[str] = []
+        updated = apply_numbering_outline_format(
+            etree.tostring(root),
+            change_logs=logs,
+            excluded_numbering_pairs={("85", 0)},
+        )
+        updated_root = etree.fromstring(updated)
+        abstract_lvl = updated_root.xpath("./w:abstractNum[@w:abstractNumId='10']/w:lvl", namespaces=NS)[0]
+        protected_override_lvl = updated_root.xpath(
+            "./w:num[@w:numId='85']/w:lvlOverride[@w:ilvl='0']/w:lvl",
+            namespaces=NS,
+        )[0]
+
+        # Ordinary numId=141 still uses the shared abstract level, now normalized
+        # to the level-3 suffix and indent rule.
+        assert_level_suffix_rule(self, abstract_lvl, 3)
+        assert_suffix_before_lvl_text(self, abstract_lvl)
+        self.assertEqual(abstract_lvl.find("./w:lvlText", NS).get(qn("val")), "%1.")
+        abstract_ind = abstract_lvl.find("./w:pPr/w:ind", NS)
+        self.assertEqual(abstract_ind.get(qn("left")), TEMPLATE_OUTLINE_INDENTS[3]["left"])
+        self.assertEqual(abstract_ind.get(qn("hanging")), TEMPLATE_OUTLINE_INDENTS[3]["hanging"])
+
+        # Protected numId=85 has a concrete override preserving the original
+        # missing suffix, trailing lvlText space, and tab stop.
+        self.assertIsNone(protected_override_lvl.find("./w:suff", NS))
+        self.assertEqual(protected_override_lvl.find("./w:lvlText", NS).get(qn("val")), "%1. ")
+        self.assertIsNotNone(protected_override_lvl.find("./w:pPr/w:tabs", NS))
+        self.assertTrue(any("NUMBERING_XML_PROTECTED_CONCRETE_OVERRIDE" in log for log in logs))
+
+        lookup = build_numbering_format_lookup(updated)
+        self.assertEqual(lookup[("141", 0)]["suff"], "space")
+        self.assertEqual(lookup[("141", 0)]["lvlText"], "%1.")
+        self.assertIsNone(lookup[("141", 0)]["tab_pos"])
+        self.assertIsNone(lookup[("85", 0)]["suff"])
+        self.assertEqual(lookup[("85", 0)]["lvlText"], "%1. ")
+        self.assertEqual(lookup[("85", 0)]["tab_pos"], "1560")
+        self.assertEqual(lookup[("85", 0)]["level_source"], "lvlOverride")
+
+    def test_numbering_pair_protection_completes_partial_override_from_abstract_base(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "10")
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        start = etree.SubElement(lvl, qn("start"))
+        start.set(qn("val"), "3")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")
+        suff = etree.SubElement(lvl, qn("suff"))
+        suff.set(qn("val"), "tab")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1. ")
+        rPr = etree.SubElement(lvl, qn("rPr"))
+        sz = etree.SubElement(rPr, qn("sz"))
+        sz.set(qn("val"), "26")
+        base_pPr = etree.SubElement(lvl, qn("pPr"))
+        base_ind = etree.SubElement(base_pPr, qn("ind"))
+        base_ind.set(qn("left"), "111")
+
+        num = etree.SubElement(root, qn("num"))
+        num.set(qn("numId"), "85")
+        abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+        abstract_ref.set(qn("val"), "10")
+        override = etree.SubElement(num, qn("lvlOverride"))
+        override.set(qn("ilvl"), "0")
+        override_lvl = etree.SubElement(override, qn("lvl"))
+        override_lvl.set(qn("ilvl"), "0")
+        override_pPr = etree.SubElement(override_lvl, qn("pPr"))
+        override_tabs = etree.SubElement(override_pPr, qn("tabs"))
+        override_tab = etree.SubElement(override_tabs, qn("tab"))
+        override_tab.set(qn("val"), "left")
+        override_tab.set(qn("pos"), "1560")
+        override_ind = etree.SubElement(override_pPr, qn("ind"))
+        override_ind.set(qn("left"), "999")
+
+        updated = apply_numbering_outline_format(
+            etree.tostring(root),
+            excluded_numbering_pairs={("85", 0)},
+        )
+        updated_root = etree.fromstring(updated)
+        protected_override_lvl = updated_root.xpath(
+            "./w:num[@w:numId='85']/w:lvlOverride[@w:ilvl='0']/w:lvl",
+            namespaces=NS,
+        )[0]
+
+        self.assertEqual(protected_override_lvl.find("./w:start", NS).get(qn("val")), "3")
+        self.assertEqual(protected_override_lvl.find("./w:numFmt", NS).get(qn("val")), "decimal")
+        self.assertEqual(protected_override_lvl.find("./w:suff", NS).get(qn("val")), "tab")
+        self.assertEqual(protected_override_lvl.find("./w:lvlText", NS).get(qn("val")), "%1. ")
+        self.assertEqual(protected_override_lvl.find("./w:rPr/w:sz", NS).get(qn("val")), "26")
+        self.assertEqual(protected_override_lvl.find("./w:pPr/w:ind", NS).get(qn("left")), "999")
+        self.assertEqual(protected_override_lvl.find("./w:pPr/w:tabs/w:tab", NS).get(qn("pos")), "1560")
+        assert_suffix_before_lvl_text(self, protected_override_lvl)
+
     def test_force_clean_numbering_suffix_tabs_cleans_all_levels(self):
         root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
         abstract = etree.SubElement(root, qn("abstractNum"))
@@ -2511,6 +2641,51 @@ class OutlineFixTests(unittest.TestCase):
         self.assertFalse(any("tab_stops_rebuilt" in log for log in logs))
         self.assertTrue(any("tab_stops_removed=4" in log for log in logs))
         self.assertTrue(any("lvl_text_trimmed=4" in log for log in logs))
+
+    def test_force_clean_numbering_suffix_tabs_preserves_pair_with_concrete_override(self):
+        root = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+        abstract = etree.SubElement(root, qn("abstractNum"))
+        abstract.set(qn("abstractNumId"), "10")
+        lvl = etree.SubElement(abstract, qn("lvl"))
+        lvl.set(qn("ilvl"), "0")
+        num_fmt = etree.SubElement(lvl, qn("numFmt"))
+        num_fmt.set(qn("val"), "decimal")
+        lvl_text = etree.SubElement(lvl, qn("lvlText"))
+        lvl_text.set(qn("val"), "%1. ")
+        pPr = etree.SubElement(lvl, qn("pPr"))
+        tabs = etree.SubElement(pPr, qn("tabs"))
+        tab = etree.SubElement(tabs, qn("tab"))
+        tab.set(qn("val"), "num")
+        tab.set(qn("pos"), "1560")
+
+        for num_id in ("141", "85"):
+            num = etree.SubElement(root, qn("num"))
+            num.set(qn("numId"), num_id)
+            abstract_ref = etree.SubElement(num, qn("abstractNumId"))
+            abstract_ref.set(qn("val"), "10")
+
+        logs: list[str] = []
+        updated = force_clean_numbering_suffix_tabs(
+            etree.tostring(root),
+            logs=logs,
+            excluded_numbering_pairs={("85", 0)},
+            included_numbering_pairs={("141", 0)},
+            protected_numbering_pairs={("85", 0)},
+        )
+        updated_root = etree.fromstring(updated)
+        abstract_lvl = updated_root.xpath("./w:abstractNum[@w:abstractNumId='10']/w:lvl", namespaces=NS)[0]
+        protected_override_lvl = updated_root.xpath(
+            "./w:num[@w:numId='85']/w:lvlOverride[@w:ilvl='0']/w:lvl",
+            namespaces=NS,
+        )[0]
+
+        assert_level_suffix_rule(self, abstract_lvl, 3)
+        self.assertEqual(abstract_lvl.find("./w:lvlText", NS).get(qn("val")), "%1.")
+        self.assertIsNone(protected_override_lvl.find("./w:suff", NS))
+        self.assertEqual(protected_override_lvl.find("./w:lvlText", NS).get(qn("val")), "%1. ")
+        self.assertIsNotNone(protected_override_lvl.find("./w:pPr/w:tabs", NS))
+        self.assertTrue(any("FINAL_NUMBERING_SUFFIX_CLEAN_PROTECTED_CONCRETE_OVERRIDE" in log for log in logs))
+        self.assertTrue(any("levels_skipped_protected=1" in log for log in logs))
 
     def test_force_clean_numbering_suffix_tabs_skips_protected_definitions(self):
         root = etree.Element(qn("numbering"), nsmap={"w": W_NS})

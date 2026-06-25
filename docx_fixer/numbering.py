@@ -17,6 +17,20 @@ PAREN_PAIRS = {
 # recognized level - and any unrecognized numbering - uses no separator
 # (w:suff="nothing"). No numbering level keeps or creates w:pPr/w:tabs.
 SPACE_SUFFIX_OUTLINE_LEVELS = frozenset({3, 5, 7})
+LVL_CHILD_ORDER = {
+    "start": 0,
+    "numFmt": 1,
+    "lvlRestart": 2,
+    "pStyle": 3,
+    "isLgl": 4,
+    "suff": 5,
+    "lvlText": 6,
+    "lvlPicBulletId": 7,
+    "legacy": 8,
+    "lvlJc": 9,
+    "pPr": 10,
+    "rPr": 11,
+}
 
 
 def uses_space_suffix(level: int | None) -> bool:
@@ -31,16 +45,42 @@ def _heading_text_start_twips(spec: dict[str, str]) -> str:
     return spec.get("heading_text_start", spec["left"])
 
 
+def _lvl_child_sort_key(item: tuple[int, object]) -> tuple[int, int]:
+    original_index, child = item
+    local_name = etree.QName(child).localname
+    return LVL_CHILD_ORDER.get(local_name, 100), original_index
+
+
+def _normalize_lvl_child_order(lvl) -> bool:
+    ordered_children = [child for _, child in sorted(enumerate(list(lvl)), key=_lvl_child_sort_key)]
+    if ordered_children == list(lvl):
+        return False
+    lvl[:] = ordered_children
+    return True
+
+
+def _insert_lvl_child(lvl, child) -> None:
+    child_order = LVL_CHILD_ORDER.get(etree.QName(child).localname, 100)
+    for index, existing in enumerate(lvl):
+        existing_order = LVL_CHILD_ORDER.get(etree.QName(existing).localname, 100)
+        if existing_order > child_order:
+            lvl.insert(index, child)
+            return
+    lvl.append(child)
+
+
 def _set_level_suffix(lvl, desired: str) -> bool:
     """Set w:suff to the desired value, creating it if missing. Returns changed."""
+    changed = False
     suff = lvl.find("w:suff", NS)
     if suff is None:
         suff = etree.Element(qn("suff"))
-        lvl.append(suff)
+        _insert_lvl_child(lvl, suff)
+        changed = True
     if suff.get(qn("val")) != desired:
         suff.set(qn("val"), desired)
-        return True
-    return False
+        changed = True
+    return _normalize_lvl_child_order(lvl) or changed
 
 
 def _remove_level_tabs(pPr) -> bool:
@@ -138,6 +178,153 @@ def effective_level_format(
     return None, None
 
 
+def _build_numbering_maps(root) -> tuple[dict[str, object], dict[str, str], dict[str, set[str]]]:
+    num_elements: dict[str, object] = {}
+    num_to_abstract_id: dict[str, str] = {}
+    abstract_to_num_ids: dict[str, set[str]] = {}
+    for num in root.xpath("./w:num", namespaces=NS):
+        num_id = num.get(qn("numId"))
+        abstract_el = num.find("w:abstractNumId", NS)
+        abstract_id = abstract_el.get(qn("val")) if abstract_el is not None else None
+        if num_id is None or abstract_id is None:
+            continue
+        num_elements[num_id] = num
+        num_to_abstract_id[num_id] = abstract_id
+        abstract_to_num_ids.setdefault(abstract_id, set()).add(num_id)
+    return num_elements, num_to_abstract_id, abstract_to_num_ids
+
+
+def _build_abstract_level_element_lookup(root) -> dict[tuple[str, int], object]:
+    levels: dict[tuple[str, int], object] = {}
+    for abstract_num in root.xpath("./w:abstractNum", namespaces=NS):
+        abstract_id = abstract_num.get(qn("abstractNumId"))
+        if abstract_id is None:
+            continue
+        for lvl in abstract_num.xpath("./w:lvl", namespaces=NS):
+            try:
+                ilvl = int(lvl.get(qn("ilvl")))
+            except Exception:
+                continue
+            levels[(abstract_id, ilvl)] = lvl
+    return levels
+
+
+def _find_or_create_lvl_override(num, ilvl: int) -> tuple[object, bool]:
+    for override in num.xpath("./w:lvlOverride", namespaces=NS):
+        try:
+            if int(override.get(qn("ilvl"))) == ilvl:
+                return override, False
+        except Exception:
+            continue
+    override = etree.Element(qn("lvlOverride"))
+    override.set(qn("ilvl"), str(ilvl))
+    num.append(override)
+    return override, True
+
+
+def _merge_level_from_base_and_override(base_lvl, override_lvl, ilvl: int):
+    merged = etree.fromstring(etree.tostring(base_lvl))
+    merged.set(qn("ilvl"), str(ilvl))
+    if override_lvl is None:
+        _normalize_lvl_child_order(merged)
+        return merged
+
+    for attr_name, attr_value in override_lvl.attrib.items():
+        merged.set(attr_name, attr_value)
+    merged.set(qn("ilvl"), str(ilvl))
+
+    for override_child in override_lvl:
+        child_tag = override_child.tag
+        for existing in list(merged):
+            if existing.tag == child_tag:
+                merged.remove(existing)
+        _insert_lvl_child(merged, etree.fromstring(etree.tostring(override_child)))
+
+    _normalize_lvl_child_order(merged)
+    return merged
+
+
+def _override_level_needs_base_merge(override_lvl) -> bool:
+    if override_lvl is None:
+        return True
+    child_names = {etree.QName(child).localname for child in override_lvl}
+    # A lvlOverride with only pPr/rPr is not a standalone level; it still needs
+    # the abstract base's numbering text/format. Once numFmt or lvlText exists,
+    # absent children such as w:suff are treated as intentional original state.
+    return "numFmt" not in child_names and "lvlText" not in child_names
+
+
+def ensure_concrete_overrides_for_numbering_pairs(
+    root,
+    protected_numbering_pairs: set[tuple[str, int]] | None,
+    *,
+    logs: list[str] | None = None,
+    log_prefix: str = "NUMBERING_XML",
+    skip_num_ids: set[str] | None = None,
+    skip_abstract_ids: set[str] | None = None,
+) -> bool:
+    """Freeze pair-level protection into concrete per-num overrides.
+
+    A protected (numId, ilvl) must not make the shared abstract level immutable:
+    first copy the effective abstract level into that num's lvlOverride, merging
+    any partial existing override, then the shared abstract level can be cleaned
+    for ordinary numIds that reference it.
+    """
+    protected_numbering_pairs = protected_numbering_pairs or set()
+    if not protected_numbering_pairs:
+        return False
+
+    skip_num_ids = skip_num_ids or set()
+    skip_abstract_ids = skip_abstract_ids or set()
+    num_elements, num_to_abstract_id, abstract_to_num_ids = _build_numbering_maps(root)
+    abstract_levels = _build_abstract_level_element_lookup(root)
+    changed = False
+
+    for num_id, ilvl in sorted(protected_numbering_pairs, key=lambda item: (item[0], item[1])):
+        if num_id in skip_num_ids:
+            continue
+        abstract_id = num_to_abstract_id.get(num_id)
+        if abstract_id is None or abstract_id in skip_abstract_ids:
+            continue
+        num = num_elements.get(num_id)
+        base_lvl = abstract_levels.get((abstract_id, ilvl))
+        if num is None or base_lvl is None:
+            continue
+
+        override, override_created = _find_or_create_lvl_override(num, ilvl)
+        existing_lvl = override.find("w:lvl", NS)
+        if _override_level_needs_base_merge(existing_lvl):
+            merged_lvl = _merge_level_from_base_and_override(base_lvl, existing_lvl, ilvl)
+        else:
+            merged_lvl = etree.fromstring(etree.tostring(existing_lvl))
+            merged_lvl.set(qn("ilvl"), str(ilvl))
+            _normalize_lvl_child_order(merged_lvl)
+        before = etree.tostring(existing_lvl) if existing_lvl is not None else None
+        after = etree.tostring(merged_lvl)
+        if existing_lvl is None:
+            override.append(merged_lvl)
+            level_changed = True
+        elif before != after:
+            index = list(override).index(existing_lvl)
+            override.remove(existing_lvl)
+            override.insert(index, merged_lvl)
+            level_changed = True
+        else:
+            level_changed = False
+
+        changed = changed or override_created or level_changed
+        if logs is not None and (override_created or level_changed):
+            shared_num_ids = sorted(abstract_to_num_ids.get(abstract_id, set()) - {num_id})
+            logs.append(
+                f"{log_prefix}_PROTECTED_CONCRETE_OVERRIDE: "
+                f"numId={num_id}; ilvl={ilvl}; abstractNumId={abstract_id}; "
+                f"shared_numIds={','.join(shared_num_ids) or 'none'}; "
+                "reason=pair_level_protection"
+            )
+
+    return changed
+
+
 def resolve_level_outline_level(num_fmt: str | None, lvl_text: str | None, ilvl: int | None) -> int | None:
     """Resolve the logical outline level from the format, falling back to ilvl.
 
@@ -201,29 +388,12 @@ def force_clean_numbering_suffix_tabs(
     # with a normal body heading is still left untouched.
     protected_numbering_pairs = protected_numbering_pairs or set()
 
-    abstract_level_formats = build_abstract_level_format_lookup(root)
-
-    num_to_abstract_id: dict[str, str] = {}
-    abstract_to_num_ids: dict[str, set[str]] = {}
-    for num in root.xpath("./w:num", namespaces=NS):
-        num_id = num.get(qn("numId"))
-        abstract_el = num.find("w:abstractNumId", NS)
-        abstract_id = abstract_el.get(qn("val")) if abstract_el is not None else None
-        if num_id is None or abstract_id is None:
-            continue
-        num_to_abstract_id[num_id] = abstract_id
-        abstract_to_num_ids.setdefault(abstract_id, set()).add(num_id)
-
-    protected_abstract_levels: set[tuple[str, int]] = set()
+    _num_elements, num_to_abstract_id, abstract_to_num_ids = _build_numbering_maps(root)
     protected_abstract_ids = set(excluded_abstract_ids)
     for num_id in excluded_num_ids:
         abstract_id = num_to_abstract_id.get(num_id)
         if abstract_id is not None:
             protected_abstract_ids.add(abstract_id)
-    for num_id, ilvl in excluded_numbering_pairs:
-        abstract_id = num_to_abstract_id.get(num_id)
-        if abstract_id is not None:
-            protected_abstract_levels.add((abstract_id, ilvl))
 
     included_abstract_levels: set[tuple[str, int]] = set()
     included_abstract_ids = set(included_abstract_ids)
@@ -236,11 +406,19 @@ def force_clean_numbering_suffix_tabs(
         if abstract_id is not None:
             included_abstract_levels.add((abstract_id, ilvl))
 
-    force_protected_abstract_levels: set[tuple[str, int]] = set()
-    for num_id, ilvl in protected_numbering_pairs:
-        abstract_id = num_to_abstract_id.get(num_id)
-        if abstract_id is not None:
-            force_protected_abstract_levels.add((abstract_id, ilvl))
+    pair_protected_numbering_pairs = set(excluded_numbering_pairs) | set(protected_numbering_pairs)
+    changed = (
+        ensure_concrete_overrides_for_numbering_pairs(
+            root,
+            pair_protected_numbering_pairs,
+            logs=logs,
+            log_prefix="FINAL_NUMBERING_SUFFIX_CLEAN",
+            skip_num_ids=excluded_num_ids,
+            skip_abstract_ids=protected_abstract_ids,
+        )
+        or changed
+    )
+    abstract_level_formats = build_abstract_level_format_lookup(root)
 
     if logs is not None:
         for abstract_id in sorted(protected_abstract_ids):
@@ -266,9 +444,7 @@ def force_clean_numbering_suffix_tabs(
 
     def should_skip_level(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
         # Chapter 參 hard protection wins over the body-heading re-include.
-        if num_id is not None and ilvl is not None and (num_id, ilvl) in protected_numbering_pairs:
-            return True
-        if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in force_protected_abstract_levels:
+        if num_id is not None and ilvl is not None and (num_id, ilvl) in pair_protected_numbering_pairs:
             return True
         if abstract_id is not None and abstract_id in included_abstract_ids:
             return False
@@ -279,8 +455,6 @@ def force_clean_numbering_suffix_tabs(
         if num_id is not None and ilvl is not None and (num_id, ilvl) in included_numbering_pairs:
             return False
         if abstract_id is not None and abstract_id in protected_abstract_ids:
-            return True
-        if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in protected_abstract_levels:
             return True
         if num_id is not None and num_id in excluded_num_ids:
             return True
@@ -665,12 +839,8 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
     lvl_jc = get_or_add(lvl, "lvlJc")
     lvl_jc.set(qn("val"), "left")
 
-    suff = lvl.find("w:suff", NS)
-    if suff is None:
-        suff = etree.Element(qn("suff"))
-        lvl.append(suff)
     suffix = numbering_suffix_for_level(level)
-    suff.set(qn("val"), suffix)
+    _set_level_suffix(lvl, suffix)
 
     pPr = get_or_add(lvl, "pPr")
     written = apply_indent_spec_to_pPr(
@@ -679,6 +849,7 @@ def apply_numbering_level_outline_format(lvl, level: int, change_logs: list[str]
         "heading_numbered",
         use_tab_stop=False,
     )
+    _normalize_lvl_child_order(lvl)
 
     if change_logs is not None:
         number_start = int(spec.get("number_start", int(spec["left"]) - int(spec["hanging"])))
@@ -929,28 +1100,30 @@ def apply_numbering_outline_format(
     excluded_num_ids = excluded_num_ids or set()
     excluded_abstract_ids = excluded_abstract_ids or set()
 
-    num_to_abstract_id: dict[str, str] = {}
-    for num in root.xpath("./w:num", namespaces=NS):
-        num_id = num.get(qn("numId"))
-        abstract_el = num.find("w:abstractNumId", NS)
-        abstract_id = abstract_el.get(qn("val")) if abstract_el is not None else None
-        if num_id is not None and abstract_id is not None:
-            num_to_abstract_id[num_id] = abstract_id
+    _num_elements, num_to_abstract_id, _abstract_to_num_ids = _build_numbering_maps(root)
+    protected_abstract_ids = set(excluded_abstract_ids)
+    for excluded_num_id in excluded_num_ids:
+        abstract_id = num_to_abstract_id.get(excluded_num_id)
+        if abstract_id is not None:
+            protected_abstract_ids.add(abstract_id)
 
-    # Derive (abstractNumId, ilvl) protection from the excluded (numId, ilvl)
-    # pairs. ./w:abstractNum/w:lvl carries no numId, so a pair alone cannot match
-    # it; this keeps the protection precise to the exact level the pair uses
-    # instead of excluding the whole abstractNumId (which 壹/貳/參/肆 often share).
-    protected_abstract_levels: set[tuple[str, int]] = set()
-    for pair_num_id, pair_ilvl in excluded_numbering_pairs:
-        mapped_abstract_id = num_to_abstract_id.get(pair_num_id)
-        if mapped_abstract_id is not None:
-            protected_abstract_levels.add((mapped_abstract_id, pair_ilvl))
+    # Pair-level protection is frozen into concrete overrides first. The shared
+    # abstract level remains eligible for ordinary headings that use another
+    # numId, while the protected pair keeps its original effective level.
+    changed = (
+        ensure_concrete_overrides_for_numbering_pairs(
+            root,
+            excluded_numbering_pairs,
+            logs=change_logs,
+            log_prefix="NUMBERING_XML",
+            skip_num_ids=excluded_num_ids,
+            skip_abstract_ids=protected_abstract_ids,
+        )
+        or changed
+    )
 
     def should_skip_numbering(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> bool:
-        if abstract_id is not None and abstract_id in excluded_abstract_ids:
-            return True
-        if abstract_id is not None and ilvl is not None and (abstract_id, ilvl) in protected_abstract_levels:
+        if abstract_id is not None and abstract_id in protected_abstract_ids:
             return True
         if num_id is not None and num_id in excluded_num_ids:
             return True
@@ -961,12 +1134,21 @@ def apply_numbering_outline_format(
     def log_skip_numbering(num_id: str | None, ilvl: int | None, abstract_id: str | None) -> None:
         if change_logs is None:
             return
+        is_pair_protected = (
+            num_id is not None
+            and ilvl is not None
+            and (num_id, ilvl) in excluded_numbering_pairs
+            and num_id not in excluded_num_ids
+            and (abstract_id is None or abstract_id not in protected_abstract_ids)
+        )
+        event = "NUMBERING_XML_SKIP_PROTECTED_PAIR" if is_pair_protected else "NUMBERING_XML_SKIP_TOC_NUMBERING"
+        reason = "pair_level_protection" if is_pair_protected else "used_by_toc"
         change_logs.append(
-            "NUMBERING_XML_SKIP_TOC_NUMBERING: "
+            f"{event}: "
             f"numId={num_id if num_id is not None else 'unknown'}; "
             f"ilvl={ilvl if ilvl is not None else 'unknown'}; "
             f"abstractNumId={abstract_id if abstract_id is not None else 'unknown'}; "
-            "reason=used_by_toc"
+            f"reason={reason}"
         )
 
     abstract_level_formats = build_abstract_level_format_lookup(root)

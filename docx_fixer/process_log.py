@@ -41,6 +41,38 @@ def _lvl_text_trailing_space_count(records: list[dict[str, object]]) -> int:
     return sum(1 for record in records if record.get("lvlText_has_trailing_space") is True)
 
 
+def _protected_suffix_records(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        record
+        for record in records
+        if record.get("suffix_cleanup_policy") == "protected_chapter_three"
+    ]
+
+
+def _warning_suffix_records(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        record
+        for record in records
+        if record.get("suffix_cleanup_policy") != "protected_chapter_three"
+    ]
+
+
+SUFFIX_CHANGE_KEYS = (
+    "suffix",
+    "raw_suffix",
+    "effective_suffix",
+    "has_tab_stop",
+    "tab_pos_twips",
+    "left_twips",
+    "hanging_twips",
+    "number_start_twips",
+    "heading_text_start_twips",
+    "numbering_level_source",
+    "lvlText",
+    "lvlText_has_trailing_space",
+)
+
+
 def _change_type(before_record: dict[str, object], after_record: dict[str, object]) -> str:
     before_suffix = before_record.get("suffix")
     after_suffix = after_record.get("suffix")
@@ -92,6 +124,23 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
     after_suffix_space_count = _suffix_count(after, "space")
     after_tab_stop_remaining_count = _tab_stop_count(after)
     after_lvl_text_trailing_space_count = _lvl_text_trailing_space_count(after)
+    after_warning_records = _warning_suffix_records(after)
+    protected_after_records = _protected_suffix_records(after)
+    warning_raw_suffix_missing_count = _suffix_count(after_warning_records, "missing")
+    warning_effective_suffix_tab_count = _effective_suffix_count(after_warning_records, "tab")
+    warning_suffix_tab_count = _suffix_count(after_warning_records, "tab")
+    warning_tab_stop_remaining_count = _tab_stop_count(after_warning_records)
+    warning_lvl_text_trailing_space_count = _lvl_text_trailing_space_count(after_warning_records)
+    protected_dirty_count = sum(
+        1
+        for record in protected_after_records
+        if (
+            record.get("suffix") in {"missing", "tab"}
+            or record.get("effective_suffix") == "tab"
+            or record.get("has_tab_stop") is True
+            or record.get("lvlText_has_trailing_space") is True
+        )
+    )
     for key in keys:
         before_record = before_by_key.get(key, {})
         after_record = after_by_key.get(key, {})
@@ -149,23 +198,29 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
     if any(
         count
         for count in (
-            after_raw_suffix_missing_count,
-            after_effective_suffix_tab_count,
-            _suffix_count(after, "tab"),
-            after_suffix_space_count,
-            after_tab_stop_remaining_count,
-            after_lvl_text_trailing_space_count,
+            warning_raw_suffix_missing_count,
+            warning_effective_suffix_tab_count,
+            warning_suffix_tab_count,
+            warning_tab_stop_remaining_count,
+            warning_lvl_text_trailing_space_count,
         )
     ):
         lines.extend(
             [
                 "WARNING: AFTER_FIX numbering suffix/tab cleanup still has remaining issues.",
-                f"WARNING raw_suffix_after_missing={after_raw_suffix_missing_count}",
-                f"WARNING effective_suffix_after_tab={after_effective_suffix_tab_count}",
-                f"WARNING suffix_after_tab={_suffix_count(after, 'tab')}",
-                f"WARNING suffix_after_space={after_suffix_space_count}",
-                f"WARNING has_tab_stop_after_true={after_tab_stop_remaining_count}",
-                f"WARNING lvlText_after_has_trailing_space={after_lvl_text_trailing_space_count}",
+                f"WARNING raw_suffix_after_missing={warning_raw_suffix_missing_count}",
+                f"WARNING effective_suffix_after_tab={warning_effective_suffix_tab_count}",
+                f"WARNING suffix_after_tab={warning_suffix_tab_count}",
+                f"WARNING has_tab_stop_after_true={warning_tab_stop_remaining_count}",
+                f"WARNING lvlText_after_has_trailing_space={warning_lvl_text_trailing_space_count}",
+                "",
+            ]
+        )
+    if protected_dirty_count:
+        lines.extend(
+            [
+                "INFO: AFTER_FIX protected chapter-three numbering suffix/tab cleanup intentionally skipped.",
+                f"INFO protected_chapter_three_dirty_heading_count={protected_dirty_count}",
                 "",
             ]
         )
@@ -187,11 +242,9 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
             match_status = "after_only"
 
         source = record.get("source", "unknown")
-        changed = matched and (
-            before_record.get("suffix") != after_record.get("suffix")
-            or before_record.get("effective_suffix", before_record.get("suffix"))
-            != after_record.get("effective_suffix", after_record.get("suffix"))
-            or before_record.get("has_tab_stop") != after_record.get("has_tab_stop")
+        changed = matched and any(
+            before_record.get(key_name) != after_record.get(key_name)
+            for key_name in SUFFIX_CHANGE_KEYS
         )
         lines.extend(
             [
@@ -274,6 +327,8 @@ def format_heading_suffix_log_lines(summary: ProcessSummary) -> list[str]:
                 lines.append(f"{key_name}_before: {_format_optional_cm(before_record.get(key_name))}")
                 lines.append(f"{key_name}_after: {_format_optional_cm(after_record.get(key_name))}")
             for output_name, record_key in (
+                ("suffix_cleanup_policy_after", "suffix_cleanup_policy"),
+                ("suffix_cleanup_skip_reason_after", "suffix_cleanup_skip_reason"),
                 ("numbering_level_source_after", "numbering_level_source"),
                 ("numbering_lvl_child_order_after", "numbering_lvl_child_order"),
                 ("numbering_pPr_child_order_after", "numbering_pPr_child_order"),

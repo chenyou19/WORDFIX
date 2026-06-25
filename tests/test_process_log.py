@@ -271,6 +271,82 @@ class ProcessLogTests(unittest.TestCase):
         self.assertIn("WARNING has_tab_stop_after_true=1", lines)
         self.assertIn("WARNING lvlText_after_has_trailing_space=1", lines)
 
+    def test_heading_suffix_log_marks_lvl_text_only_change_as_changed(self):
+        summary = ProcessSummary()
+        base_record = {
+            "part_name": "word/document.xml",
+            "paragraph_index": 163,
+            "source": "auto_numbering_xml",
+            "outline_level": 3,
+            "heading_text": "自動標題",
+            "number_token": "%1.",
+            "suffix": "space",
+            "raw_suffix": "space",
+            "effective_suffix": "space",
+            "numId": "141",
+            "ilvl": 0,
+            "numFmt": "decimal",
+            "has_tab_stop": False,
+            "tab_pos_twips": None,
+            "left_twips": "2256",
+            "hanging_twips": "493",
+            "number_start_twips": "1763",
+            "heading_text_start_twips": None,
+            "numbering_level_source": "abstractNum",
+        }
+        summary.heading_suffix_before_records.append(
+            {
+                **base_record,
+                "lvlText": "%1. ",
+                "lvlText_has_trailing_space": True,
+            }
+        )
+        summary.heading_suffix_after_records.append(
+            {
+                **base_record,
+                "lvlText": "%1.",
+                "lvlText_has_trailing_space": False,
+                "suffix_cleanup_policy": "normalized",
+                "suffix_cleanup_skip_reason": "none",
+            }
+        )
+
+        lines = format_heading_suffix_log_lines(summary)
+
+        self.assertIn("changed: true", lines)
+        self.assertIn("suffix_cleanup_policy_after: normalized", lines)
+
+    def test_heading_suffix_log_reports_protected_dirty_records_as_info(self):
+        summary = ProcessSummary()
+        summary.heading_suffix_after_records.append(
+            {
+                "part_name": "word/document.xml",
+                "paragraph_index": 85,
+                "source": "auto_numbering_xml",
+                "outline_level": 3,
+                "heading_text": "參內標題",
+                "number_token": "%1. ",
+                "suffix": "missing",
+                "raw_suffix": "missing",
+                "effective_suffix": "space",
+                "numId": "85",
+                "ilvl": 0,
+                "numFmt": "decimal",
+                "lvlText": "%1. ",
+                "lvlText_has_trailing_space": True,
+                "has_tab_stop": True,
+                "suffix_cleanup_policy": "protected_chapter_three",
+                "suffix_cleanup_skip_reason": "chapter_three_pair",
+            }
+        )
+
+        lines = format_heading_suffix_log_lines(summary)
+
+        self.assertNotIn("WARNING: AFTER_FIX numbering suffix/tab cleanup still has remaining issues.", lines)
+        self.assertIn("INFO: AFTER_FIX protected chapter-three numbering suffix/tab cleanup intentionally skipped.", lines)
+        self.assertIn("suffix_cleanup_policy_after: protected_chapter_three", lines)
+        self.assertIn("suffix_cleanup_skip_reason_after: chapter_three_pair", lines)
+
     def test_table_log_file_writes_structured_table_records(self):
         summary = ProcessSummary()
         summary.table_log_records.append(

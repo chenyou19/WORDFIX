@@ -1682,9 +1682,9 @@ class DocxProcessorTests(unittest.TestCase):
     def test_final_numbering_cleanup_protects_chapter_three_shared_level_precisely(self):
         # \u53c3 (numId 42) and \u8086 (numId 99) share abstractNum 1 at the SAME ilvl 0.
         # \u300c\u53c3\u3001\u4e0d\u8981\u6e05\u7406\u7de8\u865f\u5f8c\u7db4 tab/space\u300d defaults on, and chapter \u53c3 protection
-        # is expressed as a precise (numId/abstract, ilvl) \u2014 never as the whole
-        # abstractNumId. The single shared level \u53c3 actually uses is therefore
-        # preserved (\u8086 shares that exact lvl element, so it is collaterally kept).
+        # is expressed as a precise (numId, ilvl). The protected numId is frozen
+        # into a concrete override, while the shared abstract level is still
+        # cleaned for the ordinary numId.
         with tempfile.TemporaryDirectory() as tmp:
             input_docx = Path(tmp) / "input.docx"
             output_docx = Path(tmp) / "output.docx"
@@ -1707,14 +1707,31 @@ class DocxProcessorTests(unittest.TestCase):
             )
 
             numbering_root = read_part_root(output_docx, "word/numbering.xml")
-            protected_lvl = numbering_root.xpath(
+            abstract_lvl = numbering_root.xpath(
                 "./w:abstractNum[@w:abstractNumId='1']/w:lvl",
                 namespaces=NS,
             )[0]
-            # The level \u53c3 uses keeps its original suffix / tab / lvlText.
-            self.assertEqual(protected_lvl.find("w:suff", NS).get(qn("val")), "tab")
-            self.assertIsNotNone(protected_lvl.find("./w:pPr/w:tabs", NS))
-            self.assertEqual(protected_lvl.find("w:lvlText", NS).get(qn("val")), "%1\u3001 ")
+            protected_override = numbering_root.xpath(
+                "./w:num[@w:numId='42']/w:lvlOverride[@w:ilvl='0']/w:lvl",
+                namespaces=NS,
+            )[0]
+
+            # The shared abstract level is cleaned for ordinary numId=99.
+            self.assertEqual(abstract_lvl.find("w:suff", NS).get(qn("val")), "nothing")
+            self.assertIsNone(abstract_lvl.find("./w:pPr/w:tabs", NS))
+            self.assertEqual(abstract_lvl.find("w:lvlText", NS).get(qn("val")), "%1\u3001")
+
+            # The protected numId=42 keeps its original suffix / tab / lvlText
+            # through the concrete override.
+            self.assertEqual(protected_override.find("w:suff", NS).get(qn("val")), "tab")
+            self.assertIsNotNone(protected_override.find("./w:pPr/w:tabs", NS))
+            self.assertEqual(protected_override.find("w:lvlText", NS).get(qn("val")), "%1\u3001 ")
+
+            lookup = build_numbering_format_lookup(etree.tostring(numbering_root))
+            self.assertEqual(lookup[("42", 0)]["level_source"], "lvlOverride")
+            self.assertEqual(lookup[("42", 0)]["suff"], "tab")
+            self.assertEqual(lookup[("99", 0)]["level_source"], "abstractNum")
+            self.assertEqual(lookup[("99", 0)]["suff"], "nothing")
 
             logs = "\n".join(summary.numbering_xml_logs)
             self.assertIn("CHAPTER_THREE_SKIP_IDS collected=2", logs)
@@ -1722,6 +1739,7 @@ class DocxProcessorTests(unittest.TestCase):
             self.assertIn("CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true", logs)
             self.assertIn("protected_abstract_levels=1:0", logs)
             self.assertIn("protected_abstractIds_not_used_for_chapter_three=true", logs)
+            self.assertIn("FINAL_NUMBERING_SUFFIX_CLEAN_PROTECTED_CONCRETE_OVERRIDE", logs)
 
     def test_special_table_uses_previous_paragraph_text_start_and_page_right_boundary(self):
         document = etree.Element(qn("document"), nsmap={"w": W_NS})
@@ -3912,6 +3930,62 @@ def make_shared_abstract_multi_ilvl_document_xml() -> bytes:
     return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def make_shared_decimal_same_ilvl_numbering_xml() -> bytes:
+    numbering = etree.Element(qn("numbering"), nsmap={"w": W_NS})
+    abstract = etree.SubElement(numbering, qn("abstractNum"))
+    abstract.set(qn("abstractNumId"), "10")
+    lvl = etree.SubElement(abstract, qn("lvl"))
+    lvl.set(qn("ilvl"), "0")
+    num_fmt = etree.SubElement(lvl, qn("numFmt"))
+    num_fmt.set(qn("val"), "decimal")
+    lvl_text = etree.SubElement(lvl, qn("lvlText"))
+    lvl_text.set(qn("val"), "%1. ")
+    pPr = etree.SubElement(lvl, qn("pPr"))
+    tabs = etree.SubElement(pPr, qn("tabs"))
+    tab = etree.SubElement(tabs, qn("tab"))
+    tab.set(qn("val"), "left")
+    tab.set(qn("pos"), "1560")
+    ind = etree.SubElement(pPr, qn("ind"))
+    ind.set(qn("left"), "999")
+    ind.set(qn("hanging"), "111")
+
+    for num_id in ("141", "85"):
+        num = etree.SubElement(numbering, qn("num"))
+        num.set(qn("numId"), num_id)
+        ref = etree.SubElement(num, qn("abstractNumId"))
+        ref.set(qn("val"), "10")
+    return etree.tostring(numbering, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def make_shared_decimal_same_ilvl_document_xml() -> bytes:
+    document = etree.Element(qn("document"), nsmap={"w": W_NS})
+    body = etree.SubElement(document, qn("body"))
+
+    def plain_p(text: str) -> None:
+        p = etree.SubElement(body, qn("p"))
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    def numbered_p(text: str, num_id: str) -> None:
+        p = etree.SubElement(body, qn("p"))
+        pPr = etree.SubElement(p, qn("pPr"))
+        num_pr = etree.SubElement(pPr, qn("numPr"))
+        ilvl = etree.SubElement(num_pr, qn("ilvl"))
+        ilvl.set(qn("val"), "0")
+        nid = etree.SubElement(num_pr, qn("numId"))
+        nid.set(qn("val"), num_id)
+        r = etree.SubElement(p, qn("r"))
+        t = etree.SubElement(r, qn("t"))
+        t.text = text
+
+    plain_p("封面")
+    numbered_p("普通小標題", "141")
+    plain_p(CHAPTER_THREE_NUMBERING_TITLE)
+    numbered_p("參內小標題", "85")
+    return etree.tostring(document, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 class ChapterThreeNumberingSuffixCleanupTests(unittest.TestCase):
     def _run(self, *, skip_cleanup: bool):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3942,17 +4016,31 @@ class ChapterThreeNumberingSuffixCleanupTests(unittest.TestCase):
             namespaces=NS,
         )[0]
 
+    def _override_lvl(self, numbering_root, num_id: str, ilvl: str = "0"):
+        return numbering_root.xpath(
+            f"./w:num[@w:numId='{num_id}']/w:lvlOverride[@w:ilvl='{ilvl}']/w:lvl",
+            namespaces=NS,
+        )[0]
+
     def test_option_default_is_true(self):
         self.assertTrue(ProcessOptions(True, True, True).skip_chapter_three_numbering_suffix_cleanup)
 
     def test_enabled_protects_chapter_three_numbering(self):
         summary, numbering_root = self._run(skip_cleanup=True)
-        ch3 = self._lvl(numbering_root, "50")
+        ch3_abstract = self._lvl(numbering_root, "50")
+        ch3_override = self._override_lvl(numbering_root, "50")
 
-        # 參 numbering keeps its original suffix / tab / lvlText trailing space.
-        self.assertEqual(ch3.find("./w:suff", NS).get(qn("val")), "tab")
-        self.assertIsNotNone(ch3.find("./w:pPr/w:tabs", NS))
-        self.assertEqual(ch3.find("./w:lvlText", NS).get(qn("val")), "%1.　")
+        # The abstract level is normalized, but the 參 pair keeps its original
+        # suffix / tab / lvlText trailing space through a concrete override.
+        assert_numbering_level_follows_suffix_rule(self, ch3_abstract, 3)
+        self.assertEqual(ch3_abstract.find("./w:lvlText", NS).get(qn("val")), "%1.")
+        self.assertEqual(ch3_override.find("./w:suff", NS).get(qn("val")), "tab")
+        self.assertIsNotNone(ch3_override.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(ch3_override.find("./w:lvlText", NS).get(qn("val")), "%1.　")
+
+        lookup = build_numbering_format_lookup(etree.tostring(numbering_root))
+        self.assertEqual(lookup[("50", 0)]["level_source"], "lvlOverride")
+        self.assertEqual(lookup[("50", 0)]["suff"], "tab")
 
         logs = "\n".join(summary.numbering_xml_logs)
         self.assertIn("CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=true", logs)
@@ -4013,16 +4101,25 @@ class ChapterThreeNumberingSuffixCleanupTests(unittest.TestCase):
         # abstractNumId. Only the 參 level (ilvl 0) is protected.
         summary, numbering_root = self._run_shared_abstract(skip_cleanup=True)
 
-        protected = self._shared_lvl(numbering_root, "0")
-        self.assertEqual(protected.find("./w:suff", NS).get(qn("val")), "tab")
-        self.assertIsNotNone(protected.find("./w:pPr/w:tabs", NS))
-        self.assertEqual(protected.find("./w:lvlText", NS).get(qn("val")), "%1.　")
+        protected_abstract = self._shared_lvl(numbering_root, "0")
+        protected_override = self._override_lvl(numbering_root, "70", "0")
+        assert_numbering_level_follows_suffix_rule(self, protected_abstract, 3)
+        self.assertEqual(protected_abstract.find("./w:lvlText", NS).get(qn("val")), "%1.")
+        self.assertEqual(protected_override.find("./w:suff", NS).get(qn("val")), "tab")
+        self.assertIsNotNone(protected_override.find("./w:pPr/w:tabs", NS))
+        self.assertEqual(protected_override.find("./w:lvlText", NS).get(qn("val")), "%1.　")
 
         # The other level in the same abstractNumId is still cleaned to the rule;
         # decimal "%1." is outline level 3, a space-suffix level.
         cleaned = self._shared_lvl(numbering_root, "1")
         assert_numbering_level_follows_suffix_rule(self, cleaned, 3)
         self.assertEqual(cleaned.find("./w:lvlText", NS).get(qn("val")), "%1.")
+
+        lookup = build_numbering_format_lookup(etree.tostring(numbering_root))
+        self.assertEqual(lookup[("70", 0)]["level_source"], "lvlOverride")
+        self.assertEqual(lookup[("70", 0)]["suff"], "tab")
+        self.assertEqual(lookup[("70", 1)]["level_source"], "abstractNum")
+        self.assertEqual(lookup[("70", 1)]["suff"], "space")
 
         logs = "\n".join(summary.numbering_xml_logs)
         self.assertIn("protected_abstract_levels=70:0", logs)
@@ -4037,6 +4134,119 @@ class ChapterThreeNumberingSuffixCleanupTests(unittest.TestCase):
 
         logs = "\n".join(summary.numbering_xml_logs)
         self.assertIn("CHAPTER_THREE_NUMBERING_SUFFIX_CLEANUP_SKIP enabled=false", logs)
+
+    def _run_shared_decimal_same_ilvl(self, *, skip_cleanup: bool, normalize_with_word_com: bool = False):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_docx = Path(temp_dir) / "input.docx"
+            output_docx = Path(temp_dir) / "output.docx"
+            make_docx(
+                input_docx,
+                make_shared_decimal_same_ilvl_document_xml(),
+                numbering_xml=make_shared_decimal_same_ilvl_numbering_xml(),
+            )
+            summary = fix_docx_fast(
+                input_docx,
+                output_docx,
+                ProcessOptions(
+                    fix_table_layout=False,
+                    fix_color=False,
+                    fix_paragraph=True,
+                    normalize_with_word_com=normalize_with_word_com,
+                    skip_chapter_three_numbering_suffix_cleanup=skip_cleanup,
+                ),
+            )
+            numbering_root = read_part_root(output_docx, "word/numbering.xml")
+        return summary, numbering_root
+
+    def test_shared_abstract_same_ilvl_protects_only_chapter_three_num_id(self):
+        summary, numbering_root = self._run_shared_decimal_same_ilvl(skip_cleanup=True)
+        lookup = build_numbering_format_lookup(etree.tostring(numbering_root))
+
+        # ordinary numId=141 uses the cleaned shared abstract level.
+        self.assertEqual(lookup[("141", 0)]["level_source"], "abstractNum")
+        self.assertEqual(lookup[("141", 0)]["suff"], "space")
+        self.assertEqual(lookup[("141", 0)]["lvlText"], "%1.")
+        self.assertIsNone(lookup[("141", 0)]["tab_pos"])
+        self.assertEqual(lookup[("141", 0)]["left"], TEMPLATE_OUTLINE_INDENTS[3]["left"])
+        self.assertEqual(lookup[("141", 0)]["hanging"], TEMPLATE_OUTLINE_INDENTS[3]["hanging"])
+
+        # protected numId=85 keeps the old effective numbering through override.
+        self.assertEqual(lookup[("85", 0)]["level_source"], "lvlOverride")
+        self.assertIsNone(lookup[("85", 0)]["suff"])
+        self.assertEqual(lookup[("85", 0)]["lvlText"], "%1. ")
+        self.assertEqual(lookup[("85", 0)]["tab_pos"], "1560")
+
+        ordinary_record = next(
+            record for record in summary.heading_suffix_after_records
+            if record.get("numId") == "141"
+        )
+        protected_record = next(
+            record for record in summary.heading_suffix_after_records
+            if record.get("numId") == "85"
+        )
+        self.assertEqual(ordinary_record["raw_suffix"], "space")
+        self.assertEqual(ordinary_record["lvlText"], "%1.")
+        self.assertFalse(ordinary_record["lvlText_has_trailing_space"])
+        self.assertFalse(ordinary_record["has_tab_stop"])
+        self.assertEqual(ordinary_record["suffix_cleanup_policy"], "normalized")
+        self.assertEqual(protected_record["raw_suffix"], "missing")
+        self.assertEqual(protected_record["lvlText"], "%1. ")
+        self.assertTrue(protected_record["lvlText_has_trailing_space"])
+        self.assertTrue(protected_record["has_tab_stop"])
+        self.assertEqual(protected_record["suffix_cleanup_policy"], "protected_chapter_three")
+        self.assertEqual(protected_record["suffix_cleanup_skip_reason"], "chapter_three_pair")
+
+    def test_shared_abstract_same_ilvl_disabled_cleans_both_num_ids(self):
+        _summary, numbering_root = self._run_shared_decimal_same_ilvl(skip_cleanup=False)
+        lookup = build_numbering_format_lookup(etree.tostring(numbering_root))
+
+        for num_id in ("141", "85"):
+            with self.subTest(num_id=num_id):
+                self.assertEqual(lookup[(num_id, 0)]["suff"], "space")
+                self.assertEqual(lookup[(num_id, 0)]["lvlText"], "%1.")
+                self.assertIsNone(lookup[(num_id, 0)]["tab_pos"])
+
+    def test_word_com_final_clean_keeps_protected_override_but_repairs_ordinary_abstract(self):
+        def fake_word_com(docx_path, records, stop=None):
+            del records, stop
+            dirty_numbering_suffix_tabs_in_docx(Path(docx_path))
+            return ["WORD_COM_FAKE_DIRTIED_NUMBERING"]
+
+        with patch(
+            "docx_fixer.word_com_indent.filter_word_com_body_indent_records",
+            return_value=[{"paragraph_index": 99}],
+        ), patch(
+            "docx_fixer.word_com_indent.verify_and_fix_body_indents_with_word_com",
+            side_effect=fake_word_com,
+        ):
+            summary, numbering_root = self._run_shared_decimal_same_ilvl(
+                skip_cleanup=True,
+                normalize_with_word_com=True,
+            )
+
+        lookup = build_numbering_format_lookup(etree.tostring(numbering_root))
+        self.assertEqual(lookup[("141", 0)]["suff"], "space")
+        self.assertEqual(lookup[("141", 0)]["lvlText"], "%1.")
+        self.assertIsNone(lookup[("141", 0)]["tab_pos"])
+        self.assertEqual(lookup[("85", 0)]["level_source"], "lvlOverride")
+        self.assertIsNone(lookup[("85", 0)]["suff"])
+        self.assertTrue(str(lookup[("85", 0)]["lvlText"]).endswith(" "))
+        self.assertIsNotNone(lookup[("85", 0)]["tab_pos"])
+
+        ordinary_record = next(
+            record for record in summary.heading_suffix_after_records
+            if record.get("numId") == "141"
+        )
+        protected_record = next(
+            record for record in summary.heading_suffix_after_records
+            if record.get("numId") == "85"
+        )
+        self.assertEqual(ordinary_record["suffix_cleanup_policy"], "normalized")
+        self.assertFalse(ordinary_record["has_tab_stop"])
+        self.assertEqual(protected_record["suffix_cleanup_policy"], "protected_chapter_three")
+        self.assertTrue(protected_record["has_tab_stop"])
+        self.assertIn("WORD_COM_FAKE_DIRTIED_NUMBERING", summary.word_com_body_indent_logs)
+        self.assertTrue(any("FINAL_NUMBERING_SUFFIX_CLEAN_DOCX changed=true" in log for log in summary.numbering_xml_logs))
 
 
 if __name__ == "__main__":

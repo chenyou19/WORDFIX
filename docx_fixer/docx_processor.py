@@ -302,9 +302,13 @@ def _auto_suffix_details(
     }
 
 
-def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict[str, object]]:
+def collect_heading_suffix_records_from_docx(
+    docx_path: str | Path,
+    protected_numbering_pairs: set[tuple[str, int]] | None = None,
+) -> list[dict[str, object]]:
     parser = etree.XMLParser(remove_blank_text=False, recover=True)
     records: list[dict[str, object]] = []
+    protected_numbering_pairs = protected_numbering_pairs or set()
     with ZipFile(docx_path, "r") as zin:
         names = set(zin.namelist())
         numbering_xml = zin.read("word/numbering.xml") if "word/numbering.xml" in names else None
@@ -384,6 +388,19 @@ def collect_heading_suffix_records_from_docx(docx_path: str | Path) -> list[dict
 
                 if number_token is None:
                     number_token = (details.get("lvlText") if details else None) or "(auto)"
+
+                if source == "auto_numbering_xml":
+                    protected_pair = (
+                        num_id is not None
+                        and ilvl is not None
+                        and (num_id, ilvl) in protected_numbering_pairs
+                    )
+                    details["suffix_cleanup_policy"] = (
+                        "protected_chapter_three" if protected_pair else "normalized"
+                    )
+                    details["suffix_cleanup_skip_reason"] = (
+                        "chapter_three_pair" if protected_pair else "none"
+                    )
 
                 records.append(
                     {
@@ -1168,7 +1185,10 @@ def fix_docx_fast(
         summary.paragraph_logs.append("NOTE_DEBUG_LOG_SKIPPED reason=disabled")
 
     try:
-        summary.heading_suffix_after_records = collect_heading_suffix_records_from_docx(output_docx)
+        summary.heading_suffix_after_records = collect_heading_suffix_records_from_docx(
+            output_docx,
+            protected_numbering_pairs=final_protected_numbering_pairs,
+        )
     except Exception as exc:
         summary.heading_suffix_after_records = [
             {
